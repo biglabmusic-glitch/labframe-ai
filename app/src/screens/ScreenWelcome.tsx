@@ -6,13 +6,15 @@ import { IconPlus, IconSpark, IconTooth } from '../components/primitives/icons';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
+import { useApp } from '../state/AppContext';
 
 export function ScreenWelcome() {
   const { reset } = useRouter();
+  const { onboarded } = useApp();
   useBackButton(null);
   useMainButton({
-    text: '✨ Создать первый пост',
-    onClick: () => reset('home'),
+    text: onboarded ? 'Создать пост' : '✨ Настроить бренд',
+    onClick: () => reset(onboarded ? 'home' : 'onboarding'),
   });
 
   return (

@@ -10,6 +10,7 @@ import { WebApp } from '../telegram/webapp';
 
 export type RouteId =
   | 'welcome'
+  | 'onboarding'
   | 'home'
   | 'upload'
   | 'worktype'

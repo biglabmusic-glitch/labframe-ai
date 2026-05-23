@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
 import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
-import { BrandMark } from '../components/primitives/BrandMark';
 import { Card } from '../components/primitives/Card';
 import { CircleBtn } from '../components/primitives/CircleBtn';
 import { Pill } from '../components/primitives/Pill';
 import { Tag } from '../components/primitives/Tag';
-import { IconImg, IconPlus, IconRefresh } from '../components/primitives/icons';
+import { BrandMark } from '../components/primitives/BrandMark';
+import { IconImg, IconPlus, IconSpark } from '../components/primitives/icons';
 import { useApp } from '../state/AppContext';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
@@ -19,58 +19,43 @@ const STYLE_LABELS: { id: StyleId; label: string }[] = [
   { id: 'soft',  label: 'Soft Studio' },
 ];
 
-const PLACEMENT_LABELS: Record<NonNullable<BrandData['logoPlacement']>, string> = {
-  'bottom-right': 'нижний правый',
-  'bottom-left':  'нижний левый',
-  'top-right':    'верхний правый',
-  'top-left':     'верхний левый',
-};
+const SUGGEST_TAGS = ['#керамика', '#виниры', '#dentallab', '#ceramist', '#dentalart', '#emax'];
 
-// re-export for type
-import type { BrandData } from '../state/types';
-
-const PLACEMENTS: BrandData['logoPlacement'][] = [
-  'bottom-right',
-  'bottom-left',
-  'top-right',
-  'top-left',
-];
-
-export function ScreenMyBrand() {
-  const { brand, setBrand } = useApp();
-  const { back } = useRouter();
+export function ScreenOnboardingBrand() {
+  const { user, brand, setBrand, completeOnboarding } = useApp();
+  const { reset } = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [masterName, setMasterName] = useState(brand.masterName ?? '');
+  const [masterName, setMasterName] = useState(brand.masterName ?? user.name ?? '');
   const [labName,    setLabName]    = useState(brand.labName    ?? '');
   const [defaultStyle, setDefaultStyle] = useState<StyleId | undefined>(brand.defaultStyle);
-  const [placement, setPlacement] = useState<BrandData['logoPlacement']>(brand.logoPlacement);
   const [hashtags, setHashtags] = useState<string[]>(brand.hashtags ?? []);
   const [newTag, setNewTag] = useState('');
-  const [logoUrl, setLogoUrl] = useState<string | undefined>(brand.logoUrl);
+  const [logoPreview, setLogoPreview] = useState<string | undefined>(brand.logoUrl);
   const [logoFileName, setLogoFileName] = useState<string | undefined>(brand.logoFileName);
 
-  useBackButton(back);
+  useBackButton(null);
   useMainButton({
-    text: 'Сохранить',
+    text: '✨ Готово, начать',
     onClick: () => {
       setBrand({
         masterName: masterName.trim() || undefined,
         labName: labName.trim() || undefined,
         defaultStyle,
-        logoPlacement: placement,
         hashtags,
-        logoUrl,
+        logoUrl: logoPreview,
         logoFileName,
       });
-      back();
+      completeOnboarding();
+      reset('home');
     },
+    enabled: masterName.trim().length > 1,
   });
 
   const onLogoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    setLogoUrl(URL.createObjectURL(f));
+    setLogoPreview(URL.createObjectURL(f));
     setLogoFileName(f.name);
   };
 
@@ -82,6 +67,7 @@ export function ScreenMyBrand() {
     setHashtags([...hashtags, formatted]);
     setNewTag('');
   };
+
   const removeTag = (t: string) => setHashtags(hashtags.filter((x) => x !== t));
 
   const inputStyle: React.CSSProperties = {
@@ -106,9 +92,17 @@ export function ScreenMyBrand() {
         onChange={onLogoFile}
       />
 
+      {/* брендовая шапка */}
+      <div style={{ padding: '14px 22px 8px', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <BrandMark size={24} color="var(--c-on-dark)" accent="#A5BCD9" />
+        <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--c-on-dark-2)', letterSpacing: -0.1 }}>
+          LabFrame <span style={{ fontWeight: 700, color: 'var(--c-on-dark)' }}>Ai</span>
+        </span>
+      </div>
+
       <ScreenIntro
-        title="Мой бренд"
-        sub="Эти данные подставятся в каждый новый пост автоматически."
+        title="Расскажите о себе"
+        sub="Чтобы бот добавлял ваш бренд к каждому посту автоматически. Можно изменить в любой момент."
       />
 
       {/* Логотип */}
@@ -129,8 +123,8 @@ export function ScreenMyBrand() {
                 width: 72,
                 height: 72,
                 borderRadius: 18,
-                background: logoUrl ? 'var(--c-card-l)' : 'rgba(239,243,255,0.06)',
-                border: logoUrl ? 'none' : '1.5px dashed rgba(147,213,225,0.45)',
+                background: logoPreview ? 'transparent' : 'rgba(239,243,255,0.06)',
+                border: logoPreview ? 'none' : '1.5px dashed rgba(147,213,225,0.45)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -139,51 +133,46 @@ export function ScreenMyBrand() {
                 flexShrink: 0,
               }}
             >
-              {logoUrl ? (
+              {logoPreview ? (
                 <img
-                  src={logoUrl}
+                  src={logoPreview}
                   alt="logo"
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               ) : (
-                <BrandMark size={36} color="var(--c-on-dark-2)" />
+                <IconImg size={26} color="var(--c-accent)" />
               )}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: 14,
-                  fontWeight: 600,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {logoFileName ?? 'не загружен'}
-              </div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                {logoUrl ? (
-                  <>
-                    <Pill size="sm" kind="ghost" icon={<IconRefresh size={12} />} onClick={() => fileRef.current?.click()}>
+              {logoPreview ? (
+                <>
+                  <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {logoFileName ?? 'logo.png'}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                    <Pill size="sm" kind="ghost" onClick={() => fileRef.current?.click()}>
                       заменить
                     </Pill>
                     <Pill
                       size="sm"
                       kind="ghost"
                       onClick={() => {
-                        setLogoUrl(undefined);
+                        setLogoPreview(undefined);
                         setLogoFileName(undefined);
                       }}
                     >
                       удалить
                     </Pill>
-                  </>
-                ) : (
-                  <Pill size="sm" kind="accent" icon={<IconImg size={12} />} onClick={() => fileRef.current?.click()}>
-                    загрузить
-                  </Pill>
-                )}
-              </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>Добавьте логотип</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
+                    PNG или JPG · опционально
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </Card>
@@ -203,13 +192,14 @@ export function ScreenMyBrand() {
             className="mono"
             style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--c-on-dark-3)' }}
           >
-            ИМЯ МАСТЕРА
+            ИМЯ МАСТЕРА*
           </div>
           <input
             value={masterName}
             onChange={(e) => setMasterName(e.target.value)}
             placeholder="Керамист Иван Петров"
             style={inputStyle}
+            autoFocus
           />
         </div>
       </div>
@@ -239,54 +229,32 @@ export function ScreenMyBrand() {
         </div>
       </div>
 
-      {/* Предпочтения */}
+      {/* Стиль по умолчанию */}
       <div style={{ padding: '0 16px 12px' }}>
         <Card kind="dark" pad={16} radius={22}>
           <div
             className="mono"
-            style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--c-on-dark-3)', marginBottom: 12 }}
+            style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--c-on-dark-3)', marginBottom: 10 }}
           >
-            ПРЕДПОЧТЕНИЯ
+            СТИЛЬ ПО УМОЛЧАНИЮ
           </div>
-
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 13, marginBottom: 8 }}>Стиль по умолчанию</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {STYLE_LABELS.map((s) => (
-                <Pill
-                  key={s.id}
-                  size="sm"
-                  kind={defaultStyle === s.id ? 'accent' : 'ghost'}
-                  onClick={() => setDefaultStyle(defaultStyle === s.id ? undefined : s.id)}
-                >
-                  {s.label}
-                </Pill>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ height: 1, background: 'var(--c-line)', margin: '4px 0 14px' }} />
-
-          <div>
-            <div style={{ fontSize: 13, marginBottom: 8 }}>Размещение логотипа</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {PLACEMENTS.map((p) => (
-                <Pill
-                  key={p}
-                  size="sm"
-                  kind={placement === p ? 'accent' : 'ghost'}
-                  onClick={() => setPlacement(p)}
-                >
-                  {PLACEMENT_LABELS[p as keyof typeof PLACEMENT_LABELS]}
-                </Pill>
-              ))}
-            </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {STYLE_LABELS.map((s) => (
+              <Pill
+                key={s.id}
+                size="sm"
+                kind={defaultStyle === s.id ? 'accent' : 'ghost'}
+                onClick={() => setDefaultStyle(defaultStyle === s.id ? undefined : s.id)}
+              >
+                {s.label}
+              </Pill>
+            ))}
           </div>
         </Card>
       </div>
 
       {/* Хэштеги */}
-      <div style={{ padding: '0 16px 24px' }}>
+      <div style={{ padding: '0 16px 16px' }}>
         <Card kind="dark" pad={16} radius={22}>
           <div
             style={{
@@ -300,8 +268,9 @@ export function ScreenMyBrand() {
               className="mono"
               style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--c-on-dark-3)' }}
             >
-              ФИРМЕННЫЕ ХЭШТЕГИ · {hashtags.length}
+              ФИРМЕННЫЕ ХЭШТЕГИ
             </div>
+            <span style={{ fontSize: 10, color: 'var(--c-on-dark-3)' }}>{hashtags.length}</span>
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
@@ -316,7 +285,7 @@ export function ScreenMyBrand() {
             ))}
             {hashtags.length === 0 && (
               <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)' }}>
-                Нет хэштегов
+                Подсказки ниже — или впишите свой
               </div>
             )}
           </div>
@@ -330,18 +299,44 @@ export function ScreenMyBrand() {
               borderRadius: 12,
               background: 'rgba(239,243,255,0.04)',
               border: '1px solid var(--c-line)',
+              marginBottom: 10,
             }}
           >
             <input
               value={newTag}
               onChange={(e) => setNewTag(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && addTag(newTag)}
-              placeholder="#новый_хэштег"
+              placeholder="#свой_хэштег"
               style={{ ...inputStyle, padding: 0, fontSize: 13 }}
             />
             <CircleBtn size={26} kind="accent" onClick={() => addTag(newTag)}>
               <IconPlus size={14} />
             </CircleBtn>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {SUGGEST_TAGS.filter((t) => !hashtags.includes(t)).map((t) => (
+              <Pill key={t} size="sm" kind="ghost" onClick={() => addTag(t)}>
+                + {t}
+              </Pill>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {/* tip */}
+      <div style={{ padding: '0 16px 24px' }}>
+        <Card
+          kind="ghost"
+          pad={12}
+          radius={16}
+          style={{ display: 'flex', gap: 10, alignItems: 'center' }}
+        >
+          <CircleBtn size={28} kind="accent">
+            <IconSpark size={12} />
+          </CircleBtn>
+          <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-2)', lineHeight: 1.4 }}>
+            Эти данные сохранятся и подставятся в каждый пост автоматически.
           </div>
         </Card>
       </div>

@@ -162,10 +162,13 @@ export function ScreenHome() {
           { t: 'Тарифы',    s: 'Free · Start · Pro',    icon: IconSpark, route: 'pricing' as RouteId },
           { t: 'Помощь',    s: 'Как снимать',           icon: IconCam,   route: 'help' as RouteId },
         ].map((it) => (
-          <Card key={it.t} kind="dark" pad={14} radius={20} onClick={go(it.route)}>
-            <CircleBtn size={32} kind="ghost">
-              <it.icon size={16} color="var(--c-accent)" />
-            </CircleBtn>
+          <Card key={it.t} kind="dark" pad={14} radius={20} onClick={go(it.route)} style={{ position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <CircleBtn size={32} kind="ghost">
+                <it.icon size={16} color="var(--c-accent)" />
+              </CircleBtn>
+              <IconArrow size={14} color="var(--c-on-dark-3)" />
+            </div>
             <div style={{ marginTop: 12, fontSize: 14, fontWeight: 600 }}>{it.t}</div>
             <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 2 }}>{it.s}</div>
           </Card>

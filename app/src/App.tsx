@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { AppProvider } from './state/AppContext';
+import { AppProvider, useApp } from './state/AppContext';
 import { RouterProvider, useRouter, type RouteId } from './router/Router';
 import { initTelegramWebApp } from './telegram/webapp';
 import { Splash } from './components/Splash';
 
 import { ScreenWelcome } from './screens/ScreenWelcome';
+import { ScreenOnboardingBrand } from './screens/ScreenOnboardingBrand';
 import { ScreenHome } from './screens/ScreenHome';
 import { ScreenUpload } from './screens/ScreenUpload';
 import { ScreenWorkType } from './screens/ScreenWorkType';
@@ -20,26 +21,41 @@ import { ScreenPricing } from './screens/ScreenPricing';
 import { ScreenPhotoHelp } from './screens/ScreenPhotoHelp';
 
 const REGISTRY: Record<RouteId, () => JSX.Element> = {
-  welcome:  ScreenWelcome,
-  home:     ScreenHome,
-  upload:   ScreenUpload,
-  worktype: ScreenWorkType,
-  style:    ScreenStyle,
-  brand:    ScreenBranding,
-  format:   ScreenFormat,
-  text:     ScreenTextType,
-  proc:     ScreenProcessing,
-  result:   ScreenResult,
-  mybrand:  ScreenMyBrand,
-  examples: ScreenExamples,
-  pricing:  ScreenPricing,
-  help:     ScreenPhotoHelp,
+  welcome:    ScreenWelcome,
+  onboarding: ScreenOnboardingBrand,
+  home:       ScreenHome,
+  upload:     ScreenUpload,
+  worktype:   ScreenWorkType,
+  style:      ScreenStyle,
+  brand:      ScreenBranding,
+  format:     ScreenFormat,
+  text:       ScreenTextType,
+  proc:       ScreenProcessing,
+  result:     ScreenResult,
+  mybrand:    ScreenMyBrand,
+  examples:   ScreenExamples,
+  pricing:    ScreenPricing,
+  help:       ScreenPhotoHelp,
 };
 
 function Root() {
   const { route } = useRouter();
   const Screen = REGISTRY[route];
   return <Screen />;
+}
+
+/**
+ * Решает, куда отправить юзера при запуске:
+ *  - онбординг пройден → home
+ *  - первый запуск     → welcome (а welcome дальше уведёт на onboarding)
+ */
+function AppRouter() {
+  const { onboarded } = useApp();
+  return (
+    <RouterProvider initial={onboarded ? 'home' : 'welcome'}>
+      <Root />
+    </RouterProvider>
+  );
 }
 
 const SPLASH_MS = 900;
@@ -55,9 +71,7 @@ export default function App() {
 
   return (
     <AppProvider>
-      <RouterProvider initial="welcome">
-        <Root />
-      </RouterProvider>
+      <AppRouter />
       {booting && <Splash />}
     </AppProvider>
   );

@@ -2,17 +2,20 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react';
 import type { BrandData, Draft, Job, User } from './types';
+import { WebApp } from '../telegram/webapp';
 
 interface AppState {
   user: User;
   brand: BrandData;
   draft: Draft;
   history: Job[];
+  onboarded: boolean;
 }
 
 interface AppContextValue extends AppState {
@@ -20,50 +23,106 @@ interface AppContextValue extends AppState {
   setBrand: (b: Partial<BrandData>) => void;
   setDraft: (d: Partial<Draft>) => void;
   resetDraft: () => void;
+  completeOnboarding: () => void;
 }
 
-const initialUser: User = {
-  name: 'Иван Петров',
-  initials: 'ИП',
-  plan: 'pro',
-  usage: { used: 21, limit: 150, period: 'месяц' },
-};
+const STORAGE_KEY = 'labframe.v1';
 
-const initialBrand: BrandData = {
-  logoFileName: 'petrov_lab_logo.png',
-  masterName: 'Керамист Иван Петров',
-  labName: 'Petrov Ceramic Lab',
-  defaultStyle: 'dark',
+function getInitials(first?: string, last?: string, username?: string): string {
+  const a = (first ?? username ?? '?').trim();
+  const b = (last ?? '').trim();
+  return (a[0] ?? '').toUpperCase() + (b[0] ?? '').toUpperCase() || (a[0] ?? '?').toUpperCase();
+}
+
+function buildInitialUser(): User {
+  const tg = WebApp?.initDataUnsafe?.user;
+  if (tg) {
+    const name = [tg.first_name, tg.last_name].filter(Boolean).join(' ') || (tg.username ?? 'Пользователь');
+    return {
+      telegramId: tg.id,
+      username: tg.username,
+      name,
+      initials: getInitials(tg.first_name, tg.last_name, tg.username),
+      avatarUrl: tg.photo_url,
+      plan: 'free',
+      usage: { used: 0, limit: 3, period: 'месяц' },
+    };
+  }
+  return {
+    name: 'Гость',
+    initials: 'Г',
+    plan: 'free',
+    usage: { used: 0, limit: 3, period: 'месяц' },
+  };
+}
+
+const emptyBrand: BrandData = {
   logoPlacement: 'bottom-right',
-  hashtags: ['#petrov_lab', '#керамика', '#виниры', '#eMax', '#dentalart', '#ceramist'],
+  hashtags: [],
 };
 
-const initialDraft: Draft = {
-  status: 'created',
-};
+const initialDraft: Draft = { status: 'created' };
 
-const initialHistory: Job[] = [
-  { id: '1', style: 'dark',  format: '1x1',  createdAt: Date.now() - 86400000, thumbBg: '#0F1221', dark: true },
-  { id: '2', style: 'clean', format: '4x5',  createdAt: Date.now() - 172800000, thumbBg: '#F4F6FB' },
-  { id: '3', style: 'soft',  format: '9x16', createdAt: Date.now() - 259200000, thumbBg: 'linear-gradient(135deg,#D6EEF3,#EFF3FF)' },
-];
+interface PersistedState {
+  brand?: Partial<BrandData>;
+  onboarded?: boolean;
+  history?: Job[];
+}
+
+function loadPersisted(): PersistedState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) as PersistedState : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePersisted(state: PersistedState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore (private mode, quota etc.)
+  }
+}
 
 const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUserState] = useState<User>(initialUser);
-  const [brand, setBrandState] = useState<BrandData>(initialBrand);
-  const [draft, setDraftState] = useState<Draft>(initialDraft);
-  const [history] = useState<Job[]>(initialHistory);
+  const persisted = loadPersisted();
 
-  const setUser = useCallback((u: Partial<User>) => setUserState((p) => ({ ...p, ...u })), []);
+  const [user, setUserState] = useState<User>(buildInitialUser);
+  const [brand, setBrandState] = useState<BrandData>({ ...emptyBrand, ...(persisted.brand ?? {}) });
+  const [draft, setDraftState] = useState<Draft>(initialDraft);
+  const [history, setHistoryState] = useState<Job[]>(persisted.history ?? []);
+  const [onboarded, setOnboarded] = useState<boolean>(persisted.onboarded ?? false);
+
+  // Перечитать пользователя, когда WebApp реально прогрузится (initDataUnsafe иногда заполняется позже)
+  useEffect(() => {
+    const tg = WebApp?.initDataUnsafe?.user;
+    if (tg && !user.telegramId) {
+      setUserState(buildInitialUser());
+    }
+  }, [user.telegramId]);
+
+  // Сохраняем то, что должно жить между сессиями
+  useEffect(() => {
+    savePersisted({ brand, onboarded, history });
+  }, [brand, onboarded, history]);
+
+  const setUser  = useCallback((u: Partial<User>)      => setUserState((p) => ({ ...p, ...u })), []);
   const setBrand = useCallback((b: Partial<BrandData>) => setBrandState((p) => ({ ...p, ...b })), []);
-  const setDraft = useCallback((d: Partial<Draft>) => setDraftState((p) => ({ ...p, ...d })), []);
+  const setDraft = useCallback((d: Partial<Draft>)     => setDraftState((p) => ({ ...p, ...d })), []);
   const resetDraft = useCallback(() => setDraftState(initialDraft), []);
+  const completeOnboarding = useCallback(() => setOnboarded(true), []);
+
+  // expose setHistoryState через ничего — пока история ведётся локально, она появляется
+  // когда юзер закончит флоу (см. ScreenResult). Метод вернём, если станет нужен снаружи.
+  void setHistoryState;
 
   const value = useMemo<AppContextValue>(
-    () => ({ user, brand, draft, history, setUser, setBrand, setDraft, resetDraft }),
-    [user, brand, draft, history, setUser, setBrand, setDraft, resetDraft],
+    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding }),
+    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
