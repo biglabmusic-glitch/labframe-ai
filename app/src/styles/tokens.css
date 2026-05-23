@@ -1,0 +1,73 @@
+/* LabFrame AI — design tokens (перенесено из design/tokens.css) */
+@import url('https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Palette */
+  --c-bg:        #0F1221;
+  --c-bg-2:      #161A2B;
+  --c-ink:       #0F1221;
+  --c-ink-2:     #343844;
+  --c-ink-mute:  #53565D;
+  --c-line:      rgba(239, 243, 255, 0.08);
+  --c-line-d:    rgba(15, 18, 33, 0.10);
+
+  --c-card-d:    #1B1F31;
+  --c-card-dd:   #343844;
+  --c-card-l:    #EFF3FF;
+  --c-card-w:    #FFFFFF;
+  --c-accent:    #93D5E1;
+  --c-accent-2:  #B8E4EC;
+
+  --c-on-dark:   #EFF3FF;
+  --c-on-dark-2: rgba(239, 243, 255, 0.62);
+  --c-on-dark-3: rgba(239, 243, 255, 0.40);
+  --c-on-light:  #0F1221;
+  --c-on-light-2:#53565D;
+
+  /* Radii */
+  --r-xs: 10px;
+  --r-sm: 14px;
+  --r-md: 20px;
+  --r-lg: 28px;
+  --r-xl: 36px;
+  --r-pill: 999px;
+
+  /* Shadows */
+  --sh-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 40px -22px rgba(0, 0, 0, 0.6);
+  --sh-pop:  0 24px 60px -20px rgba(0, 0, 0, 0.55);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  background: var(--c-bg);
+  color: var(--c-on-dark);
+  font-family: 'Onest', -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  min-height: 100%;
+}
+
+body {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  letter-spacing: 0;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Hide scrollbars for horizontal carousels and chip rails */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+/* Reset default focus-style on tappable cards (keyboard users still get outline via :focus-visible) */
+[role="button"] { outline: none; }
+[role="button"]:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }

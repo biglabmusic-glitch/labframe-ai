@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>LabFrame AI — Mini App design</title>
+<link rel="stylesheet" href="tokens.css" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; min-height: 100vh; }
+  #root { width: 100%; min-height: 100vh; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="image-slot.js"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="phone.jsx"></script>
+<script type="text/babel" src="screens-flow.jsx"></script>
+<script type="text/babel" src="screens-aux.jsx"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const PHONE_AB_W = PHONE_W + 12;   // a bit of padding for the bezel
+const PHONE_AB_H = PHONE_H + 12;
+
+function App() {
+  return (
+    <DesignCanvas>
+      <DCSection
+        id="entry"
+        title="01 · Onboarding & Home"
+        subtitle="Старт бота, приветствие, главное меню Telegram Mini App."
+      >
+        <DCArtboard id="welcome"  label="Welcome" width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenWelcome />
+        </DCArtboard>
+        <DCArtboard id="home"     label="Home / главное меню" width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenHome />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="flow"
+        title="02 · Создать пост — основной флоу"
+        subtitle="Семь шагов от фото с телефона до готового поста в Instagram."
+      >
+        <DCArtboard id="upload"   label="1 · Загрузка фото"     width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenUpload />
+        </DCArtboard>
+        <DCArtboard id="worktype" label="2 · Тип работы"        width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenWorkType />
+        </DCArtboard>
+        <DCArtboard id="style"    label="3 · Стиль оформления"  width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenStyle />
+        </DCArtboard>
+        <DCArtboard id="brand"    label="4 · Бренд"             width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenBranding />
+        </DCArtboard>
+        <DCArtboard id="format"   label="5 · Формат"            width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenFormat />
+        </DCArtboard>
+        <DCArtboard id="text"     label="6 · Текст к посту"     width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenTextType />
+        </DCArtboard>
+        <DCArtboard id="proc"     label="7 · Обработка"         width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenProcessing />
+        </DCArtboard>
+        <DCArtboard id="result"   label="✓ Результат"           width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenResult />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="aux"
+        title="03 · Доп. разделы"
+        subtitle="Профиль и бренд, библиотека примеров, монетизация, помощь."
+      >
+        <DCArtboard id="mybrand"  label="Мой бренд"        width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenMyBrand />
+        </DCArtboard>
+        <DCArtboard id="examples" label="Примеры"          width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenExamples />
+        </DCArtboard>
+        <DCArtboard id="pricing"  label="Тарифы"           width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenPricing />
+        </DCArtboard>
+        <DCArtboard id="help"     label="Помощь по фото"   width={PHONE_AB_W} height={PHONE_AB_H}>
+          <ScreenPhotoHelp />
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

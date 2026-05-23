@@ -1,0 +1,51 @@
+/* LabFrame AI — design tokens */
+:root {
+  /* Palette (из референса) */
+  --c-bg:        #0F1221;     /* основной фон */
+  --c-bg-2:      #161A2B;     /* немного светлее, для разделителей внутри тёмного */
+  --c-ink:       #0F1221;     /* «чёрный» — текст на светлых поверхностях */
+  --c-ink-2:     #343844;     /* основной текст на светлых поверхностях */
+  --c-ink-mute:  #53565D;     /* приглушённый */
+  --c-line:      rgba(239,243,255,0.08);
+  --c-line-d:    rgba(15,18,33,0.10);
+
+  --c-card-d:    #1B1F31;     /* карточка на тёмном (slightly raised) */
+  --c-card-dd:   #343844;     /* «pill» на тёмном */
+  --c-card-l:    #EFF3FF;     /* светлая карточка */
+  --c-card-w:    #FFFFFF;     /* чисто-белая */
+  --c-accent:    #93D5E1;     /* tiffany / акцент */
+  --c-accent-2:  #B8E4EC;     /* lighter accent */
+
+  --c-on-dark:   #EFF3FF;
+  --c-on-dark-2: rgba(239,243,255,0.62);
+  --c-on-dark-3: rgba(239,243,255,0.40);
+  --c-on-light:  #0F1221;
+  --c-on-light-2:#53565D;
+
+  /* Radii */
+  --r-xs: 10px;
+  --r-sm: 14px;
+  --r-md: 20px;
+  --r-lg: 28px;
+  --r-xl: 36px;
+  --r-pill: 999px;
+
+  /* Shadow */
+  --sh-card: 0 1px 0 rgba(255,255,255,0.04) inset, 0 18px 40px -22px rgba(0,0,0,0.6);
+  --sh-pop:  0 24px 60px -20px rgba(0,0,0,0.55);
+}
+
+/* Font */
+@import url('https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+html, body {
+  font-family: 'Onest', -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; letter-spacing: 0; }
+
+/* Generic helpers used inside phones */
+.phone-scroll::-webkit-scrollbar { display: none; }
+.phone-scroll { scrollbar-width: none; }

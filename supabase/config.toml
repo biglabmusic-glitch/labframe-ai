@@ -1,0 +1,17 @@
+# Конфиг Supabase CLI. Минимальный — детали в Dashboard.
+[functions]
+
+[functions.create-job]
+verify_jwt = false             # авторизация через Telegram initData
+
+[functions.get-job]
+verify_jwt = false
+
+[functions.me]
+verify_jwt = false
+
+[functions.process-job]
+verify_jwt = false             # защищено x-internal-secret
+
+[functions.notify-bot]
+verify_jwt = false             # защищено x-internal-secret
