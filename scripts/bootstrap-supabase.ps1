@@ -1,159 +1,125 @@
 #requires -Version 5.1
-<#
-.SYNOPSIS
-  Разовая настройка Supabase Edge Functions для LabFrame AI.
-  - Спрашивает у тебя секреты (никогда не пишет их в файл / репо)
-  - Сохраняет их в Supabase секреты Edge Functions
-  - Деплоит все 5 функций (me, create-job, get-job, process-job, notify-bot)
-  - Выводит итог: что прошло, что упало
-
-Запуск из корня репо:
-  PowerShell -ExecutionPolicy Bypass -File scripts\bootstrap-supabase.ps1
-#>
+# Bootstrap Supabase Edge Functions for LabFrame AI
+# Run from repo root:
+#   powershell -ExecutionPolicy Bypass -File scripts\bootstrap-supabase.ps1
 
 $ErrorActionPreference = 'Stop'
 
-# ─── Проверки окружения ─────────────────────────────────────────────────
-function Test-Command {
-    param([string]$Name)
-    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
-}
+function Test-Cmd { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
-if (-not (Test-Command 'supabase')) {
-    Write-Host 'ОШИБКА: supabase CLI не установлен.' -ForegroundColor Red
-    Write-Host 'Сначала выполни:' -ForegroundColor Yellow
+# Make sure scoop-installed CLI is in PATH for this session
+$env:PATH = "$env:USERPROFILE\scoop\shims;$env:PATH"
+
+if (-not (Test-Cmd 'supabase')) {
+    Write-Host 'ERROR: supabase CLI is not installed.' -ForegroundColor Red
+    Write-Host 'Install via:' -ForegroundColor Yellow
     Write-Host '  scoop bucket add supabase https://github.com/supabase/scoop-bucket.git'
     Write-Host '  scoop install supabase'
     exit 1
 }
 
-# Перейти в корень репо (родитель этой папки)
+# Move to repo root
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
-Write-Host "Working dir: $repoRoot" -ForegroundColor DarkGray
 
 if (-not (Test-Path 'supabase/config.toml')) {
-    Write-Host 'ОШИБКА: запусти скрипт из корня репо labframe-ai (там должна быть папка supabase/).' -ForegroundColor Red
+    Write-Host 'ERROR: run this from repo root (folder must contain supabase/ subdir).' -ForegroundColor Red
     exit 1
 }
 
-# ─── Логин и линковка проекта ───────────────────────────────────────────
-Write-Host "`nШаг 1/4: проверяю supabase login..." -ForegroundColor Cyan
-$projects = supabase projects list 2>$null
+# Step 1: login
+Write-Host ''
+Write-Host '[1/4] Checking supabase login...' -ForegroundColor Cyan
+& supabase projects list 1>$null 2>$null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host 'Не залогинен — открою браузер для входа.' -ForegroundColor Yellow
-    supabase login
+    Write-Host 'Not logged in. Opening browser for sign-in...' -ForegroundColor Yellow
+    & supabase login
     if ($LASTEXITCODE -ne 0) { throw 'supabase login failed' }
 }
 
-Write-Host "`nШаг 2/4: линкую проект mmegdmfmozgaycuyeacl..." -ForegroundColor Cyan
-$linked = $false
-try {
-    $status = supabase status 2>&1 | Out-String
-    if ($status -notmatch 'mmegdmfmozgaycuyeacl') {
-        supabase link --project-ref mmegdmfmozgaycuyeacl
-        if ($LASTEXITCODE -ne 0) { throw 'supabase link failed' }
-    }
-    $linked = $true
-} catch {
-    supabase link --project-ref mmegdmfmozgaycuyeacl
-    if ($LASTEXITCODE -ne 0) { throw 'supabase link failed' }
-    $linked = $true
-}
-if ($linked) { Write-Host 'Проект слинкован.' -ForegroundColor Green }
+# Step 2: link project
+Write-Host ''
+Write-Host '[2/4] Linking project mmegdmfmozgaycuyeacl...' -ForegroundColor Cyan
+& supabase link --project-ref mmegdmfmozgaycuyeacl
+if ($LASTEXITCODE -ne 0) { throw 'supabase link failed' }
 
-# ─── Сбор секретов ──────────────────────────────────────────────────────
-Write-Host "`nШаг 3/4: введи секреты (ввод скрыт)." -ForegroundColor Cyan
-Write-Host 'Где взять каждый — в подсказке справа. Если значение уже задано в Supabase и менять не хочешь — оставь пустым (Enter).' -ForegroundColor DarkGray
+# Step 3: secrets
+Write-Host ''
+Write-Host '[3/4] Enter secrets. Input is hidden by design.' -ForegroundColor Cyan
+Write-Host 'Leave empty + Enter to skip a value.' -ForegroundColor DarkGray
 
 function Read-Secret {
-    param(
-        [string]$Label,
-        [string]$Hint,
-        [bool]  $Required = $true
-    )
-    Write-Host ""
+    param([string]$Label, [string]$Hint)
+    Write-Host ''
     Write-Host $Label -ForegroundColor White -NoNewline
-    Write-Host "  ($Hint)" -ForegroundColor DarkGray
-    $sec = Read-Host -AsSecureString -Prompt '  значение'
+    Write-Host "   $Hint" -ForegroundColor DarkGray
+    $sec = Read-Host -AsSecureString -Prompt '  value'
     $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-    $plain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) | Out-Null
-    if ($Required -and [string]::IsNullOrWhiteSpace($plain)) {
-        Write-Host "  пропущено" -ForegroundColor DarkYellow
-        return $null
+    try {
+        return [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    } finally {
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) | Out-Null
     }
-    return $plain
 }
 
-# 1. BOT_TOKEN
-$BOT_TOKEN = Read-Secret 'BOT_TOKEN' 'от @BotFather'
+$BOT_TOKEN           = Read-Secret 'BOT_TOKEN'                 '(from BotFather)'
+$REPLICATE_API_TOKEN = Read-Secret 'REPLICATE_API_TOKEN'       '(r8_... from replicate.com/account/api-tokens)'
+$POLZA_API_KEY       = Read-Secret 'POLZA_API_KEY'             '(pza_... from polza.ai)'
+$SERVICE_ROLE        = Read-Secret 'SUPABASE_SERVICE_ROLE_KEY' '(sb_secret_... or JWT eyJ... from Supabase API Keys)'
 
-# 2. REPLICATE_API_TOKEN
-$REPLICATE_API_TOKEN = Read-Secret 'REPLICATE_API_TOKEN' 'replicate.com/account/api-tokens, r8_...'
+$alphabet = (48..57) + (65..90) + (97..122)
+$INTERNAL_SECRET = -join (1..48 | ForEach-Object { [char](Get-Random -InputObject $alphabet) })
+Write-Host ''
+Write-Host 'INTERNAL_SECRET generated automatically (48 chars).' -ForegroundColor DarkGray
 
-# 3. POLZA_API_KEY
-$POLZA_API_KEY = Read-Secret 'POLZA_API_KEY' 'polza.ai → API-ключи, pza_...'
+# Step 4: write secrets and deploy
+Write-Host ''
+Write-Host '[4/4] Writing secrets and deploying functions...' -ForegroundColor Cyan
 
-# 4. SUPABASE_SERVICE_ROLE_KEY
-$SERVICE_ROLE = Read-Secret 'SUPABASE_SERVICE_ROLE_KEY' 'Supabase → API Keys → secret (sb_secret_... или JWT eyJ...)'
-
-# 5. INTERNAL_SECRET — генерируем сами
-$INTERNAL_SECRET = -join ((48..57 + 65..90 + 97..122) | Get-Random -Count 48 | ForEach-Object { [char]$_ })
-Write-Host "`nINTERNAL_SECRET сгенерирован автоматически (48 символов). Сохраняю в Supabase." -ForegroundColor DarkGray
-
-# ─── Установка секретов и деплой ────────────────────────────────────────
-Write-Host "`nШаг 4/4: пишу секреты и деплою функции..." -ForegroundColor Cyan
-
-function Set-Secret {
+function Set-SbSecret {
     param([string]$Name, [string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        Write-Host "  $Name : пропущен" -ForegroundColor DarkYellow
+        Write-Host ("  {0}: SKIPPED" -f $Name) -ForegroundColor DarkYellow
         return
     }
-    supabase secrets set "$Name=$Value" 2>&1 | Out-Null
+    & supabase secrets set "$Name=$Value" 1>$null 2>$null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "  $Name : OK" -ForegroundColor Green
+        Write-Host ("  {0}: OK" -f $Name) -ForegroundColor Green
     } else {
-        Write-Host "  $Name : FAIL" -ForegroundColor Red
+        Write-Host ("  {0}: FAIL" -f $Name) -ForegroundColor Red
     }
 }
 
-Set-Secret 'BOT_TOKEN'                 $BOT_TOKEN
-Set-Secret 'REPLICATE_API_TOKEN'       $REPLICATE_API_TOKEN
-Set-Secret 'POLZA_API_KEY'             $POLZA_API_KEY
-Set-Secret 'SUPABASE_SERVICE_ROLE_KEY' $SERVICE_ROLE
-Set-Secret 'INTERNAL_SECRET'           $INTERNAL_SECRET
+Set-SbSecret 'BOT_TOKEN'                 $BOT_TOKEN
+Set-SbSecret 'REPLICATE_API_TOKEN'       $REPLICATE_API_TOKEN
+Set-SbSecret 'POLZA_API_KEY'             $POLZA_API_KEY
+Set-SbSecret 'SUPABASE_SERVICE_ROLE_KEY' $SERVICE_ROLE
+Set-SbSecret 'INTERNAL_SECRET'           $INTERNAL_SECRET
+Set-SbSecret 'SUPABASE_URL'              'https://mmegdmfmozgaycuyeacl.supabase.co'
+Set-SbSecret 'REPLICATE_MODEL'           'black-forest-labs/flux-kontext-pro'
+Set-SbSecret 'POLZA_BASE_URL'            'https://api.polza.ai/api/v1'
+Set-SbSecret 'POLZA_MODEL'               'gpt-4o-mini'
 
-# Эти три значения известны заранее
-Set-Secret 'SUPABASE_URL'      'https://mmegdmfmozgaycuyeacl.supabase.co'
-Set-Secret 'REPLICATE_MODEL'   'black-forest-labs/flux-kontext-pro'
-Set-Secret 'POLZA_BASE_URL'    'https://api.polza.ai/api/v1'
-Set-Secret 'POLZA_MODEL'       'gpt-4o-mini'
-
-# ── Deploy functions ────────────────────────────────────────────────────
 $functions = @('me', 'create-job', 'get-job', 'process-job', 'notify-bot')
 $failed = @()
-
 foreach ($fn in $functions) {
-    Write-Host ""
-    Write-Host "Deploy: $fn" -ForegroundColor Cyan
-    supabase functions deploy $fn --no-verify-jwt
+    Write-Host ''
+    Write-Host ('Deploy: ' + $fn) -ForegroundColor Cyan
+    & supabase functions deploy $fn --no-verify-jwt
     if ($LASTEXITCODE -ne 0) { $failed += $fn }
 }
 
-Write-Host ""
+Write-Host ''
 if ($failed.Count -eq 0) {
-    Write-Host 'Все 5 функций задеплоены. ' -NoNewline -ForegroundColor Green
-    Write-Host '✔' -ForegroundColor Green
+    Write-Host 'All 5 functions deployed.' -ForegroundColor Green
 } else {
-    Write-Host "Не задеплоились: $($failed -join ', ')" -ForegroundColor Red
+    Write-Host ('Failed: ' + ($failed -join ', ')) -ForegroundColor Red
 }
 
-# ─── Финальный вывод для Vercel ─────────────────────────────────────────
-Write-Host "`n────────────────────────────────────────────" -ForegroundColor DarkGray
-Write-Host "Готово. Теперь добавь в Vercel → Settings → Environment Variables:" -ForegroundColor White
-Write-Host "  VITE_API_BASE_URL       = https://mmegdmfmozgaycuyeacl.supabase.co/functions/v1"
-Write-Host "  VITE_SUPABASE_ANON_KEY  = <твой anon/publishable ключ из Supabase>"
-Write-Host "После добавления — Vercel → Deployments → Redeploy последнего." -ForegroundColor White
-Write-Host "────────────────────────────────────────────`n" -ForegroundColor DarkGray
+Write-Host ''
+Write-Host '------------------------------------------------' -ForegroundColor DarkGray
+Write-Host 'Add to Vercel -> Settings -> Environment Variables:' -ForegroundColor White
+Write-Host '  VITE_API_BASE_URL       = https://mmegdmfmozgaycuyeacl.supabase.co/functions/v1'
+Write-Host '  VITE_SUPABASE_ANON_KEY  = [paste your anon/publishable key from Supabase API Keys page]'
+Write-Host 'Then trigger Redeploy in Vercel.' -ForegroundColor White
+Write-Host '------------------------------------------------' -ForegroundColor DarkGray
