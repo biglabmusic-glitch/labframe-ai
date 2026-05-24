@@ -1,16 +1,16 @@
 // POST /sign-upload
 // Body: { filename, contentType }
-// Returns: { uploadUrl, photoPath }
-// Фронт делает PUT на uploadUrl с файлом, потом шлёт photoPath в /create-job.
-import { corsPreflight, jsonResponse, verifyInitData } from '../_shared/auth.ts';
+// Returns: { uploadUrl, photoPath, token }
+import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
   if (req.method !== 'POST') return jsonResponse({ error: 'method' }, { status: 405 });
 
-  const tg = await verifyInitData(req.headers.get('x-telegram-initdata') ?? '');
-  if (!tg) return jsonResponse({ error: 'unauthorized' }, { status: 401 });
+  const auth = await authorize(req);
+  if ('response' in auth) return auth.response;
+  const tg = auth.user;
 
   let body: { filename?: string; contentType?: string };
   try { body = await req.json(); }
@@ -26,7 +26,6 @@ Deno.serve(async (req) => {
 
   if (error || !data) return jsonResponse({ error: error?.message ?? 'sign_failed' }, { status: 500 });
 
-  // Supabase возвращает { signedUrl, token, path }. Фронт делает PUT по signedUrl.
   return jsonResponse({
     uploadUrl: data.signedUrl,
     photoPath: data.path ?? photoPath,

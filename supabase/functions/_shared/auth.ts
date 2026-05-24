@@ -12,12 +12,16 @@ export interface TgUser {
   language_code?: string;
 }
 
+export class AuthError extends Error {
+  constructor(public code: string) { super(code); }
+}
+
 export async function verifyInitData(initData: string): Promise<TgUser | null> {
-  if (!initData) return null;
+  if (!initData) throw new AuthError('empty_initdata');
 
   const params = new URLSearchParams(initData);
   const hash = params.get('hash');
-  if (!hash) return null;
+  if (!hash) throw new AuthError('no_hash');
   params.delete('hash');
 
   const dataCheckString = [...params.entries()]
@@ -50,14 +54,36 @@ export async function verifyInitData(initData: string): Promise<TgUser | null> {
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 
-  if (sigHex !== hash) return null;
+  if (sigHex !== hash) {
+    console.error('initdata hash mismatch', {
+      expected: hash.slice(0, 8) + '...',
+      got: sigHex.slice(0, 8) + '...',
+      dcs: dataCheckString.slice(0, 100),
+    });
+    throw new AuthError('bad_signature');
+  }
 
   const userRaw = params.get('user');
-  if (!userRaw) return null;
+  if (!userRaw) throw new AuthError('no_user');
   try {
     return JSON.parse(userRaw) as TgUser;
   } catch {
-    return null;
+    throw new AuthError('user_parse_failed');
+  }
+}
+
+/**
+ * Безопасный wrapper, который возвращает либо TgUser, либо jsonResponse 401 с кодом ошибки.
+ */
+export async function authorize(req: Request): Promise<{ user: TgUser } | { response: Response }> {
+  try {
+    const user = await verifyInitData(req.headers.get('x-telegram-initdata') ?? '');
+    if (!user) return { response: jsonResponse({ error: 'unauthorized' }, { status: 401 }) };
+    return { user };
+  } catch (e) {
+    const code = e instanceof AuthError ? e.code : 'unknown';
+    console.error('auth failed', code);
+    return { response: jsonResponse({ error: 'unauthorized', code }, { status: 401 }) };
   }
 }
 

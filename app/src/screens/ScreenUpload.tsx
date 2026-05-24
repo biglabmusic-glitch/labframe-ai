@@ -186,6 +186,26 @@ export function ScreenUpload() {
           </Card>
         </div>
 
+        {error && (
+          <Card
+            kind="dark"
+            pad={14}
+            radius={18}
+            style={{
+              marginTop: 12,
+              background: 'rgba(232, 155, 126, 0.12)',
+              border: '1px solid rgba(232, 155, 126, 0.4)',
+            }}
+          >
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#F4B19A', marginBottom: 4 }}>
+              Не удалось загрузить
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-2)', lineHeight: 1.4 }}>
+              {error}
+            </div>
+          </Card>
+        )}
+
         <Card
           kind="dark"
           pad={14}
