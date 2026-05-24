@@ -34,6 +34,21 @@ export function ScreenProcessing() {
     startedRef.current = true;
 
     (async () => {
+      // Defence-in-depth: если попали сюда без обязательных полей (state
+      // мог сброситься на mobile WebView reload), не падаем create-job-ом
+      // missing_fields, а возвращаем юзера на загрузку фото.
+      if (isBackendReady()) {
+        const need: string[] = [];
+        if (!draft.photo?.photoPath) need.push('фото');
+        if (!draft.style)            need.push('стиль');
+        if (!draft.format)           need.push('формат');
+        if (need.length) {
+          setErrorMsg(`Не хватает: ${need.join(', ')}. Начнём заново.`);
+          setTimeout(() => replace('upload'), 1200);
+          return;
+        }
+      }
+
       setDraft({ status: 'processing' });
 
       if (!isBackendReady() || !draft.photo) {

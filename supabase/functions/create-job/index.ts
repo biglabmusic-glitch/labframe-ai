@@ -23,6 +23,22 @@ Deno.serve(async (req) => {
   if ('response' in auth) return auth.response;
   const tg = auth.user;
 
+  // Гарантируем, что юзер существует в БД (FK jobs.user_id → users.id).
+  // Без этого первый запрос юзера падает с violates foreign key constraint,
+  // если фронт не успел дёрнуть /me перед /create-job.
+  await db.from('users').upsert(
+    {
+      id: tg.id,
+      username:      tg.username      ?? null,
+      first_name:    tg.first_name    ?? null,
+      last_name:     tg.last_name     ?? null,
+      photo_url:     tg.photo_url     ?? null,
+      language_code: tg.language_code ?? 'ru',
+      last_seen_at:  new Date().toISOString(),
+    },
+    { onConflict: 'id', ignoreDuplicates: false },
+  );
+
   // Rate-limit per user: не больше 2 активных job одновременно (анти-спам, двойной клик).
   const { count } = await db
     .from('jobs')
@@ -38,8 +54,12 @@ Deno.serve(async (req) => {
   try { body = await req.json(); }
   catch { return jsonResponse({ error: 'bad_json' }, { status: 400 }); }
 
-  if (!body.photoPath || !body.style || !body.format) {
-    return jsonResponse({ error: 'missing_fields' }, { status: 400 });
+  const missing: string[] = [];
+  if (!body.photoPath) missing.push('photoPath');
+  if (!body.style)     missing.push('style');
+  if (!body.format)    missing.push('format');
+  if (missing.length) {
+    return jsonResponse({ error: 'missing_fields', missing }, { status: 400 });
   }
 
   const { data: job, error } = await db

@@ -47,26 +47,30 @@ export async function processImage(input: ProcessImageInput): Promise<ProcessIma
   const t0 = Date.now();
   const prompt = STYLE_PROMPT[input.style] + PRESERVATION_GUARDRAIL;
 
-  // Replicate predictions API — синхронный режим (Prefer: wait)
-  const res = await fetch('https://api.replicate.com/v1/predictions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.REPLICATE_API_TOKEN}`,
-      'Content-Type': 'application/json',
-      Prefer: 'wait=60', // ждём до 60 сек
-    },
-    body: JSON.stringify({
-      model: env.REPLICATE_MODEL,
-      input: {
-        prompt,
-        input_image: input.photoUrl,
-        aspect_ratio: FORMAT_ASPECT[input.format],
-        output_format: 'jpg',
-        safety_tolerance: 2,
-        prompt_upsampling: false,   // не давать модели «улучшать» наш промпт
+  // Используем model-specific эндпоинт `/v1/models/{owner}/{name}/predictions` —
+  // эндпоинт `/v1/predictions` теперь требует явный `version` hash, что менее удобно.
+  // Этот всегда дёргает последнюю версию модели и не требует `model` в body.
+  const res = await fetch(
+    `https://api.replicate.com/v1/models/${env.REPLICATE_MODEL}/predictions`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.REPLICATE_API_TOKEN}`,
+        'Content-Type': 'application/json',
+        Prefer: 'wait=60', // ждём до 60 сек
       },
-    }),
-  });
+      body: JSON.stringify({
+        input: {
+          prompt,
+          input_image: input.photoUrl,
+          aspect_ratio: FORMAT_ASPECT[input.format],
+          output_format: 'jpg',
+          safety_tolerance: 2,
+          prompt_upsampling: false,   // не давать модели «улучшать» наш промпт
+        },
+      }),
+    },
+  );
 
   if (!res.ok) {
     const text = await res.text();

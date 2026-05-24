@@ -63,10 +63,27 @@ const emptyBrand: BrandData = {
 
 const initialDraft: Draft = { status: 'created' };
 
+interface PersistedDraft {
+  draft: Draft;
+  savedAt: number;
+}
+
 interface PersistedState {
   brand?: Partial<BrandData>;
   onboarded?: boolean;
   history?: Job[];
+  draft?: PersistedDraft;
+}
+
+const DRAFT_TTL_MS = 30 * 60 * 1000;            // 30 минут — потом считаем устаревшим
+
+// blob://-URL живёт только в текущей JS-сессии; после reload фронта он невалиден.
+// При сохранении draft срезаем blob-URL, оставляя только серверный photoPath.
+function sanitizeDraftForPersist(d: Draft): Draft {
+  if (!d.photo) return d;
+  const { url, ...photoRest } = d.photo;
+  void url;
+  return { ...d, photo: photoRest };
 }
 
 function loadPersisted(): PersistedState {
@@ -93,7 +110,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [user, setUserState] = useState<User>(buildInitialUser);
   const [brand, setBrandState] = useState<BrandData>({ ...emptyBrand, ...(persisted.brand ?? {}) });
-  const [draft, setDraftState] = useState<Draft>(initialDraft);
+  const [draft, setDraftState] = useState<Draft>(() => {
+    // Восстанавливаем draft из localStorage, если он не устарел.
+    // Спасает от Telegram WebView reload (особенно на mobile), который иначе
+    // ронял всё состояние выбранных параметров между шагами.
+    const p = persisted.draft;
+    if (p && Date.now() - p.savedAt < DRAFT_TTL_MS) return p.draft;
+    return initialDraft;
+  });
   const [history, setHistoryState] = useState<Job[]>(persisted.history ?? []);
   const [onboarded, setOnboarded] = useState<boolean>(persisted.onboarded ?? false);
 
@@ -107,8 +131,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Сохраняем то, что должно жить между сессиями
   useEffect(() => {
-    savePersisted({ brand, onboarded, history });
-  }, [brand, onboarded, history]);
+    savePersisted({
+      brand,
+      onboarded,
+      history,
+      draft: { draft: sanitizeDraftForPersist(draft), savedAt: Date.now() },
+    });
+  }, [brand, onboarded, history, draft]);
 
   const setUser  = useCallback((u: Partial<User>)      => setUserState((p) => ({ ...p, ...u })), []);
   const setBrand = useCallback((b: Partial<BrandData>) => setBrandState((p) => ({ ...p, ...b })), []);
