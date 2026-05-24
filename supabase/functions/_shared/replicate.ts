@@ -1,23 +1,30 @@
-// Image AI — Replicate (по умолчанию Flux Kontext, image-to-image
-// с сохранением структуры объекта). Промпт жёстко требует не трогать
-// анатомию/цвет работы — ТЗ §11.1.
-import { env } from './env.ts';
+// Image AI — модуль с промтами + тонкая обёртка над роутером моделей (image-providers.ts).
+// Сюда добавляем все промты, оттуда — выбираем провайдер (flux-kontext / nano-banana / polza).
+import { generateImage, type ProviderName } from './image-providers.ts';
 
 export type StyleId = 'clean' | 'dark' | 'soft';
 export type FormatId = '4x5' | '1x1' | '9x16';
 
-const FORMAT_ASPECT: Record<FormatId, string> = {
-  '4x5':  '4:5',
-  '1x1':  '1:1',
-  '9x16': '9:16',
-};
-
-// Промпты-эталоны от пользователя — длинные, с явным preservation-листом, разрешёнными правками,
-// стилевыми и композиционными ограничениями. Брендинг (имя/лого) НЕ передаём в промт —
-// Flux рисует текст и логотипы мусором. Брендирование делается постпроцессингом на фронте.
-// Format crop из промтов убран — aspect_ratio передаётся через input и приоритетнее текста.
+// Промпт для случая «БЕЗ логотипа» (single-image модель).
 function buildPrompt(style: StyleId): string {
   return STYLE_PROMPT[style];
+}
+
+// Промпт для случая «С логотипом» (multi-image модель).
+// Дополняет базовый промт LOGO-RULES блоком, который ссылается на «Image 2».
+function buildPromptWithLogo(style: StyleId): string {
+  const base = STYLE_PROMPT[style];
+  const logoBlock = `
+
+LOGO RULES:
+use Image 2 as the logo reference;
+place the logo small, elegant, and clean in a corner;
+keep the logo proportional and undistorted;
+do not make the logo too large;
+do not place the logo over the restoration;
+do not let the logo distract from the dental work;
+the logo should feel premium and minimal.`;
+  return base + logoBlock;
 }
 
 // Единый «скелет» промта — preservation + position lock + allowed edits + общие запреты.
@@ -97,56 +104,31 @@ const STYLE_PROMPT: Record<StyleId, string> = {
 
 export interface ProcessImageInput {
   photoUrl: string;
+  logoUrl?: string;                  // если есть — пойдём через multi-image модель
   style: StyleId;
   format: FormatId;
   brandText?: string;
+  forceProvider?: ProviderName;      // 'auto' (default) / 'flux-kontext' / 'nano-banana' / 'polza'
 }
 
 export interface ProcessImageOutput {
   imageUrl: string;
   durationMs: number;
+  provider: string;
 }
 
 export async function processImage(input: ProcessImageInput): Promise<ProcessImageOutput> {
-  const t0 = Date.now();
-  const prompt = buildPrompt(input.style);
-  void input.brandText; // больше не идёт в промт — обрабатываем брендинг постпроцессингом
+  void input.brandText; // больше не идёт в промт — брендирование постпроцессингом
+  const prompt = input.logoUrl ? buildPromptWithLogo(input.style) : buildPrompt(input.style);
 
-  // Используем model-specific эндпоинт `/v1/models/{owner}/{name}/predictions` —
-  // эндпоинт `/v1/predictions` теперь требует явный `version` hash, что менее удобно.
-  // Этот всегда дёргает последнюю версию модели и не требует `model` в body.
-  const res = await fetch(
-    `https://api.replicate.com/v1/models/${env.REPLICATE_MODEL}/predictions`,
+  return generateImage(
     {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.REPLICATE_API_TOKEN}`,
-        'Content-Type': 'application/json',
-        Prefer: 'wait=60', // ждём до 60 сек
-      },
-      body: JSON.stringify({
-        input: {
-          prompt,
-          input_image: input.photoUrl,
-          aspect_ratio: FORMAT_ASPECT[input.format],
-          output_format: 'jpg',
-          safety_tolerance: 2,
-          prompt_upsampling: false,   // не давать модели «улучшать» наш промпт
-        },
-      }),
+      photoUrl: input.photoUrl,
+      logoUrl:  input.logoUrl,
+      style:    input.style,
+      format:   input.format,
+      prompt,
     },
+    input.forceProvider ?? 'auto',
   );
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`replicate ${res.status}: ${text}`);
-  }
-
-  const data = await res.json() as { output?: string | string[]; status?: string; error?: string };
-  if (data.error) throw new Error(`replicate: ${data.error}`);
-
-  const out = Array.isArray(data.output) ? data.output[0] : data.output;
-  if (!out) throw new Error('replicate: no output');
-
-  return { imageUrl: out, durationMs: Date.now() - t0 };
 }

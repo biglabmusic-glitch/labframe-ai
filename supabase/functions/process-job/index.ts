@@ -46,18 +46,22 @@ Deno.serve(async (req) => {
   try {
     const { data: brand } = await db.from('brand').select('*').eq('user_id', job.user_id).maybeSingle();
 
-    // 1. Подписанный URL входного фото для Replicate
+    // 1. Подписанные URL: входное фото (всегда) + логотип бренда (если ветка 'logo')
     const photoUrl = await signUrl('photos', job.photo_path, 60 * 15);
+    const logoUrl  = job.branding === 'logo' && brand?.logo_path
+      ? await signUrl('brand', brand.logo_path, 60 * 15)
+      : undefined;
 
-    // 2. Image AI
+    // 2. Image AI — роутер выберет провайдер (с логотипом → nano-banana, без → flux-kontext)
     const t0 = Date.now();
     const img = await processImage({
       photoUrl,
-      style: job.style,
-      format: job.format,
+      logoUrl,
+      style:     job.style,
+      format:    job.format,
       brandText: job.branding === 'name' ? (brand?.master_name ?? undefined) : undefined,
     });
-    await logAi(job.id, 'replicate', Deno.env.get('REPLICATE_MODEL') ?? 'flux-kontext-pro', img.durationMs, true);
+    await logAi(job.id, 'image-ai', img.provider, img.durationMs, true);
 
     // 3. Скачать результат и положить в bucket 'results'
     const resultPath = `${job.user_id}/${job.id}.jpg`;
