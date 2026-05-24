@@ -20,7 +20,7 @@ interface PlanRow {
 const PLANS: PlanRow[] = [
   {
     id: 'free',
-    name: 'Free Test',
+    name: 'Free',
     price: '0',
     sub: '3 обработки',
     kind: 'ghost',
@@ -29,31 +29,32 @@ const PLANS: PlanRow[] = [
   {
     id: 'start',
     name: 'Start',
-    price: '590',
-    sub: '30 / месяц',
+    price: '2 000',
+    sub: '20 / месяц',
     kind: 'dark',
-    points: ['Логотип в профиле', 'Тексты к постам', 'Основные форматы'],
+    points: ['Логотип и бренд в посте', 'Все 3 стиля оформления', 'Тексты к постам', 'Сохранение хэштегов'],
   },
   {
     id: 'pro',
     name: 'Pro',
-    price: '1 490',
-    sub: '150 / месяц',
+    price: '4 500',
+    sub: 'безлимит / месяц',
     kind: 'accent',
     points: [
-      'Все форматы из одной обработки',
+      'Безлимит генераций',
+      'Все форматы из одной обработки (1:1 + 4:5 + 9:16)',
       'Сохранение бренда и хэштегов',
       'Несколько вариантов текста',
-      'Доступ к новым стилям',
+      'Доступ к новым стилям первым',
     ],
   },
   {
     id: 'lab',
     name: 'Lab',
-    price: '3 900',
-    sub: 'до 5 сотрудников',
+    price: '—',
+    sub: 'для команд',
     kind: 'dark',
-    points: ['Общий бренд лаборатории', 'Большой лимит', 'Командные роли'],
+    points: ['Общий бренд лаборатории', 'До 5 сотрудников', 'Командные роли', 'По запросу'],
   },
 ];
 
@@ -63,9 +64,13 @@ export function ScreenPricing() {
   const { back } = useRouter();
   const sel = PLANS.find((p) => p.id === selected)!;
   const yearly = period === 'year';
-  const monthlyPrice = sel.price === '0' ? 0 : Number(sel.price.replace(/\s/g, ''));
+  const rawPrice = sel.price.replace(/\s|—/g, '');
+  const monthlyPrice = rawPrice === '0' || rawPrice === '' ? 0 : Number(rawPrice);
   const discountedMonthly = yearly ? Math.round(monthlyPrice * 0.8) : monthlyPrice;
-  const ctaPrice = monthlyPrice === 0 ? 'Подключить Free Test' : `Подключить ${sel.name} — ${discountedMonthly.toLocaleString('ru-RU')} ₽ / мес`;
+  const ctaPrice =
+    sel.id === 'lab'  ? 'Написать в поддержку'
+    : monthlyPrice === 0 ? 'Активировать Free'
+    : `Подключить ${sel.name} — ${discountedMonthly.toLocaleString('ru-RU')} ₽ / мес`;
 
   useBackButton(back);
   useMainButton({ text: ctaPrice, onClick: () => back() });

@@ -20,105 +20,79 @@ function buildPrompt(style: StyleId): string {
   return STYLE_PROMPT[style];
 }
 
+// Единый «скелет» промта — preservation + position lock + allowed edits + общие запреты.
+// Меняется только STYLE и FINAL GOAL для каждого варианта.
+const POSITION_LOCK = `Use the uploaded image as the base photo.
+
+Do not regenerate the image.
+Do not recreate the subject.
+Do not reinterpret the dental work.
+
+Preserve the dental restoration and gypsum model exactly as in the source image.
+
+POSITION LOCK:
+keep the dental work in the exact same position, angle, scale, perspective, and location in the frame.
+Do not move the restoration.
+Do not rotate the restoration.
+Do not resize the restoration.
+Do not reposition the restoration.
+Do not change the camera angle.
+Do not change the perspective.
+Do not change the distance to the object.
+Do not change how the work lies or stands.
+Do not change the placement of the gypsum model.
+
+Do not change:
+tooth shape, anatomy, incisal edge, contours, cusps, fissures,
+surface texture, shade, color, translucency, gloss, proportions, fit,
+the crown, the veneer, the bridge, the ceramic restoration, or the gypsum model.
+
+Only improve:
+background cleanup, background simplification, exposure, white balance,
+contrast, noise reduction, slight sharpening, soft studio lighting,
+natural shadows, studio-quality presentation.
+
+Make the same photo look like a professional studio portfolio image, without changing the object or its position.`;
+
+const COMMON_OUTPUT = `Output:
+single image, same framing as source, studio-quality final look,
+no collage, no large text, no logo, no watermark, no new scene,
+no face, no patient, no blood, no clinical treatment scene,
+no changed dental work, no changed position.`;
+
+const STYLE_BLOCK: Record<StyleId, string> = {
+  clean: `Style:
+clean white dental photography,
+white or light gray studio background,
+soft even studio lighting,
+clean minimal shadows,
+bright premium presentation,
+clinical but elegant portfolio style,
+minimal medical aesthetic.`,
+
+  dark: `Style:
+premium dark dental photography,
+dark graphite or luxury black background,
+soft directional studio lighting,
+elegant shadows,
+high contrast but realistic,
+luxury portfolio presentation,
+minimal premium medical aesthetic.`,
+
+  soft: `Style:
+soft studio dental photography,
+soft beige or neutral gray background,
+diffused studio lighting,
+gentle natural shadows,
+warm premium presentation,
+calm elegant portfolio style,
+refined natural look.`,
+};
+
 const STYLE_PROMPT: Record<StyleId, string> = {
-  clean: `Use the uploaded image as the base photo layer.
-
-Create a clean white Instagram portfolio image for a dental technician.
-
-Important:
-do not recreate or regenerate the dental restoration.
-Preserve the crown / veneer / bridge / ceramic restoration exactly as in the source image.
-
-Do not change:
-shape, anatomy, incisal edge, edges, contours, cusps, fissures,
-surface texture, shade, color, translucency, gloss, proportions, fit, gypsum model.
-
-Treat the restoration and gypsum model as preserved objects.
-Only improve the visual presentation around them.
-
-Allowed edits:
-clean or simplify the background, adjust lighting, improve exposure,
-improve white balance, add soft natural shadows,
-straighten the image using the incisal edge of the central incisors,
-create a clean bright studio look.
-
-Style:
-Clean White, white or light gray studio background, soft professional lighting,
-clean medical aesthetic, minimal premium portfolio,
-realistic dental lab photography, natural ceramic texture.
-
-Composition:
-single image, subject centered, restoration fully visible,
-enough clean space around the subject,
-no collage, no text, no logo, no watermark, no face, no patient, no blood, no clinical treatment scene.
-
-Final goal: make the same dental work look clean, bright, and professionally presented, without changing the restoration itself.`,
-
-  dark: `Use the uploaded image as the base photo layer.
-
-Create a premium dark Instagram portfolio image for a dental technician.
-
-Important:
-do not recreate or regenerate the dental restoration.
-Preserve the crown / veneer / bridge / ceramic restoration exactly as in the source image.
-
-Do not change:
-shape, anatomy, incisal edge, edges, contours, cusps, fissures,
-surface texture, shade, color, translucency, gloss, proportions, fit, gypsum model.
-
-Treat the restoration and gypsum model as preserved objects.
-Only improve the visual presentation around them.
-
-Allowed edits:
-clean or simplify the background, adjust lighting, improve exposure,
-improve white balance, add soft natural shadows,
-straighten the image using the incisal edge of the central incisors,
-create a premium dark visual mood.
-
-Style:
-Premium Dark, dark graphite or luxury black background,
-soft directional studio lighting, elegant shadows,
-realistic dental lab photography, high-end Instagram portfolio,
-minimal luxury medical aesthetic.
-
-Composition:
-single image, subject centered, restoration fully visible, clean framing,
-balanced contrast, no collage, no text, no logo, no watermark, no face, no patient, no blood, no clinical treatment scene.
-
-Final goal: make the same dental work look professionally presented on a premium dark background, without changing the restoration itself.`,
-
-  soft: `Use the uploaded image as the base photo layer.
-
-Create a soft studio Instagram portfolio image for a dental technician.
-
-Important:
-do not recreate or regenerate the dental restoration.
-Preserve the crown / veneer / bridge / ceramic restoration exactly as in the source image.
-
-Do not change:
-shape, anatomy, incisal edge, edges, contours, cusps, fissures,
-surface texture, shade, color, translucency, gloss, proportions, fit, gypsum model.
-
-Treat the restoration and gypsum model as preserved objects.
-Only improve the visual presentation around them.
-
-Allowed edits:
-clean or simplify the background, adjust lighting, improve exposure,
-improve white balance, add soft natural shadows,
-straighten the image using the incisal edge of the central incisors,
-create a calm studio look.
-
-Style:
-Soft Studio, warm neutral beige or soft gray background,
-soft diffused studio lighting, gentle natural shadows,
-calm premium medical aesthetic, realistic dental lab photography,
-natural ceramic texture, elegant Instagram portfolio look.
-
-Composition:
-single image, subject centered, restoration fully visible, clean framing,
-no collage, no text, no logo, no watermark, no face, no patient, no blood, no clinical treatment scene.
-
-Final goal: make the same dental work look softly lit, elegant, and portfolio-ready, without changing the restoration itself.`,
+  clean: `${POSITION_LOCK}\n\n${STYLE_BLOCK.clean}\n\n${COMMON_OUTPUT}`,
+  dark:  `${POSITION_LOCK}\n\n${STYLE_BLOCK.dark}\n\n${COMMON_OUTPUT}`,
+  soft:  `${POSITION_LOCK}\n\n${STYLE_BLOCK.soft}\n\n${COMMON_OUTPUT}`,
 };
 
 export interface ProcessImageInput {

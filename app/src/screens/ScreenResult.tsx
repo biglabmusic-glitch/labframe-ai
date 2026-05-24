@@ -31,16 +31,33 @@ export function ScreenResult() {
   const [tab, setTab] = useState<FormatId>(draft.format ?? '1x1');
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [caption, setCaption] = useState<{ main: string; hashtags: string[] } | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [regenLoading, setRegenLoading] = useState(false);
 
   // Тянем результат с бэка, если job был
   useEffect(() => {
-    const jobId = sessionStorage.getItem('labframe.lastJobId');
-    if (!jobId || !isBackendReady()) return;
-    api.getJob(jobId).then((j) => {
+    const id = sessionStorage.getItem('labframe.lastJobId');
+    if (!id || !isBackendReady()) return;
+    setJobId(id);
+    api.getJob(id).then((j) => {
       if (j.resultUrl) setResultUrl(j.resultUrl);
       if (j.caption) setCaption({ main: j.caption.main, hashtags: j.caption.hashtags ?? [] });
     }).catch(() => {});
   }, []);
+
+  const regenHashtags = async () => {
+    if (!jobId || regenLoading) return;
+    WebApp?.HapticFeedback?.impactOccurred?.('light');
+    setRegenLoading(true);
+    try {
+      const { hashtags } = await api.regenHashtags(jobId);
+      setCaption((c) => ({ main: c?.main ?? '', hashtags }));
+    } catch {
+      // silently — кнопку можно будет нажать ещё раз
+    } finally {
+      setRegenLoading(false);
+    }
+  };
 
   useBackButton(back);
   useMainButton({
@@ -202,12 +219,35 @@ export function ScreenResult() {
                 'В таких работах важна не только форма, но и ощущение естественности: мягкий переход оттенков, правильная текстура и живая игра света помогают реставрации выглядеть гармонично в улыбке.'}
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
-              {(caption?.hashtags?.length ? caption.hashtags : brand.hashtags).slice(0, 8).map((t) => (
+              {(caption?.hashtags?.length ? caption.hashtags : brand.hashtags).slice(0, 12).map((t) => (
                 <Tag key={t} kind="ghost" style={{ fontSize: 10.5 }}>
                   {t}
                 </Tag>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={regenHashtags}
+              disabled={!jobId || regenLoading}
+              style={{
+                marginTop: 12,
+                padding: '8px 14px',
+                borderRadius: 999,
+                border: '1px solid rgba(147,213,225,0.35)',
+                background: 'rgba(147,213,225,0.1)',
+                color: 'var(--c-accent)',
+                fontSize: 11.5,
+                fontWeight: 600,
+                letterSpacing: -0.1,
+                cursor: jobId && !regenLoading ? 'pointer' : 'default',
+                opacity: jobId ? 1 : 0.4,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {regenLoading ? '⏳ генерируем…' : '✨ Хэштеги под мой бренд'}
+            </button>
           </Card>
         </div>
       )}

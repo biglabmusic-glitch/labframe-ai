@@ -3,6 +3,7 @@ import { Card } from '../components/primitives/Card';
 import { CircleBtn } from '../components/primitives/CircleBtn';
 import { Tag } from '../components/primitives/Tag';
 import { BrandMark } from '../components/primitives/BrandMark';
+import { UsageBar } from '../components/UsageBar';
 import {
   IconArrow,
   IconCam,
@@ -61,7 +62,7 @@ export function ScreenHome() {
         </span>
       </div>
 
-      <div style={{ padding: '8px 22px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ padding: '8px 22px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
         <div
           style={{
             width: 44,
@@ -82,9 +83,19 @@ export function ScreenHome() {
           <div style={{ fontSize: 13, color: 'var(--c-on-dark-2)' }}>Привет,</div>
           <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: -0.2 }}>{user.name}</div>
         </div>
-        <Tag kind="ghost">
-          {user.plan.toUpperCase()} · {user.usage.used}/{user.usage.limit}
+        <Tag kind="ghost" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8 }}>
+          {user.plan.toUpperCase()}
         </Tag>
+      </div>
+
+      {/* usage-bar — главная панель прогресса генераций */}
+      <div style={{ padding: '0 16px 18px' }}>
+        <UsageBar
+          used={user.usage.used}
+          limit={user.usage.limit}
+          plan={user.plan}
+          onUpgrade={() => push('pricing')}
+        />
       </div>
 
       {/* huge CTA */}

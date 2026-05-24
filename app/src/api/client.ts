@@ -95,6 +95,15 @@ export const api = {
     return request<unknown>('/me');
   },
 
+  /** Пере-генерация хэштегов под бренд для уже завершённого job. */
+  async regenHashtags(jobId: string): Promise<{ hashtags: string[] }> {
+    if (!API_BASE) return { hashtags: ['#стоматология', '#зуботехник', '#керамика'] };
+    return request<{ hashtags: string[] }>('/regen-hashtags', {
+      method: 'POST',
+      body: JSON.stringify({ jobId }),
+    });
+  },
+
   async getHistory(): Promise<Job[]> {
     if (!API_BASE) return [];
     return request<Job[]>('/history');
