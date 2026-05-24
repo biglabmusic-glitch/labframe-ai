@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
 import { StepBadge } from '../components/StepBadge';
@@ -7,83 +8,82 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import type { StyleId } from '../state/types';
+import { EXAMPLES } from '../lib/examples';
 
 interface StyleEntry {
   id: StyleId;
   name: string;
   ru: string;
   desc: string;
-  preview: 'light' | 'dark' | 'soft';
 }
 
 const STYLES: StyleEntry[] = [
-  {
-    id: 'clean',
-    name: 'Clean White',
-    ru: 'Чистый светлый',
-    desc: 'Светлый чистый фон, медицинская подача.',
-    preview: 'light',
-  },
-  {
-    id: 'dark',
-    name: 'Premium Dark',
-    ru: 'Премиальный',
-    desc: 'Тёмный контрастный фон, дорогой визуал.',
-    preview: 'dark',
-  },
-  {
-    id: 'soft',
-    name: 'Soft Studio',
-    ru: 'Мягкая студия',
-    desc: 'Студийный свет, спокойная эстетика.',
-    preview: 'soft',
-  },
+  { id: 'clean', name: 'Clean White',   ru: 'Чистый светлый', desc: 'Светлый чистый фон, медицинская подача.' },
+  { id: 'dark',  name: 'Premium Dark',  ru: 'Премиальный',    desc: 'Тёмный контрастный фон, дорогой визуал.' },
+  { id: 'soft',  name: 'Soft Studio',   ru: 'Мягкая студия',  desc: 'Студийный свет, спокойная эстетика.' },
 ];
 
-function Preview({ kind }: { kind: 'light' | 'dark' | 'soft' }) {
-  const bg =
-    kind === 'light'
-      ? '#F4F6FB'
-      : kind === 'dark'
-      ? '#0F1221'
-      : 'linear-gradient(135deg,#D6EEF3 0%,#EFF3FF 100%)';
+function Preview({ styleId }: { styleId: StyleId }) {
+  const [failed, setFailed] = useState(false);
+  const fallbackBg =
+    styleId === 'clean' ? '#F4F6FB'
+    : styleId === 'dark' ? '#0F1221'
+    : 'linear-gradient(135deg,#D6EEF3 0%,#EFF3FF 100%)';
   return (
     <div
       style={{
         width: 86,
         height: 86,
         borderRadius: 18,
-        background: bg,
+        background: fallbackBg,
         flexShrink: 0,
         position: 'relative',
         overflow: 'hidden',
         boxShadow: 'inset 0 0 0 1px rgba(15,18,33,0.06)',
       }}
     >
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          top: '52%',
-          transform: 'translate(-50%,-50%)',
-          color: kind === 'dark' ? 'rgba(239,243,255,0.85)' : 'rgba(15,18,33,0.75)',
-        }}
-      >
-        <IconTooth size={40} />
-      </div>
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 8,
-          right: 8,
-          fontSize: 7,
-          letterSpacing: 0.5,
-          fontWeight: 600,
-          color: kind === 'dark' ? 'rgba(239,243,255,0.6)' : 'rgba(15,18,33,0.4)',
-        }}
-      >
-        LAB
-      </div>
+      {!failed ? (
+        <img
+          src={EXAMPLES[styleId].after}
+          alt={EXAMPLES[styleId].label}
+          onError={() => setFailed(true)}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+          }}
+        />
+      ) : (
+        <>
+          <div
+            style={{
+              position: 'absolute',
+              left: '50%',
+              top: '52%',
+              transform: 'translate(-50%,-50%)',
+              color: styleId === 'dark' ? 'rgba(239,243,255,0.85)' : 'rgba(15,18,33,0.75)',
+            }}
+          >
+            <IconTooth size={40} />
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 8,
+              right: 8,
+              fontSize: 7,
+              letterSpacing: 0.5,
+              fontWeight: 600,
+              color: styleId === 'dark' ? 'rgba(239,243,255,0.6)' : 'rgba(15,18,33,0.4)',
+            }}
+          >
+            LAB
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -140,7 +140,7 @@ export function ScreenStyle() {
                 cursor: 'pointer',
               }}
             >
-              <Preview kind={s.preview} />
+              <Preview styleId={s.id} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: -0.2 }}>{s.name}</div>
                 <div

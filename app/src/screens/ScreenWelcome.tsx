@@ -2,7 +2,8 @@ import { Screen } from '../components/Screen';
 import { Tag } from '../components/primitives/Tag';
 import { CircleBtn } from '../components/primitives/CircleBtn';
 import { BrandMark } from '../components/primitives/BrandMark';
-import { IconPlus, IconSpark, IconTooth } from '../components/primitives/icons';
+import { IconPlus, IconSpark } from '../components/primitives/icons';
+import { BeforeAfterCarousel } from '../components/BeforeAfterCarousel';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
@@ -68,82 +69,11 @@ export function ScreenWelcome() {
               position: 'absolute',
               left: 18,
               right: 18,
-              bottom: 80,
-              top: 70,
-              display: 'flex',
-              gap: 8,
+              bottom: 70,
+              top: 60,
             }}
           >
-            <div
-              style={{
-                flex: 1,
-                borderRadius: 16,
-                background: '#F4F6FB',
-                position: 'relative',
-                overflow: 'hidden',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'rgba(15,18,33,0.35)',
-                boxShadow: 'inset 0 0 0 1px rgba(15,18,33,0.05)',
-              }}
-            >
-              <IconTooth size={40} />
-              <div
-                className="mono"
-                style={{
-                  position: 'absolute',
-                  top: 8,
-                  left: 8,
-                  fontSize: 8,
-                  letterSpacing: 1,
-                  color: 'rgba(15,18,33,0.5)',
-                }}
-              >
-                ДО
-              </div>
-            </div>
-            <div
-              style={{
-                flex: 1,
-                borderRadius: 16,
-                background: 'var(--c-bg)',
-                position: 'relative',
-                overflow: 'hidden',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'rgba(239,243,255,0.85)',
-              }}
-            >
-              <IconTooth size={40} />
-              <div
-                className="mono"
-                style={{
-                  position: 'absolute',
-                  top: 8,
-                  left: 8,
-                  fontSize: 8,
-                  letterSpacing: 1,
-                  color: 'var(--c-accent)',
-                }}
-              >
-                ПОСЛЕ
-              </div>
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: 6,
-                  right: 6,
-                  fontSize: 7,
-                  fontWeight: 700,
-                  letterSpacing: 0.8,
-                  color: 'rgba(239,243,255,0.55)',
-                }}
-              >
-                LAB
-              </div>
-            </div>
+            <BeforeAfterCarousel height={140} />
           </div>
 
           <div style={{ position: 'absolute', bottom: 18, left: 18, right: 18 }}>
