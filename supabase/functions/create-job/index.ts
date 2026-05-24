@@ -53,5 +53,21 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: error.message }, { status: 500 });
   }
 
+  // Триггерим process-job асинхронно — пользователю отдаём id сразу,
+  // обработка идёт фоном (15–25 сек), фронт опрашивает get-job до done.
+  const internalSecret = Deno.env.get('INTERNAL_SECRET') ?? '';
+  const supabaseUrl    = Deno.env.get('SUPABASE_URL')    ?? '';
+  // @ts-expect-error EdgeRuntime is provided by Supabase Edge Runtime
+  EdgeRuntime.waitUntil(
+    fetch(`${supabaseUrl}/functions/v1/process-job`, {
+      method: 'POST',
+      headers: {
+        'Content-Type':      'application/json',
+        'x-internal-secret': internalSecret,
+      },
+      body: '{}',
+    }).catch((e) => console.error('process-job trigger failed', e)),
+  );
+
   return jsonResponse({ id: job.id, status: job.status });
 });

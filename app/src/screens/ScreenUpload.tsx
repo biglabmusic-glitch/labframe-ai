@@ -14,38 +14,81 @@ import { useApp } from '../state/AppContext';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
+import { api, isBackendReady } from '../api/client';
 
 export function ScreenUpload() {
   const { draft, setDraft } = useApp();
   const { push, back } = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [picked, setPicked] = useState<boolean>(Boolean(draft.photo));
+  const [picked, setPicked] = useState<boolean>(Boolean(draft.photo?.photoPath));
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useBackButton(back);
   useMainButton({
-    text: picked ? 'Далее' : 'Выбрать из галереи',
+    text: uploading ? 'Загружается…' : picked ? 'Далее' : 'Выбрать из галереи',
     onClick: () => {
+      if (uploading) return;
       if (picked) {
         push('worktype');
       } else {
         fileRef.current?.click();
       }
     },
+    enabled: !uploading,
+    progress: uploading,
   });
 
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    setError(null);
+    setUploading(true);
+
+    // Сразу показываем превью
+    const previewUrl = URL.createObjectURL(f);
     setDraft({
       photo: {
         name: f.name,
         size: `${(f.size / (1024 * 1024)).toFixed(1)} МБ`,
         resolution: '—',
-        url: URL.createObjectURL(f),
+        url: previewUrl,
       },
       status: 'photo_uploaded',
     });
-    setPicked(true);
+
+    try {
+      if (isBackendReady()) {
+        const { photoPath } = await api.uploadPhoto(f);
+        setDraft({
+          photo: {
+            name: f.name,
+            size: `${(f.size / (1024 * 1024)).toFixed(1)} МБ`,
+            resolution: '—',
+            url: previewUrl,
+            photoPath,
+          },
+          status: 'photo_uploaded',
+        });
+      } else {
+        // Mock-режим — photoPath = blob URL
+        setDraft({
+          photo: {
+            name: f.name,
+            size: `${(f.size / (1024 * 1024)).toFixed(1)} МБ`,
+            resolution: '—',
+            url: previewUrl,
+            photoPath: previewUrl,
+          },
+        });
+      }
+      setPicked(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить фото');
+      setPicked(false);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (

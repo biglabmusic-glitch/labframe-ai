@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Screen } from '../components/Screen';
 import { Card } from '../components/primitives/Card';
 import { Pill } from '../components/primitives/Pill';
@@ -17,6 +17,7 @@ import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import type { FormatId } from '../state/types';
 import { WebApp } from '../telegram/webapp';
+import { api, isBackendReady } from '../api/client';
 
 const FORMAT_TABS: FormatId[] = ['1x1', '4x5', '9x16'];
 const FORMAT_LABEL: Record<FormatId, string> = {
@@ -29,6 +30,18 @@ export function ScreenResult() {
   const { draft, brand, resetDraft } = useApp();
   const { reset, back } = useRouter();
   const [tab, setTab] = useState<FormatId>(draft.format ?? '1x1');
+  const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [caption, setCaption] = useState<{ main: string; hashtags: string[] } | null>(null);
+
+  // Тянем результат с бэка, если job был
+  useEffect(() => {
+    const jobId = sessionStorage.getItem('labframe.lastJobId');
+    if (!jobId || !isBackendReady()) return;
+    api.getJob(jobId).then((j) => {
+      if (j.resultUrl) setResultUrl(j.resultUrl);
+      if (j.caption) setCaption({ main: j.caption.main, hashtags: j.caption.hashtags ?? [] });
+    }).catch(() => {});
+  }, []);
 
   useBackButton(back);
   useMainButton({
@@ -89,7 +102,13 @@ export function ScreenResult() {
               position: 'relative',
             }}
           >
-            {draft.photo?.url ? (
+            {resultUrl ? (
+              <img
+                src={resultUrl}
+                alt="result"
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            ) : draft.photo?.url ? (
               <img
                 src={draft.photo.url}
                 alt="result"
@@ -174,12 +193,11 @@ export function ScreenResult() {
               </Pill>
             </div>
             <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--c-on-dark)' }}>
-              В таких работах важна не только форма, но и ощущение естественности: мягкий переход
-              оттенков, правильная текстура и живая игра света помогают реставрации выглядеть
-              гармонично в улыбке.
+              {caption?.main ??
+                'В таких работах важна не только форма, но и ощущение естественности: мягкий переход оттенков, правильная текстура и живая игра света помогают реставрации выглядеть гармонично в улыбке.'}
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
-              {brand.hashtags.slice(0, 5).map((t) => (
+              {(caption?.hashtags?.length ? caption.hashtags : brand.hashtags).slice(0, 8).map((t) => (
                 <Tag key={t} kind="ghost" style={{ fontSize: 10.5 }}>
                   {t}
                 </Tag>

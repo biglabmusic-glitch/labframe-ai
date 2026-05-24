@@ -33,7 +33,13 @@ export interface BrandData {
 }
 
 export interface Draft {
-  photo?: { name: string; size: string; resolution: string; url?: string };
+  photo?: {
+    name: string;
+    size: string;
+    resolution: string;
+    url?: string;          // локальный blob-URL для превью
+    photoPath?: string;    // путь в Storage bucket 'photos', нужен create-job
+  };
   workType?: WorkType;
   style?: StyleId;
   branding?: BrandingKind;
