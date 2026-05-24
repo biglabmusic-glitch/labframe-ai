@@ -16,13 +16,17 @@ export class AuthError extends Error {
   constructor(public code: string) { super(code); }
 }
 
-export async function verifyInitData(initData: string): Promise<TgUser | null> {
+export async function verifyInitData(initData: string): Promise<TgUser> {
   if (!initData) throw new AuthError('empty_initdata');
 
   const params = new URLSearchParams(initData);
   const hash = params.get('hash');
   if (!hash) throw new AuthError('no_hash');
   params.delete('hash');
+  // `signature` — ed25519-подпись Telegram для third-party валидации (с конца 2024).
+  // Для bot-валидации через HMAC её нужно исключать из data_check_string,
+  // иначе наш хеш не совпадёт с тем, что прислал Telegram.
+  params.delete('signature');
 
   const dataCheckString = [...params.entries()]
     .map(([k, v]) => `${k}=${v}`)
@@ -55,12 +59,17 @@ export async function verifyInitData(initData: string): Promise<TgUser | null> {
     .join('');
 
   if (sigHex !== hash) {
-    console.error('initdata hash mismatch', {
-      expected: hash.slice(0, 8) + '...',
-      got: sigHex.slice(0, 8) + '...',
-      dcs: dataCheckString.slice(0, 100),
-    });
-    throw new AuthError('bad_signature');
+    // DEBUG: краткая инфа для ответа клиенту (без секретов)
+    const err = new AuthError('bad_signature');
+    (err as { debug?: unknown }).debug = {
+      tg_hash_8: hash.slice(0, 8),
+      our_hash_8: sigHex.slice(0, 8),
+      keys: [...params.keys()].sort().join(','),
+      dcs_len: dataCheckString.length,
+      bot_id: env.BOT_TOKEN.split(':')[0],
+    };
+    console.error('initdata hash mismatch', (err as { debug?: unknown }).debug);
+    throw err;
   }
 
   const userRaw = params.get('user');
@@ -78,14 +87,21 @@ export async function verifyInitData(initData: string): Promise<TgUser | null> {
 export async function authorize(req: Request): Promise<{ user: TgUser } | { response: Response }> {
   try {
     const user = await verifyInitData(req.headers.get('x-telegram-initdata') ?? '');
-    if (!user) return { response: jsonResponse({ error: 'unauthorized' }, { status: 401 }) };
     return { user };
   } catch (e) {
     const code = e instanceof AuthError ? e.code : 'unknown';
-    console.error('auth failed', code);
-    return { response: jsonResponse({ error: 'unauthorized', code }, { status: 401 }) };
+    const debug = (e as { debug?: unknown }).debug;
+    console.error('auth failed', code, debug);
+    return {
+      response: jsonResponse(
+        { error: 'unauthorized', code, debug },
+        { status: 401 },
+      ),
+    };
   }
 }
+
+const ALLOWED_HEADERS = 'authorization, x-client-info, apikey, content-type, x-telegram-initdata, x-internal-secret';
 
 export function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), {
@@ -93,7 +109,7 @@ export function jsonResponse(body: unknown, init?: ResponseInit) {
     headers: {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+      'Access-Control-Allow-Headers': ALLOWED_HEADERS,
       ...init?.headers,
     },
   });
@@ -105,7 +121,7 @@ export function corsPreflight() {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+      'Access-Control-Allow-Headers': ALLOWED_HEADERS,
       'Access-Control-Max-Age': '86400',
     },
   });

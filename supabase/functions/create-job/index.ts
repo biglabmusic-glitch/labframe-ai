@@ -3,7 +3,7 @@
 // photoPath — путь в bucket 'photos' (фронт загружает фото через подписанный URL).
 // Возвращает: { id, status: 'created' }
 // Дальше воркер process-job (cron / pg_net) подхватывает job в статусе 'created'.
-import { corsPreflight, jsonResponse, verifyInitData } from '../_shared/auth.ts';
+import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 
 interface Body {
@@ -19,9 +19,20 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
   if (req.method !== 'POST') return jsonResponse({ error: 'method' }, { status: 405 });
 
-  const initData = req.headers.get('x-telegram-initdata') ?? '';
-  const tg = await verifyInitData(initData);
-  if (!tg) return jsonResponse({ error: 'unauthorized' }, { status: 401 });
+  const auth = await authorize(req);
+  if ('response' in auth) return auth.response;
+  const tg = auth.user;
+
+  // Rate-limit per user: не больше 2 активных job одновременно (анти-спам, двойной клик).
+  const { count } = await db
+    .from('jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', tg.id)
+    .in('status', ['created', 'processing']);
+
+  if ((count ?? 0) >= 2) {
+    return jsonResponse({ error: 'too_many_in_progress' }, { status: 429 });
+  }
 
   let body: Body;
   try { body = await req.json(); }

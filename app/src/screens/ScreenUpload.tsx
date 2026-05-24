@@ -14,7 +14,7 @@ import { useApp } from '../state/AppContext';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
-import { api, isBackendReady } from '../api/client';
+import { api, friendlyError, isBackendReady } from '../api/client';
 
 export function ScreenUpload() {
   const { draft, setDraft } = useApp();
@@ -22,7 +22,7 @@ export function ScreenUpload() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [picked, setPicked] = useState<boolean>(Boolean(draft.photo?.photoPath));
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ title: string; sub: string } | null>(null);
 
   useBackButton(back);
   useMainButton({
@@ -84,7 +84,8 @@ export function ScreenUpload() {
       }
       setPicked(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось загрузить фото');
+      const raw = err instanceof Error ? err.message : String(err);
+      setError(friendlyError(raw));
       setPicked(false);
     } finally {
       setUploading(false);
@@ -198,10 +199,27 @@ export function ScreenUpload() {
             }}
           >
             <div style={{ fontSize: 12.5, fontWeight: 600, color: '#F4B19A', marginBottom: 4 }}>
-              Не удалось загрузить
+              {error.title}
             </div>
-            <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-2)', lineHeight: 1.4 }}>
-              {error}
+            <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-2)', lineHeight: 1.4, marginBottom: 10 }}>
+              {error.sub}
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => fileRef.current?.click()}
+              style={{
+                display: 'inline-block',
+                padding: '6px 14px',
+                borderRadius: 999,
+                background: 'rgba(244, 177, 154, 0.18)',
+                color: '#F4B19A',
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Попробовать снова
             </div>
           </Card>
         )}

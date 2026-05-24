@@ -17,6 +17,17 @@ const STYLE_BRIEF: Record<Exclude<TextType, 'none'>, string> = {
   tech:  'Технический текст 3–4 предложения с акцентом на мастерство, текстуру, форму.',
 };
 
+// Few-shot эталоны хорошего тона — снимают типовые косяки gpt-4o-mini
+// (канцелярит, эмодзи, «улыбка вашей мечты», восклицательные знаки).
+const STYLE_EXAMPLES: Record<Exclude<TextType, 'none'>, string> = {
+  short:
+    'Пример: «Винир на 2.1 после переделки. Цветопередача — A2, текстура повторяет соседний натуральный зуб.»',
+  sell:
+    'Пример: «Когда работа сидит так, что пациент забывает, какой зуб — свой, а какой — наш. Передача формы и фактуры — без компромиссов, ради того самого «не вижу разницы». Записаться можно через директ.»',
+  tech:
+    'Пример: «Циркониевая коронка на жевательную группу: послойная керамика, имитация мамелонов на пришеечной зоне, опаловая прозрачность по режущему краю. Финишная полировка алмазной пастой.»',
+};
+
 export interface GenerateTextInput {
   workType?: WorkType;
   textType: TextType;
@@ -41,14 +52,15 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
   const t0 = Date.now();
   const workLabel = WORK_LABEL[input.workType ?? 'other'];
   const brief = STYLE_BRIEF[input.textType];
+  const example = STYLE_EXAMPLES[input.textType];
 
   const userPrompt = [
     `Ты пишешь подпись к посту в Instagram для зубного техника / керамиста.`,
     `Стиль текста: ${brief}`,
     `Тип работы: ${workLabel}.`,
     input.masterName ? `Имя мастера/бренда: ${input.masterName}.` : '',
-    `Язык: русский, грамотный, без английских терминов без необходимости.`,
-    `Запрещено: обещания результата, медицинские утверждения, упоминание цен, неуместный пафос.`,
+    ``,
+    `${example}`,
     ``,
     `Верни строго JSON без markdown в формате:`,
     `{ "main": "...", "alt": "...", "hashtags": ["#...", "#..."] }`,
@@ -65,11 +77,16 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
     body: JSON.stringify({
       model: env.POLZA_MODEL,
       messages: [
-        { role: 'system', content: 'Ты — копирайтер для зубных техников. Отвечаешь строго JSON.' },
+        { role: 'system', content:
+            'Ты — копирайтер для зубных техников и керамистов. Пишешь для Instagram.' +
+            ' Правила: без обещаний результата, без медицинских утверждений, без цен,' +
+            ' без избыточного пафоса и канцелярита, без эмодзи, без восклицательных знаков.' +
+            ' Язык — русский, грамотный, без англицизмов без необходимости.' +
+            ' Отвечаешь СТРОГО валидным JSON без markdown, без префиксов, без ```.' },
         { role: 'user',   content: userPrompt },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.7,
+      temperature: 0.5,        // строгий формат — креатив тут вредит
       max_tokens: 600,
     }),
   });

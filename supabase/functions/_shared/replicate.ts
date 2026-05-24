@@ -8,11 +8,11 @@ export type FormatId = '4x5' | '1x1' | '9x16';
 
 const STYLE_PROMPT: Record<StyleId, string> = {
   clean:
-    'professional dental photography of a tooth restoration, pure clean white seamless background, soft even studio lighting, no harsh shadows, sharp focus on the dental work, medical aesthetic, magazine quality',
+    'professional dental laboratory photography of a ceramic/zirconia tooth restoration, pure clean white seamless background, soft even studio lighting, no harsh shadows, sharp tack-focus on the dental work, natural refractive highlights on the ceramic surface, medical aesthetic, dental magazine quality',
   dark:
-    'luxury dental photography of a tooth restoration, deep dark gradient background, dramatic side rim lighting, premium feel, contrasty, sharp focus on the dental work, magazine quality',
+    'luxury dental laboratory photography of a ceramic/zirconia tooth restoration, deep dark charcoal gradient background, dramatic single-source rim lighting, premium feel, high contrast, sharp tack-focus on the dental work, glossy refractive highlights on the ceramic surface, dental magazine quality',
   soft:
-    'soft studio dental photography of a tooth restoration, light blue-grey gradient background, diffused window light, natural feel, gentle pastel tones, sharp focus on the dental work',
+    'soft studio dental laboratory photography of a ceramic/zirconia tooth restoration, light blue-grey gradient background, diffused window-style light, natural feel, gentle pastel tones, sharp tack-focus on the dental work, subtle refractive highlights on the ceramic surface',
 };
 
 const FORMAT_ASPECT: Record<FormatId, string> = {
@@ -21,9 +21,15 @@ const FORMAT_ASPECT: Record<FormatId, string> = {
   '9x16': '9:16',
 };
 
-// КРИТИЧНОЕ ограничение из ТЗ §11.1 — добавляется ко всем промптам
+// КРИТИЧНОЕ ограничение из ТЗ §11.1 — добавляется ко всем промптам.
+// Дополнено явными запретами на типовые косяки Flux (лишние руки/инструменты,
+// «сглаживание» зуба, изменение цвета — всё это убивает доверие техника к результату).
 const PRESERVATION_GUARDRAIL =
-  ' Preserve the exact anatomy, exact shape, exact natural color, exact texture, and exact positioning of the dental restoration. Do not redraw, retouch, or modify the tooth itself. Only change the background, the lighting on the background, the framing, and the composition.';
+  ' CRITICAL: Preserve the EXACT anatomy, EXACT shape, EXACT natural color,' +
+  ' EXACT texture, surface translucency, and EXACT positioning of the dental restoration.' +
+  ' Do NOT redraw, retouch, smooth, brighten, whiten, or modify the tooth itself.' +
+  ' Do NOT add fingers, hands, gloves, instruments, mirrors, retractors, or any new objects to the scene.' +
+  ' Only change the background, the ambient lighting on the background, the framing, and the composition.';
 
 export interface ProcessImageInput {
   photoUrl: string;
@@ -57,6 +63,7 @@ export async function processImage(input: ProcessImageInput): Promise<ProcessIma
         aspect_ratio: FORMAT_ASPECT[input.format],
         output_format: 'jpg',
         safety_tolerance: 2,
+        prompt_upsampling: false,   // не давать модели «улучшать» наш промпт
       },
     }),
   });

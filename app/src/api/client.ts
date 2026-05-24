@@ -2,7 +2,7 @@
  * Тонкий fetch-клиент. Если VITE_API_BASE_URL не задан — работаем в mock-режиме,
  * чтобы UI можно было листать без бэка. Когда задан — реальные вызовы Edge Functions.
  */
-import type { Draft, Job, StyleId, TextType, WorkType, FormatId, BrandingKind } from '../state/types';
+import type { Job, StyleId, TextType, WorkType, FormatId, BrandingKind } from '../state/types';
 import { WebApp } from '../telegram/webapp';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -28,6 +28,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const j = await res.json();
       detail = j.code ? `${j.error}/${j.code}` : (j.error ?? '');
+      if (j.debug) detail += ` ${JSON.stringify(j.debug)}`;
     } catch {
       detail = await res.text().catch(() => '');
     }
@@ -113,4 +114,37 @@ export const api = {
 /** Возвращает true, если бэкенд сконфигурирован (есть VITE_API_BASE_URL). */
 export function isBackendReady(): boolean {
   return Boolean(API_BASE);
+}
+
+/**
+ * Конвертирует сырое сообщение об ошибке (как формирует request()) в человеческий
+ * заголовок + подсказку для UI. Известные коды получают понятный текст,
+ * остальное падает в общий fallback с сырым текстом в подсказке (для debug).
+ */
+export function friendlyError(raw: string): { title: string; sub: string } {
+  if (raw.includes('bad_signature') || raw.includes('empty_initdata') || raw.includes('no_hash') || raw.includes('no_user')) {
+    return {
+      title: 'Не удалось проверить личность',
+      sub:   'Откройте мини-апп заново через бота — иногда Telegram даёт устаревший ключ.',
+    };
+  }
+  if (raw.includes('too_many_in_progress') || raw.includes('429 ')) {
+    return {
+      title: 'Уже обрабатывается фото',
+      sub:   'Дождитесь окончания предыдущей работы и попробуйте снова.',
+    };
+  }
+  if (raw.includes('usage_limit_reached')) {
+    return {
+      title: 'Лимит исчерпан',
+      sub:   'Откройте раздел «Тарифы», чтобы продолжить.',
+    };
+  }
+  if (raw.startsWith('upload ')) {
+    return {
+      title: 'Файл не загрузился в хранилище',
+      sub:   'Проверьте интернет и попробуйте снова.',
+    };
+  }
+  return { title: 'Не удалось загрузить', sub: raw };
 }

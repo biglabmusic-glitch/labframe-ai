@@ -1,5 +1,5 @@
 // GET /get-job?id=<uuid>
-import { corsPreflight, jsonResponse, verifyInitData } from '../_shared/auth.ts';
+import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { publicUrl } from '../_shared/storage.ts';
 
@@ -7,8 +7,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
   if (req.method !== 'GET') return jsonResponse({ error: 'method' }, { status: 405 });
 
-  const tg = await verifyInitData(req.headers.get('x-telegram-initdata') ?? '');
-  if (!tg) return jsonResponse({ error: 'unauthorized' }, { status: 401 });
+  const auth = await authorize(req);
+  if ('response' in auth) return auth.response;
+  const tg = auth.user;
 
   const url = new URL(req.url);
   const id = url.searchParams.get('id');

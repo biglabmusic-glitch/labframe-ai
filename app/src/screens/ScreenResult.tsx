@@ -6,7 +6,6 @@ import { Tag } from '../components/primitives/Tag';
 import {
   IconDownload,
   IconPlus,
-  IconRefresh,
   IconShare,
   IconSpark,
   IconTooth,
@@ -45,12 +44,24 @@ export function ScreenResult() {
 
   useBackButton(back);
   useMainButton({
-    text: '⬇ Скачать пост',
+    text: resultUrl ? '⬇ Скачать пост' : 'Готовим…',
+    enabled: Boolean(resultUrl),
     onClick: () => {
+      if (!resultUrl) return;
       WebApp?.HapticFeedback?.notificationOccurred?.('success');
-      // В реальности — fetch ссылки на результат и скачивание
+      // Открываем прямую ссылку — Telegram-WebView/системный браузер
+      // покажет JPG, дальше юзер сохраняет через «Сохранить картинку».
+      WebApp?.openLink?.(resultUrl);
     },
   });
+
+  const onShare = () => {
+    if (!resultUrl) return;
+    WebApp?.HapticFeedback?.impactOccurred?.('light');
+    const text = caption?.main ?? '';
+    const url = `https://t.me/share/url?url=${encodeURIComponent(resultUrl)}&text=${encodeURIComponent(text)}`;
+    WebApp?.openTelegramLink?.(url);
+  };
 
   return (
     <Screen>
@@ -74,9 +85,6 @@ export function ScreenResult() {
           </Pill>
         ))}
         <div style={{ flex: 1 }} />
-        <Pill size="sm" kind="ghost" icon={<IconRefresh size={14} />}>
-          другой стиль
-        </Pill>
       </div>
 
       <div style={{ padding: '0 16px 14px' }}>
@@ -188,9 +196,6 @@ export function ScreenResult() {
                   ? 'ТЕХНИЧЕСКИЙ'
                   : 'ПРОДАЮЩИЙ'}
               </div>
-              <Pill size="sm" kind="ghost" icon={<IconRefresh size={12} />}>
-                иначе
-              </Pill>
             </div>
             <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--c-on-dark)' }}>
               {caption?.main ??
@@ -219,8 +224,14 @@ export function ScreenResult() {
           kind="ghost"
           pad={12}
           radius={16}
-          onClick={() => WebApp?.HapticFeedback?.impactOccurred?.('light')}
-          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          onClick={onShare}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            opacity: resultUrl ? 1 : 0.5,
+            pointerEvents: resultUrl ? 'auto' : 'none',
+          }}
         >
           <IconShare size={18} color="var(--c-accent)" />
           <span style={{ fontSize: 13, fontWeight: 500 }}>Поделиться</span>

@@ -29,13 +29,19 @@ Deno.serve(async (req) => {
 
   const job = jobs[0];
 
-  const { error: lockErr } = await db
+  // Оптимистическая блокировка: ставим processing только если статус всё ещё created.
+  // Проверяем, что строка действительно обновилась — иначе job уже забрал другой воркер
+  // (без этого второй воркер тратил бы деньги Replicate на тот же job).
+  const { data: locked, error: lockErr } = await db
     .from('jobs')
     .update({ status: 'processing', started_at: new Date().toISOString() })
     .eq('id', job.id)
-    .eq('status', 'created');               // оптимистическая блокировка
+    .eq('status', 'created')
+    .select('id')
+    .maybeSingle();
 
   if (lockErr) return jsonResponse({ error: lockErr.message }, { status: 500 });
+  if (!locked)  return jsonResponse({ ok: true, picked: 0, reason: 'lost_race' });
 
   try {
     const { data: brand } = await db.from('brand').select('*').eq('user_id', job.user_id).maybeSingle();
