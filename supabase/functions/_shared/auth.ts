@@ -25,16 +25,17 @@ export async function verifyInitData(initData: string): Promise<TgUser | null> {
     .sort()
     .join('\n');
 
-  // secret_key = HMAC_SHA256(bot_token, "WebAppData")
+  // secret_key = HMAC_SHA256(key=bot_token, data="WebAppData")
+  // KEY is bot_token, DATA is the literal string "WebAppData" — порядок важен.
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    enc.encode('WebAppData'),
+    enc.encode(env.BOT_TOKEN),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign'],
   );
-  const secretKey = await crypto.subtle.sign('HMAC', keyMaterial, enc.encode(env.BOT_TOKEN));
+  const secretKey = await crypto.subtle.sign('HMAC', keyMaterial, enc.encode('WebAppData'));
 
   // hash = HMAC_SHA256(data_check_string, secret_key)
   const finalKey = await crypto.subtle.importKey(
