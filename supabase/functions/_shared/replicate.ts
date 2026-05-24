@@ -13,11 +13,11 @@ const FORMAT_ASPECT: Record<FormatId, string> = {
 };
 
 // Промпты-эталоны от пользователя — длинные, с явным preservation-листом, разрешёнными правками,
-// стилевыми и композиционными ограничениями. `{BRAND}` подставляется из brandText (или пустая строка).
+// стилевыми и композиционными ограничениями. Брендинг (имя/лого) НЕ передаём в промт —
+// Flux рисует текст и логотипы мусором. Брендирование делается постпроцессингом на фронте.
 // Format crop из промтов убран — aspect_ratio передаётся через input и приоритетнее текста.
-function buildPrompt(style: StyleId, brandText?: string): string {
-  const brand = brandText && brandText.trim() ? brandText.trim().toUpperCase() : 'LABFRAME AI';
-  return STYLE_PROMPT[style].replace(/\{BRAND\}/g, brand);
+function buildPrompt(style: StyleId): string {
+  return STYLE_PROMPT[style];
 }
 
 const STYLE_PROMPT: Record<StyleId, string> = {
@@ -40,7 +40,7 @@ Allowed edits:
 clean or simplify the background, adjust lighting, improve exposure,
 improve white balance, add soft natural shadows,
 straighten the image using the incisal edge of the central incisors,
-create a clean bright studio look, add small corner branding.
+create a clean bright studio look.
 
 Style:
 Clean White, white or light gray studio background, soft professional lighting,
@@ -50,9 +50,7 @@ realistic dental lab photography, natural ceramic texture.
 Composition:
 single image, subject centered, restoration fully visible,
 enough clean space around the subject,
-no collage, no large text, no face, no patient, no blood, no clinical treatment scene.
-
-Optional small corner branding: "{BRAND}".
+no collage, no text, no logo, no watermark, no face, no patient, no blood, no clinical treatment scene.
 
 Final goal: make the same dental work look clean, bright, and professionally presented, without changing the restoration itself.`,
 
@@ -75,7 +73,7 @@ Allowed edits:
 clean or simplify the background, adjust lighting, improve exposure,
 improve white balance, add soft natural shadows,
 straighten the image using the incisal edge of the central incisors,
-create a premium dark visual mood, add small corner branding.
+create a premium dark visual mood.
 
 Style:
 Premium Dark, dark graphite or luxury black background,
@@ -85,9 +83,7 @@ minimal luxury medical aesthetic.
 
 Composition:
 single image, subject centered, restoration fully visible, clean framing,
-balanced contrast, no collage, no large text, no face, no patient, no blood, no clinical treatment scene.
-
-Optional small corner branding: "{BRAND}".
+balanced contrast, no collage, no text, no logo, no watermark, no face, no patient, no blood, no clinical treatment scene.
 
 Final goal: make the same dental work look professionally presented on a premium dark background, without changing the restoration itself.`,
 
@@ -110,7 +106,7 @@ Allowed edits:
 clean or simplify the background, adjust lighting, improve exposure,
 improve white balance, add soft natural shadows,
 straighten the image using the incisal edge of the central incisors,
-create a calm studio look, add small corner branding.
+create a calm studio look.
 
 Style:
 Soft Studio, warm neutral beige or soft gray background,
@@ -120,9 +116,7 @@ natural ceramic texture, elegant Instagram portfolio look.
 
 Composition:
 single image, subject centered, restoration fully visible, clean framing,
-no collage, no large text, no face, no patient, no blood, no clinical treatment scene.
-
-Optional small corner branding: "{BRAND}".
+no collage, no text, no logo, no watermark, no face, no patient, no blood, no clinical treatment scene.
 
 Final goal: make the same dental work look softly lit, elegant, and portfolio-ready, without changing the restoration itself.`,
 };
@@ -141,7 +135,8 @@ export interface ProcessImageOutput {
 
 export async function processImage(input: ProcessImageInput): Promise<ProcessImageOutput> {
   const t0 = Date.now();
-  const prompt = buildPrompt(input.style, input.brandText);
+  const prompt = buildPrompt(input.style);
+  void input.brandText; // больше не идёт в промт — обрабатываем брендинг постпроцессингом
 
   // Используем model-specific эндпоинт `/v1/models/{owner}/{name}/predictions` —
   // эндпоинт `/v1/predictions` теперь требует явный `version` hash, что менее удобно.
