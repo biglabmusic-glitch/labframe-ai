@@ -22,7 +22,7 @@ export function ScreenUpload() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [picked, setPicked] = useState<boolean>(Boolean(draft.photo?.photoPath));
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<{ title: string; sub: string } | null>(null);
+  const [error, setError] = useState<{ title: string; sub: string; raw: string } | null>(null);
 
   useBackButton(back);
   useMainButton({
@@ -85,7 +85,7 @@ export function ScreenUpload() {
       setPicked(true);
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
-      setError(friendlyError(raw));
+      setError({ ...friendlyError(raw), raw });
       setPicked(false);
     } finally {
       setUploading(false);
@@ -221,6 +221,26 @@ export function ScreenUpload() {
             >
               Попробовать снова
             </div>
+            <details style={{ marginTop: 10 }}>
+              <summary style={{ fontSize: 10.5, color: 'var(--c-on-dark-3)', cursor: 'pointer', userSelect: 'none' }}>
+                детали для разработчика
+              </summary>
+              <div
+                className="mono"
+                style={{
+                  marginTop: 6,
+                  fontSize: 10,
+                  color: 'var(--c-on-dark-3)',
+                  lineHeight: 1.4,
+                  wordBreak: 'break-all',
+                  background: 'rgba(0,0,0,0.25)',
+                  padding: 8,
+                  borderRadius: 8,
+                }}
+              >
+                {error.raw}
+              </div>
+            </details>
           </Card>
         )}
 
