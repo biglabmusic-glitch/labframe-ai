@@ -53,48 +53,56 @@ Deno.serve(async (req) => {
       ? await signUrl('brand', brand.logo_path, 60 * 15)
       : undefined;
 
-    // 2. AI-агент: vision-анализ фото + бренд + история → кастомный промт и выбор модели.
-    //    Тянем последние 5 done-jobs юзера для контекста стилевых предпочтений.
-    const { data: prevJobs } = await db
-      .from('jobs')
-      .select('style, format, work_type')
-      .eq('user_id', job.user_id)
-      .eq('status', 'done')
-      .order('created_at', { ascending: false })
-      .limit(5);
+    // 2. AI-агент (опц., через env): vision-анализ фото + бренд + история → кастомный промт.
+    //    AGENT_DISABLED=true — пропускаем, идём по дефолтным правилам.
+    //    Это даёт быстрый kill-switch, если агент валится или раздувает таймаут процессинга.
+    const agentDisabled = Deno.env.get('AGENT_DISABLED') === 'true';
+    let agentResult: Awaited<ReturnType<typeof buildPersonalizedPrompt>> = null;
 
-    const agentResult = await buildPersonalizedPrompt({
-      photoUrl,
-      style:    job.style,
-      format:   job.format,
-      branding: job.branding,
-      workType: job.work_type ?? undefined,
-      brand: {
-        masterName:    brand?.master_name ?? undefined,
-        labName:       brand?.lab_name ?? undefined,
-        defaultStyle:  brand?.default_style ?? undefined,
-        logoPlacement: brand?.logo_placement ?? undefined,
-        hashtags:      brand?.hashtags ?? [],
-        hasLogo:       Boolean(brand?.logo_path),
-      },
-      history: (prevJobs ?? []).map((p) => ({
-        style:    p.style,
-        format:   p.format,
-        workType: p.work_type ?? undefined,
-      })),
-    });
+    if (!agentDisabled) {
+      const { data: prevJobs } = await db
+        .from('jobs')
+        .select('style, format, work_type')
+        .eq('user_id', job.user_id)
+        .eq('status', 'done')
+        .order('created_at', { ascending: false })
+        .limit(5);
 
-    if (agentResult) {
-      await logAi(job.id, 'agent', Deno.env.get('POLZA_AGENT_MODEL') ?? 'gpt-4o-mini', agentResult.durationMs, true, {
-        prompt_tokens: agentResult.promptTokens,
-        completion_tokens: agentResult.completionTokens,
+      agentResult = await buildPersonalizedPrompt({
+        photoUrl,
+        style:    job.style,
+        format:   job.format,
+        branding: job.branding,
+        workType: job.work_type ?? undefined,
+        brand: {
+          masterName:    brand?.master_name ?? undefined,
+          labName:       brand?.lab_name ?? undefined,
+          defaultStyle:  brand?.default_style ?? undefined,
+          logoPlacement: brand?.logo_placement ?? undefined,
+          hashtags:      brand?.hashtags ?? [],
+          hasLogo:       Boolean(brand?.logo_path),
+        },
+        history: (prevJobs ?? []).map((p) => ({
+          style:    p.style,
+          format:   p.format,
+          workType: p.work_type ?? undefined,
+        })),
       });
-      console.log(`agent[${job.id}] model=${agentResult.model} notes="${agentResult.notes}"`);
-    } else {
-      await logAi(job.id, 'agent', 'fallback', 0, false, undefined, 'agent returned null, using default prompt');
+
+      if (agentResult) {
+        await logAi(job.id, 'agent', Deno.env.get('POLZA_AGENT_MODEL') ?? 'gpt-4o-mini', agentResult.durationMs, true, {
+          prompt_tokens: agentResult.promptTokens,
+          completion_tokens: agentResult.completionTokens,
+        });
+        console.log(`agent[${job.id}] model=${agentResult.model} notes="${agentResult.notes}"`);
+      } else {
+        await logAi(job.id, 'agent', 'fallback', 0, false, undefined, 'agent returned null, using default prompt');
+      }
     }
 
-    // 3. Image AI — используем промт и модель агента, или fallback на дефолтную логику.
+    // 3. Image AI — используем кастомный промт агента (если есть).
+    //    Выбор модели НЕ от агента: модель управляется env IMAGE_PROVIDER (сейчас polza),
+    //    чтобы не вынуждать агента знать о текущем платёжном провайдере.
     const t0 = Date.now();
     const img = await processImage({
       photoUrl,
@@ -102,7 +110,6 @@ Deno.serve(async (req) => {
       style:         job.style,
       format:        job.format,
       customPrompt:  agentResult?.prompt,
-      forceProvider: agentResult?.model,
     });
     await logAi(job.id, 'image-ai', img.provider, img.durationMs, true);
 

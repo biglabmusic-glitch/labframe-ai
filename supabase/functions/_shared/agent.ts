@@ -99,37 +99,45 @@ function buildUserContext(input: AgentInput): string {
   return lines.join('\n');
 }
 
+// Ручной таймаут — не зависим от наличия AbortSignal.timeout в среде.
+// fetch получает signal от AbortController, который мы отменяем по таймеру.
+function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, { ...init, signal: ctl.signal }).finally(() => clearTimeout(timer));
+}
+
 export async function buildPersonalizedPrompt(input: AgentInput): Promise<AgentOutput | null> {
   const t0 = Date.now();
   const model = Deno.env.get('POLZA_AGENT_MODEL') ?? 'gpt-4o-mini';
   const baseUrl = env.POLZA_BASE_URL;
 
+  // Текстовый режим — без image_url. Polza-прокси не гарантирует vision для всех моделей;
+  // текстового контекста (бренд + история + параметры) хватает на адаптацию промта.
+  // Если позже захочется vision — переключаемся на gpt-4o или claude-3.5-sonnet через Polza.
   const userText = buildUserContext(input);
 
   try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.POLZA_API_KEY}`,
-        'Content-Type': 'application/json',
+    const res = await fetchWithTimeout(
+      `${baseUrl}/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.POLZA_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user',   content: userText },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0.4,
+        }),
       },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: userText },
-              { type: 'image_url', image_url: { url: input.photoUrl } },
-            ],
-          },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.4,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
+      8_000,
+    );
 
     if (!res.ok) {
       const text = (await res.text()).slice(0, 400);
