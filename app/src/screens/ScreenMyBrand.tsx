@@ -49,6 +49,8 @@ export function ScreenMyBrand() {
   const [newTag, setNewTag] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | undefined>(brand.logoUrl);
   const [logoFileName, setLogoFileName] = useState<string | undefined>(brand.logoFileName);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [logoWarn, setLogoWarn]   = useState<string | null>(null);
 
   useBackButton(back);
   useMainButton({
@@ -67,11 +69,45 @@ export function ScreenMyBrand() {
     },
   });
 
+  // Жёсткая валидация — отбрасываем явно неподходящие файлы.
+  // Мягкая (warn) — пускаем, но подсвечиваем юзеру, что AI может сработать хуже.
   const onLogoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    setLogoUrl(URL.createObjectURL(f));
-    setLogoFileName(f.name);
+    setLogoError(null);
+    setLogoWarn(null);
+
+    const isPng  = f.type === 'image/png';
+    const isJpeg = f.type === 'image/jpeg' || f.type === 'image/jpg';
+    if (!isPng && !isJpeg) {
+      setLogoError('Только PNG или JPEG. SVG/WebP пока не поддерживаем.');
+      return;
+    }
+    if (f.size > 2 * 1024 * 1024) {
+      setLogoError('Файл больше 2 МБ. Сожмите в любом онлайн-компрессоре.');
+      return;
+    }
+
+    // Проверяем размеры — загружаем как Image и смотрим naturalWidth/Height.
+    const objUrl = URL.createObjectURL(f);
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const ratio = w / Math.max(h, 1);
+      const warnings: string[] = [];
+      if (w < 512 || h < 512) warnings.push(`мал (${w}×${h}, нужно ≥512×512)`);
+      if (ratio < 0.8 || ratio > 1.25) warnings.push('не квадратный — AI может обрезать');
+      if (isJpeg) warnings.push('JPEG: фон не прозрачный — лучше PNG');
+      setLogoWarn(warnings.length ? `Логотип ${warnings.join('; ')}.` : null);
+      setLogoUrl(objUrl);
+      setLogoFileName(f.name);
+    };
+    img.onerror = () => {
+      setLogoError('Не удалось прочитать файл как изображение.');
+      URL.revokeObjectURL(objUrl);
+    };
+    img.src = objUrl;
   };
 
   const addTag = (raw: string) => {
@@ -173,6 +209,8 @@ export function ScreenMyBrand() {
                       onClick={() => {
                         setLogoUrl(undefined);
                         setLogoFileName(undefined);
+                        setLogoError(null);
+                        setLogoWarn(null);
                       }}
                     >
                       удалить
@@ -185,6 +223,67 @@ export function ScreenMyBrand() {
                 )}
               </div>
             </div>
+          </div>
+
+          {logoError && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: '8px 10px',
+                borderRadius: 10,
+                background: 'rgba(244,177,154,0.12)',
+                border: '1px solid rgba(244,177,154,0.35)',
+                fontSize: 11.5,
+                color: '#F4B19A',
+                lineHeight: 1.4,
+              }}
+            >
+              {logoError}
+            </div>
+          )}
+          {logoWarn && !logoError && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: '8px 10px',
+                borderRadius: 10,
+                background: 'rgba(255,210,128,0.10)',
+                border: '1px solid rgba(255,210,128,0.30)',
+                fontSize: 11.5,
+                color: '#E8C07A',
+                lineHeight: 1.4,
+              }}
+            >
+              ⚠️ {logoWarn}
+            </div>
+          )}
+
+          {/* Требования к логотипу — короткий список, чтобы юзер с первого раза
+              загрузил то, с чем AI умеет работать. */}
+          <div
+            style={{
+              marginTop: 12,
+              padding: 10,
+              borderRadius: 12,
+              background: 'rgba(239,243,255,0.03)',
+              border: '1px solid var(--c-line)',
+              fontSize: 11.5,
+              color: 'var(--c-on-dark-2)',
+              lineHeight: 1.5,
+            }}
+          >
+            <div
+              className="mono"
+              style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--c-on-dark-3)', marginBottom: 4 }}
+            >
+              ТРЕБОВАНИЯ
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 16 }}>
+              <li>PNG с прозрачным фоном (лучше всего)</li>
+              <li>Квадрат 1:1, минимум 512×512 px</li>
+              <li>До 2 МБ, без мелких деталей и тонких линий</li>
+              <li>Простой контрастный знак или короткое название</li>
+            </ul>
           </div>
         </Card>
       </div>

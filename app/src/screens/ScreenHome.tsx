@@ -8,7 +8,6 @@ import {
   IconArrow,
   IconGrid,
   IconTooth,
-  IconUser,
 } from '../components/primitives/icons';
 import { useApp } from '../state/AppContext';
 import { useBackButton } from '../telegram/useBackButton';
@@ -28,13 +27,17 @@ const FORMAT_LABELS: Record<string, string> = {
 };
 
 export function ScreenHome() {
-  const { user, history, resetDraft } = useApp();
+  const { user, brand, history, resetDraft } = useApp();
   const { push } = useRouter();
 
   useBackButton(() => WebApp?.close?.());
   useMainButton(null);
 
   const go = (r: RouteId) => () => push(r);
+
+  // «Бренд заполнен» — нужен либо логотип, либо имя мастера.
+  // Это используем для подсветки CTA «заполните профиль» в шапке.
+  const brandReady = Boolean(brand.logoUrl || brand.masterName);
 
   return (
     <Screen>
@@ -60,26 +63,58 @@ export function ScreenHome() {
         </span>
       </div>
 
-      <div style={{ padding: '8px 22px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+      {/* Identity-блок — кликабельный, ведёт в «Мой бренд» (логотип/имя/хэштеги).
+          Это убирает дубликат «Мой бренд» из 2x2 грида ниже. */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => push('mybrand')}
+        style={{
+          padding: '8px 22px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          cursor: 'pointer',
+        }}
+      >
         <div
           style={{
             width: 44,
             height: 44,
             borderRadius: 999,
-            background: 'var(--c-card-dd)',
+            background: brand.logoUrl ? 'transparent' : 'var(--c-card-dd)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: 16,
             fontWeight: 600,
             color: 'var(--c-accent)',
+            overflow: 'hidden',
+            border: brand.logoUrl ? '1px solid var(--c-line)' : 'none',
           }}
         >
-          {user.initials}
+          {brand.logoUrl ? (
+            <img src={brand.logoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            user.initials
+          )}
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, color: 'var(--c-on-dark-2)' }}>Привет,</div>
-          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: -0.2 }}>{user.name}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, color: 'var(--c-on-dark-2)' }}>
+            {brandReady ? 'Привет,' : 'Профиль не заполнен'}
+          </div>
+          <div
+            style={{
+              fontSize: 16,
+              fontWeight: 600,
+              letterSpacing: -0.2,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {brand.masterName || user.name}
+          </div>
         </div>
         {/* Тариф — кликабельный, ведёт на /pricing. Заменяет отдельную карточку «Тарифы». */}
         <button
@@ -182,24 +217,63 @@ export function ScreenHome() {
         </div>
       </div>
 
-      {/* Быстрые ссылки — только Бренд + Примеры. Тарифы переехали в шапку,
-          «Как снимать» переехало в ScreenUpload (контекст съёмки фото). */}
-      <div style={{ padding: '0 16px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        {[
-          { t: 'Мой бренд', s: 'Логотип, имя, хэштеги', icon: IconUser, route: 'mybrand'  as RouteId },
-          { t: 'Примеры',   s: 'До / после',            icon: IconGrid, route: 'examples' as RouteId },
-        ].map((it) => (
-          <Card key={it.t} kind="dark" pad={14} radius={20} onClick={go(it.route)} style={{ position: 'relative' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-              <CircleBtn size={32} kind="ghost">
-                <it.icon size={16} color="var(--c-accent)" />
-              </CircleBtn>
-              <IconArrow size={14} color="var(--c-on-dark-3)" />
+      {/* Если профиль не заполнен — большой CTA. Без него AI не знает имя/лого/хэштеги
+          и работает в обезличенном режиме. */}
+      {!brandReady && (
+        <div style={{ padding: '0 16px 12px' }}>
+          <Card
+            kind="dark"
+            pad={14}
+            radius={20}
+            onClick={go('mybrand')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              background: 'rgba(147,213,225,0.08)',
+              border: '1px solid rgba(147,213,225,0.28)',
+            }}
+          >
+            <div
+              style={{
+                width: 38, height: 38, borderRadius: 12,
+                background: 'rgba(147,213,225,0.18)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 18,
+              }}
+            >
+              ✨
             </div>
-            <div style={{ marginTop: 12, fontSize: 14, fontWeight: 600 }}>{it.t}</div>
-            <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 2 }}>{it.s}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600 }}>Заполните профиль</div>
+              <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
+                AI учтёт ваше имя, логотип и хэштеги в каждой работе
+              </div>
+            </div>
+            <IconArrow size={14} color="var(--c-accent)" />
           </Card>
-        ))}
+        </div>
+      )}
+
+      {/* Быстрая ссылка — только Примеры. «Мой бренд» теперь сверху (шапка-кликабельная).
+          «Тарифы» переехали в FREE-пилл, «Как снимать» — в ScreenUpload. */}
+      <div style={{ padding: '0 16px 12px', display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+        <Card kind="dark" pad={14} radius={20} onClick={go('examples')} style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <CircleBtn size={32} kind="ghost">
+                <IconGrid size={16} color="var(--c-accent)" />
+              </CircleBtn>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Примеры</div>
+                <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
+                  Реальные до / после по стилям
+                </div>
+              </div>
+            </div>
+            <IconArrow size={14} color="var(--c-on-dark-3)" />
+          </div>
+        </Card>
       </div>
 
       <div
