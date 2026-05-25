@@ -24,6 +24,7 @@ interface AppContextValue extends AppState {
   setDraft: (d: Partial<Draft>) => void;
   resetDraft: () => void;
   completeOnboarding: () => void;
+  addToHistory: (j: Job) => void;
 }
 
 const STORAGE_KEY = 'labframe.v1';
@@ -145,13 +146,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const resetDraft = useCallback(() => setDraftState(initialDraft), []);
   const completeOnboarding = useCallback(() => setOnboarded(true), []);
 
-  // expose setHistoryState через ничего — пока история ведётся локально, она появляется
-  // когда юзер закончит флоу (см. ScreenResult). Метод вернём, если станет нужен снаружи.
-  void setHistoryState;
+  // Добавить в локальную ленту истории (вызывается из ScreenResult при `done`).
+  // Дедуп по id: если уже есть — обновляем (например, resultUrl пришёл позже).
+  // Храним до 24 последних, чтобы localStorage не распух.
+  const addToHistory = useCallback((j: Job) => {
+    setHistoryState((p) => {
+      const without = p.filter((x) => x.id !== j.id);
+      return [j, ...without].slice(0, 24);
+    });
+  }, []);
 
   const value = useMemo<AppContextValue>(
-    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding }),
-    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding],
+    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory }),
+    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

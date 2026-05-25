@@ -26,7 +26,7 @@ const FORMAT_LABEL: Record<FormatId, string> = {
 };
 
 export function ScreenResult() {
-  const { draft, brand, resetDraft } = useApp();
+  const { draft, brand, resetDraft, addToHistory } = useApp();
   const { reset, back } = useRouter();
   const [tab, setTab] = useState<FormatId>(draft.format ?? '1x1');
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -42,7 +42,23 @@ export function ScreenResult() {
     api.getJob(id).then((j) => {
       if (j.resultUrl) setResultUrl(j.resultUrl);
       if (j.caption) setCaption({ main: j.caption.main, hashtags: j.caption.hashtags ?? [] });
+      // Кладём в локальную историю — она рендерится на Home как лента «ПОСЛЕДНИЕ».
+      // Делаем только если есть resultUrl, чтобы не показывать пустые превью.
+      if (j.resultUrl && draft.style && draft.format) {
+        addToHistory({
+          id,
+          style: draft.style,
+          format: draft.format,
+          workType: draft.workType,
+          createdAt: Date.now(),
+          thumbBg: 'var(--c-card-dd)',
+          dark: draft.style === 'dark',
+          resultUrl: j.resultUrl,
+          captionMain: j.caption?.main,
+        });
+      }
     }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const regenHashtags = async () => {

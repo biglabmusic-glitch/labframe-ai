@@ -56,4 +56,6 @@ export interface Job {
   createdAt: number;
   thumbBg: string;
   dark?: boolean;
+  resultUrl?: string;     // публичный URL готовой картинки (для миниатюры на Home)
+  captionMain?: string;   // первая строка подписи (preview под миниатюрой)
 }

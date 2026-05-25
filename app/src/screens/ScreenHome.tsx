@@ -6,9 +6,7 @@ import { BrandMark } from '../components/primitives/BrandMark';
 import { UsageBar } from '../components/UsageBar';
 import {
   IconArrow,
-  IconCam,
   IconGrid,
-  IconSpark,
   IconTooth,
   IconUser,
 } from '../components/primitives/icons';
@@ -83,9 +81,28 @@ export function ScreenHome() {
           <div style={{ fontSize: 13, color: 'var(--c-on-dark-2)' }}>Привет,</div>
           <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: -0.2 }}>{user.name}</div>
         </div>
-        <Tag kind="ghost" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8 }}>
+        {/* Тариф — кликабельный, ведёт на /pricing. Заменяет отдельную карточку «Тарифы». */}
+        <button
+          type="button"
+          onClick={() => push('pricing')}
+          style={{
+            padding: '5px 10px',
+            borderRadius: 999,
+            border: '1px solid var(--c-line)',
+            background: 'rgba(239,243,255,0.04)',
+            color: 'var(--c-on-dark-2)',
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: 0.8,
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
           {user.plan.toUpperCase()}
-        </Tag>
+          <span style={{ opacity: 0.5, fontSize: 9 }}>→</span>
+        </button>
       </div>
 
       {/* usage-bar — главная панель прогресса генераций */}
@@ -165,13 +182,12 @@ export function ScreenHome() {
         </div>
       </div>
 
-      {/* 2x2 quick actions */}
+      {/* Быстрые ссылки — только Бренд + Примеры. Тарифы переехали в шапку,
+          «Как снимать» переехало в ScreenUpload (контекст съёмки фото). */}
       <div style={{ padding: '0 16px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         {[
-          { t: 'Мой бренд', s: 'Логотип, имя, хэштеги', icon: IconUser,  route: 'mybrand' as RouteId },
-          { t: 'Примеры',   s: 'До / после',            icon: IconGrid,  route: 'examples' as RouteId },
-          { t: 'Тарифы',    s: 'Free · Start · Pro',    icon: IconSpark, route: 'pricing' as RouteId },
-          { t: 'Помощь',    s: 'Как снимать',           icon: IconCam,   route: 'help' as RouteId },
+          { t: 'Мой бренд', s: 'Логотип, имя, хэштеги', icon: IconUser, route: 'mybrand'  as RouteId },
+          { t: 'Примеры',   s: 'До / после',            icon: IconGrid, route: 'examples' as RouteId },
         ].map((it) => (
           <Card key={it.t} kind="dark" pad={14} radius={20} onClick={go(it.route)} style={{ position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -198,52 +214,95 @@ export function ScreenHome() {
           className="mono"
           style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--c-on-dark-3)' }}
         >
-          ПОСЛЕДНИЕ
+          ВАШИ РАБОТЫ
         </div>
-        <span style={{ fontSize: 12, color: 'var(--c-accent)' }}>смотреть все →</span>
+        {history.length > 0 && (
+          <span style={{ fontSize: 11, color: 'var(--c-on-dark-3)' }}>{history.length}</span>
+        )}
       </div>
-      <div
-        className="no-scrollbar"
-        style={{ padding: '0 16px 18px', display: 'flex', gap: 8, overflowX: 'auto' }}
-      >
-        {history.map((p) => {
-          const dark = p.dark;
-          return (
-            <div
-              key={p.id}
-              style={{
-                flex: '0 0 110px',
-                height: 130,
-                borderRadius: 16,
-                background: p.thumbBg,
-                display: 'flex',
-                alignItems: 'flex-end',
-                padding: 8,
-                position: 'relative',
-                color: dark ? 'var(--c-on-dark)' : 'var(--c-ink)',
-              }}
-            >
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%,-50%)',
-                  color: dark ? 'rgba(239,243,255,0.7)' : 'rgba(15,18,33,0.6)',
-                }}
-              >
-                <IconTooth size={34} />
-              </div>
-              <div
-                className="mono"
-                style={{ fontSize: 9, letterSpacing: 0.4, opacity: 0.7 }}
-              >
-                {STYLE_LABELS[p.style]} · {FORMAT_LABELS[p.format]}
+
+      {history.length === 0 ? (
+        <div style={{ padding: '0 16px 18px' }}>
+          <Card kind="dark" pad={14} radius={18} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <CircleBtn size={36} kind="ghost">
+              <IconTooth size={18} color="var(--c-accent)" />
+            </CircleBtn>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Здесь появятся ваши посты</div>
+              <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
+                Создайте первый — лента будет с миниатюрами.
               </div>
             </div>
-          );
-        })}
-      </div>
+          </Card>
+        </div>
+      ) : (
+        <div
+          className="no-scrollbar"
+          style={{ padding: '0 16px 18px', display: 'flex', gap: 8, overflowX: 'auto' }}
+        >
+          {history.map((p) => {
+            const dark = p.dark;
+            return (
+              <div
+                key={p.id}
+                style={{
+                  flex: '0 0 110px',
+                  height: 130,
+                  borderRadius: 16,
+                  background: p.thumbBg,
+                  display: 'flex',
+                  alignItems: 'flex-end',
+                  padding: 8,
+                  position: 'relative',
+                  overflow: 'hidden',
+                  color: dark ? 'var(--c-on-dark)' : 'var(--c-ink)',
+                }}
+              >
+                {p.resultUrl ? (
+                  <img
+                    src={p.resultUrl}
+                    alt=""
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '50%',
+                      left: '50%',
+                      transform: 'translate(-50%,-50%)',
+                      color: dark ? 'rgba(239,243,255,0.7)' : 'rgba(15,18,33,0.6)',
+                    }}
+                  >
+                    <IconTooth size={34} />
+                  </div>
+                )}
+                <div
+                  className="mono"
+                  style={{
+                    position: 'relative',
+                    zIndex: 1,
+                    fontSize: 9,
+                    letterSpacing: 0.4,
+                    padding: '2px 6px',
+                    borderRadius: 6,
+                    background: 'rgba(15,18,33,0.55)',
+                    color: 'rgba(239,243,255,0.9)',
+                  }}
+                >
+                  {STYLE_LABELS[p.style]} · {FORMAT_LABELS[p.format]}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </Screen>
   );
 }

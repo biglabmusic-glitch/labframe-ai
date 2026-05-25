@@ -262,6 +262,33 @@ export function ScreenUpload() {
             </div>
           </div>
         </Card>
+
+        {/* Ссылка на «Как снимать» — в контексте, где это реально нужно (перед загрузкой). */}
+        <Card
+          kind="dark"
+          pad={12}
+          radius={16}
+          onClick={() => push('help')}
+          style={{
+            marginTop: 10,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            background: 'rgba(147,213,225,0.06)',
+            border: '1px solid rgba(147,213,225,0.18)',
+          }}
+        >
+          <CircleBtn size={28} kind="ghost">
+            <IconCam size={14} color="var(--c-accent)" />
+          </CircleBtn>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Как снимать, чтобы AI лучше отработал</div>
+            <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 1 }}>
+              Свет, фокус, ракурс — 7 коротких правил
+            </div>
+          </div>
+          <span style={{ color: 'var(--c-on-dark-3)', fontSize: 14 }}>→</span>
+        </Card>
       </div>
     </Screen>
   );
