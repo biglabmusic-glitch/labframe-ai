@@ -3,60 +3,61 @@ import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
 import { Card } from '../components/primitives/Card';
 import { Pill } from '../components/primitives/Pill';
-import { IconTooth } from '../components/primitives/icons';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import { useApp } from '../state/AppContext';
+import { EXAMPLES, STYLE_ORDER } from '../lib/examples';
+import type { StyleId } from '../state/types';
 
-const FILTERS = ['Все', 'Clean White', 'Premium Dark', 'Soft Studio'];
-
-const ITEMS: { style: string; type: string; bg: string; dark?: boolean }[] = [
-  { style: 'Premium Dark', type: 'Виниры',  bg: '#0F1221', dark: true },
-  { style: 'Clean White',  type: 'Коронка', bg: '#F4F6FB' },
-  { style: 'Soft Studio',  type: 'Мост',    bg: 'linear-gradient(135deg,#D6EEF3,#EFF3FF)' },
-  { style: 'Premium Dark', type: 'Коронка', bg: '#0F1221', dark: true },
-  { style: 'Clean White',  type: 'Виниры',  bg: '#F4F6FB' },
-  { style: 'Soft Studio',  type: 'Имплант', bg: 'linear-gradient(135deg,#EFF3FF,#D6EEF3)' },
+const FILTERS: Array<{ key: 'all' | StyleId; label: string }> = [
+  { key: 'all',   label: 'Все' },
+  { key: 'clean', label: 'Clean White' },
+  { key: 'dark',  label: 'Premium Dark' },
+  { key: 'soft',  label: 'Soft Studio' },
 ];
 
 export function ScreenExamples() {
-  const [active, setActive] = useState(0);
-  const { back, reset } = useRouter();
-  const { resetDraft } = useApp();
+  const [filter, setFilter]   = useState<'all' | StyleId>('all');
+  const [feature, setFeature] = useState<StyleId>('dark');
+  const { back, reset }       = useRouter();
+  const { resetDraft, setDraft } = useApp();
 
   useBackButton(back);
   useMainButton({
     text: 'Создать такой же пост',
     onClick: () => {
       resetDraft();
+      setDraft({ style: feature });
       reset('upload');
     },
   });
 
-  const items = active === 0
-    ? ITEMS
-    : ITEMS.filter((it) => it.style === FILTERS[active]);
+  const gridStyles: StyleId[] = filter === 'all' ? STYLE_ORDER : [filter];
+  const featureItem = EXAMPLES[feature];
 
   return (
     <Screen>
       <ScreenIntro
         title="Примеры работ"
-        sub="Реальные обработки от мастеров. Любой пример можно повторить в один тап."
+        sub="Реальные обработки. Любой пример можно повторить в один тап."
       />
 
       <div
         className="no-scrollbar"
         style={{ padding: '0 22px 14px', display: 'flex', gap: 6, overflowX: 'auto' }}
       >
-        {FILTERS.map((f, i) => (
+        {FILTERS.map((f) => (
           <Pill
-            key={f}
+            key={f.key}
             size="sm"
-            kind={i === active ? 'accent' : 'ghost'}
-            onClick={() => setActive(i)}
+            kind={filter === f.key ? 'accent' : 'ghost'}
+            onClick={() => {
+              setFilter(f.key);
+              if (f.key !== 'all') setFeature(f.key);
+            }}
           >
-            {f}
+            {f.label}
           </Pill>
         ))}
       </div>
@@ -70,25 +71,27 @@ export function ScreenExamples() {
                 position: 'relative',
                 borderRadius: 14,
                 overflow: 'hidden',
-                background: '#7A7E89',
-                height: 130,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                background: '#1A1D2A',
+                aspectRatio: '1 / 1',
               }}
             >
-              <div style={{ color: 'rgba(15,18,33,0.35)' }}>
-                <IconTooth size={40} />
-              </div>
+              <img
+                src={featureItem.before}
+                alt="до"
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
               <div
                 className="mono"
                 style={{
                   position: 'absolute',
                   top: 8,
                   left: 8,
+                  padding: '3px 7px',
+                  background: 'rgba(15,18,33,0.55)',
+                  borderRadius: 999,
                   fontSize: 9,
                   letterSpacing: 0.8,
-                  color: 'rgba(239,243,255,0.85)',
+                  color: 'rgba(239,243,255,0.9)',
                 }}
               >
                 ДО
@@ -101,21 +104,23 @@ export function ScreenExamples() {
                 borderRadius: 14,
                 overflow: 'hidden',
                 background: 'var(--c-bg)',
-                height: 130,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                aspectRatio: '1 / 1',
               }}
             >
-              <div style={{ color: 'rgba(239,243,255,0.85)' }}>
-                <IconTooth size={40} />
-              </div>
+              <img
+                src={featureItem.after}
+                alt="после"
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
               <div
                 className="mono"
                 style={{
                   position: 'absolute',
                   top: 8,
                   left: 8,
+                  padding: '3px 7px',
+                  background: 'rgba(15,18,33,0.55)',
+                  borderRadius: 999,
                   fontSize: 9,
                   letterSpacing: 0.8,
                   color: 'var(--c-accent)',
@@ -147,10 +152,18 @@ export function ScreenExamples() {
             }}
           >
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Premium Dark · Виниры</div>
-              <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)' }}>обработка 14 сек</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{featureItem.label}</div>
+              <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)' }}>обработка ~14 сек</div>
             </div>
-            <Pill size="sm" kind="accent">
+            <Pill
+              size="sm"
+              kind="accent"
+              onClick={() => {
+                resetDraft();
+                setDraft({ style: feature });
+                reset('upload');
+              }}
+            >
               повторить
             </Pill>
           </div>
@@ -165,52 +178,49 @@ export function ScreenExamples() {
           gap: 8,
         }}
       >
-        {items.map((it, i) => (
-          <div
-            key={i}
-            style={{
-              position: 'relative',
-              height: 130,
-              borderRadius: 18,
-              background: it.bg,
-              overflow: 'hidden',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: it.dark ? 'rgba(239,243,255,0.7)' : 'rgba(15,18,33,0.6)',
-            }}
-          >
-            <IconTooth size={40} />
-            <div
+        {gridStyles.map((sid) => {
+          const it     = EXAMPLES[sid];
+          const isDark = sid === 'dark';
+          const active = sid === feature;
+          return (
+            <button
+              key={sid}
+              type="button"
+              onClick={() => setFeature(sid)}
               style={{
-                position: 'absolute',
-                top: 8,
-                left: 8,
-                padding: '3px 8px',
-                background: it.dark ? 'rgba(15,18,33,0.55)' : 'rgba(255,255,255,0.85)',
-                borderRadius: 999,
-                fontSize: 9,
-                fontWeight: 500,
-                color: it.dark ? 'var(--c-on-dark)' : 'var(--c-ink)',
+                position: 'relative',
+                aspectRatio: '1 / 1',
+                borderRadius: 18,
+                overflow: 'hidden',
+                padding: 0,
+                border: active ? '2px solid var(--c-accent)' : '1px solid var(--c-line)',
+                cursor: 'pointer',
+                background: '#0F1221',
               }}
             >
-              {it.style}
-            </div>
-            <div
-              className="mono"
-              style={{
-                position: 'absolute',
-                bottom: 8,
-                left: 10,
-                fontSize: 9,
-                letterSpacing: 0.4,
-                opacity: 0.6,
-              }}
-            >
-              {it.type}
-            </div>
-          </div>
-        ))}
+              <img
+                src={it.after}
+                alt={it.label}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  left: 8,
+                  padding: '3px 8px',
+                  background: isDark ? 'rgba(15,18,33,0.55)' : 'rgba(255,255,255,0.85)',
+                  borderRadius: 999,
+                  fontSize: 9,
+                  fontWeight: 500,
+                  color: isDark ? 'var(--c-on-dark)' : 'var(--c-ink)',
+                }}
+              >
+                {it.label}
+              </div>
+            </button>
+          );
+        })}
       </div>
     </Screen>
   );
