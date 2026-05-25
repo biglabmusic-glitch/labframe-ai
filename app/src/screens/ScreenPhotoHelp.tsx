@@ -1,6 +1,5 @@
 import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
-import { IconTooth } from '../components/primitives/icons';
 import { useApp } from '../state/AppContext';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
@@ -48,33 +47,24 @@ export function ScreenPhotoHelp() {
         >
           <div
             style={{
-              height: 90,
+              aspectRatio: '4 / 3',
               borderRadius: 12,
-              background: '#7C5A2E',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'rgba(239,243,255,0.6)',
               marginBottom: 10,
-              position: 'relative',
               overflow: 'hidden',
+              background: '#1A1D2A',
             }}
           >
-            <IconTooth size={36} />
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                background:
-                  'radial-gradient(circle at 40% 30%, rgba(255,255,255,0.4), transparent 50%)',
-              }}
+            <img
+              src="/examples/photo-bad.jpg"
+              alt="плохо"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           </div>
           <div className="mono" style={{ fontSize: 10, letterSpacing: 0.6, color: '#E89B7E' }}>
             ПЛОХО
           </div>
           <div style={{ fontSize: 12, marginTop: 4, color: 'var(--c-on-dark-2)' }}>
-            Жёлтый свет, пересвет
+            Жёлтый свет, не в фокусе
           </div>
         </div>
         <div
@@ -88,23 +78,24 @@ export function ScreenPhotoHelp() {
         >
           <div
             style={{
-              height: 90,
+              aspectRatio: '4 / 3',
               borderRadius: 12,
-              background: '#E2E7F0',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'rgba(15,18,33,0.55)',
               marginBottom: 10,
+              overflow: 'hidden',
+              background: '#E2E7F0',
             }}
           >
-            <IconTooth size={36} />
+            <img
+              src="/examples/photo-good.jpg"
+              alt="хорошо"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
           </div>
           <div className="mono" style={{ fontSize: 10, letterSpacing: 0.6, color: '#2E8467' }}>
             ХОРОШО
           </div>
           <div style={{ fontSize: 12, marginTop: 4, color: 'var(--c-on-light-2)' }}>
-            Нейтральный свет, в фокусе
+            Чёткий кадр, нейтральный фон
           </div>
         </div>
       </div>
