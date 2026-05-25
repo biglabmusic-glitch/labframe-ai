@@ -1,4 +1,5 @@
 import type { Plan } from '../state/types';
+import { LIMITS_DISABLED } from '../lib/feature-flags';
 
 interface Props {
   used: number;
@@ -18,9 +19,10 @@ const PLAN_LABEL: Record<Plan, string> = {
  * Карточка-прогресс «использовано X из Y».
  * Безлимит (pro/lab) рисуется без полосы, с пометкой «без ограничений».
  * При исчерпании Free — кнопка «улучшить» подсвечивается, заголовок становится красным.
+ * Pre-release mode (LIMITS_DISABLED=true) — всем показываем «Без ограничений · pre-release».
  */
 export function UsageBar({ used, limit, plan, onUpgrade }: Props) {
-  const unlimited = plan === 'pro' || plan === 'lab';
+  const unlimited = LIMITS_DISABLED || plan === 'pro' || plan === 'lab';
   const pct       = unlimited ? 0 : Math.min(100, Math.round((used / Math.max(limit, 1)) * 100));
   const exhausted = !unlimited && used >= limit;
   const remaining = Math.max(0, limit - used);
@@ -65,6 +67,13 @@ export function UsageBar({ used, limit, plan, onUpgrade }: Props) {
               ? 'Лимит исчерпан'
               : `${remaining} из ${limit} осталось`}
           </div>
+          {unlimited && LIMITS_DISABLED && (
+            <div
+              style={{ marginTop: 2, fontSize: 11.5, color: 'var(--c-on-dark-3)' }}
+            >
+              pre-release · лимиты подключим вместе с оплатой
+            </div>
+          )}
           {!unlimited && (
             <div
               style={{ marginTop: 2, fontSize: 11.5, color: 'var(--c-on-dark-3)' }}
@@ -74,7 +83,7 @@ export function UsageBar({ used, limit, plan, onUpgrade }: Props) {
           )}
         </div>
 
-        {plan === 'free' && (
+        {plan === 'free' && !LIMITS_DISABLED && (
           <button
             type="button"
             onClick={onUpgrade}
