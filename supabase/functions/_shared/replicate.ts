@@ -109,6 +109,7 @@ export interface ProcessImageInput {
   format: FormatId;
   brandText?: string;
   forceProvider?: ProviderName;      // 'auto' (default) / 'flux-kontext' / 'nano-banana' / 'polza'
+  customPrompt?: string;             // если задан — используется вместо STYLE_PROMPT (см. agent.ts)
 }
 
 export interface ProcessImageOutput {
@@ -119,7 +120,8 @@ export interface ProcessImageOutput {
 
 export async function processImage(input: ProcessImageInput): Promise<ProcessImageOutput> {
   void input.brandText; // больше не идёт в промт — брендирование постпроцессингом
-  const prompt = input.logoUrl ? buildPromptWithLogo(input.style) : buildPrompt(input.style);
+  const prompt = input.customPrompt
+    ?? (input.logoUrl ? buildPromptWithLogo(input.style) : buildPrompt(input.style));
 
   return generateImage(
     {

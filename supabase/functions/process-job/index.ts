@@ -7,6 +7,7 @@ import { processImage } from '../_shared/replicate.ts';
 import { generateText } from '../_shared/polza.ts';
 import { signUrl, uploadFromUrl, publicUrl } from '../_shared/storage.ts';
 import { sendPhoto } from '../_shared/telegram.ts';
+import { buildPersonalizedPrompt } from '../_shared/agent.ts';
 
 Deno.serve(async (req) => {
   // Защита: пускаем только если есть internal-secret в заголовке.
@@ -52,14 +53,56 @@ Deno.serve(async (req) => {
       ? await signUrl('brand', brand.logo_path, 60 * 15)
       : undefined;
 
-    // 2. Image AI — роутер выберет провайдер (с логотипом → nano-banana, без → flux-kontext)
+    // 2. AI-агент: vision-анализ фото + бренд + история → кастомный промт и выбор модели.
+    //    Тянем последние 5 done-jobs юзера для контекста стилевых предпочтений.
+    const { data: prevJobs } = await db
+      .from('jobs')
+      .select('style, format, work_type')
+      .eq('user_id', job.user_id)
+      .eq('status', 'done')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    const agentResult = await buildPersonalizedPrompt({
+      photoUrl,
+      style:    job.style,
+      format:   job.format,
+      branding: job.branding,
+      workType: job.work_type ?? undefined,
+      brand: {
+        masterName:    brand?.master_name ?? undefined,
+        labName:       brand?.lab_name ?? undefined,
+        defaultStyle:  brand?.default_style ?? undefined,
+        logoPlacement: brand?.logo_placement ?? undefined,
+        hashtags:      brand?.hashtags ?? [],
+        hasLogo:       Boolean(brand?.logo_path),
+      },
+      history: (prevJobs ?? []).map((p) => ({
+        style:    p.style,
+        format:   p.format,
+        workType: p.work_type ?? undefined,
+      })),
+    });
+
+    if (agentResult) {
+      await logAi(job.id, 'agent', Deno.env.get('POLZA_AGENT_MODEL') ?? 'gpt-4o-mini', agentResult.durationMs, true, {
+        prompt_tokens: agentResult.promptTokens,
+        completion_tokens: agentResult.completionTokens,
+      });
+      console.log(`agent[${job.id}] model=${agentResult.model} notes="${agentResult.notes}"`);
+    } else {
+      await logAi(job.id, 'agent', 'fallback', 0, false, undefined, 'agent returned null, using default prompt');
+    }
+
+    // 3. Image AI — используем промт и модель агента, или fallback на дефолтную логику.
     const t0 = Date.now();
     const img = await processImage({
       photoUrl,
       logoUrl,
-      style:     job.style,
-      format:    job.format,
-      brandText: job.branding === 'name' ? (brand?.master_name ?? undefined) : undefined,
+      style:         job.style,
+      format:        job.format,
+      customPrompt:  agentResult?.prompt,
+      forceProvider: agentResult?.model,
     });
     await logAi(job.id, 'image-ai', img.provider, img.durationMs, true);
 
