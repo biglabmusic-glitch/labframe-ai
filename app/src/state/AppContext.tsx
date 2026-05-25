@@ -9,6 +9,7 @@ import {
 } from 'react';
 import type { BrandData, Draft, Job, User } from './types';
 import { WebApp } from '../telegram/webapp';
+import { api, isBackendReady, type SaveBrandInput } from '../api/client';
 
 interface AppState {
   user: User;
@@ -25,6 +26,10 @@ interface AppContextValue extends AppState {
   resetDraft: () => void;
   completeOnboarding: () => void;
   addToHistory: (j: Job) => void;
+  /** Сохранить бренд на сервере + локально. Возвращает Promise чтобы вызывающий мог дождаться. */
+  syncBrandToServer: (b: Partial<BrandData> & { removeLogo?: boolean }) => Promise<void>;
+  /** true пока тянем /me и /list-jobs при старте — UI может показать спиннер если нужно. */
+  syncing: boolean;
 }
 
 const STORAGE_KEY = 'labframe.v1';
@@ -121,6 +126,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   });
   const [history, setHistoryState] = useState<Job[]>(persisted.history ?? []);
   const [onboarded, setOnboarded] = useState<boolean>(persisted.onboarded ?? false);
+  const [syncing, setSyncing] = useState<boolean>(false);
 
   // Перечитать пользователя, когда WebApp реально прогрузится (initDataUnsafe иногда заполняется позже)
   useEffect(() => {
@@ -129,6 +135,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setUserState(buildInitialUser());
     }
   }, [user.telegramId]);
+
+  // Синхронизация с сервером на старте: /me даёт бренд+тариф+usage,
+  // /list-jobs даёт ленту «ваши работы». Локальный localStorage остаётся
+  // как кэш до ответа сервера — UI не моргает между устройствами.
+  useEffect(() => {
+    if (!isBackendReady()) return;
+    let cancelled = false;
+    (async () => {
+      setSyncing(true);
+      try {
+        const [me, jobs] = await Promise.all([api.me(), api.listJobs(24)]);
+        if (cancelled) return;
+        if (me?.user) {
+          setUserState((p) => ({
+            ...p,
+            telegramId: me.user!.telegramId,
+            username:   me.user!.username   ?? p.username,
+            name:       [me.user!.firstName, me.user!.lastName].filter(Boolean).join(' ') || p.name,
+            initials:   getInitials(me.user!.firstName, me.user!.lastName, me.user!.username),
+            avatarUrl:  me.user!.photoUrl   ?? p.avatarUrl,
+            plan:       me.user!.plan,
+            usage:      { used: me.user!.usageUsed, limit: me.user!.usageLimit, period: 'месяц' },
+          }));
+        }
+        if (me?.brand) {
+          setBrandState((p) => ({ ...p, ...me.brand! }));
+        }
+        if (jobs?.items?.length) {
+          setHistoryState(jobs.items.map((j) => ({
+            id:          j.id,
+            style:       j.style,
+            format:      j.format,
+            workType:    j.workType,
+            createdAt:   j.createdAt,
+            thumbBg:     'var(--c-card-dd)',
+            dark:        j.style === 'dark',
+            resultUrl:   j.resultUrl,
+            captionMain: j.captionMain,
+          })));
+        }
+      } catch {
+        // молча — на iPhone мог быть кратковременный сетевой сбой,
+        // в следующий раз подтянется. Локальный кэш остаётся.
+      } finally {
+        if (!cancelled) setSyncing(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Сохраняем то, что должно жить между сессиями
   useEffect(() => {
@@ -156,9 +211,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Сохранить бренд на сервере + локально. Используется в ScreenMyBrand → MainButton «Сохранить».
+  // Если бэкенд не настроен (mock-режим) — только локальный setBrand.
+  const syncBrandToServer = useCallback(async (b: Partial<BrandData> & { removeLogo?: boolean }) => {
+    setBrandState((p) => ({ ...p, ...b }));
+    if (!isBackendReady()) return;
+    const payload: SaveBrandInput = {
+      masterName:    b.masterName,
+      labName:       b.labName,
+      defaultStyle:  b.defaultStyle,
+      logoPlacement: b.logoPlacement,
+      hashtags:      b.hashtags,
+      removeLogo:    b.removeLogo,
+    };
+    try { await api.saveBrand(payload); }
+    catch { /* локально уже обновили, в следующий раз /me перетянет с сервера */ }
+  }, []);
+
   const value = useMemo<AppContextValue>(
-    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory }),
-    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory],
+    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing }),
+    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

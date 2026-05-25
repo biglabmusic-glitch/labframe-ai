@@ -2,7 +2,7 @@
  * Тонкий fetch-клиент. Если VITE_API_BASE_URL не задан — работаем в mock-режиме,
  * чтобы UI можно было листать без бэка. Когда задан — реальные вызовы Edge Functions.
  */
-import type { Job, StyleId, TextType, WorkType, FormatId, BrandingKind } from '../state/types';
+import type { BrandData, Job, StyleId, TextType, WorkType, FormatId, BrandingKind, Plan } from '../state/types';
 import { WebApp } from '../telegram/webapp';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -54,6 +54,41 @@ export interface JobResult {
   error?: string | null;
 }
 
+export interface MeResponse {
+  user: {
+    telegramId: number;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    photoUrl?: string;
+    plan: Plan;
+    usageUsed: number;
+    usageLimit: number;
+  } | null;
+  brand: Partial<BrandData> | null;
+}
+
+export interface SaveBrandInput {
+  masterName?: string;
+  labName?: string;
+  defaultStyle?: StyleId;
+  logoPlacement?: BrandData['logoPlacement'];
+  hashtags?: string[];
+  removeLogo?: boolean;
+}
+
+export interface ListJobsResponse {
+  items: Array<{
+    id: string;
+    style: StyleId;
+    format: FormatId;
+    workType?: WorkType;
+    resultUrl?: string;
+    captionMain?: string;
+    createdAt: number;
+  }>;
+}
+
 export const api = {
   /**
    * Загрузка фото: фронт получает подписанный upload-URL у бэка, потом PUT файл прямо в Storage.
@@ -90,9 +125,22 @@ export const api = {
     return request<JobResult>(`/get-job?id=${encodeURIComponent(id)}`);
   },
 
-  async me(): Promise<unknown> {
+  async me(): Promise<MeResponse | null> {
     if (!API_BASE) return null;
-    return request<unknown>('/me');
+    return request<MeResponse>('/me');
+  },
+
+  async saveBrand(input: SaveBrandInput): Promise<{ ok: true }> {
+    if (!API_BASE) return { ok: true };
+    return request<{ ok: true }>('/save-brand', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async listJobs(limit = 24): Promise<ListJobsResponse> {
+    if (!API_BASE) return { items: [] };
+    return request<ListJobsResponse>(`/list-jobs?limit=${limit}`);
   },
 
   /** Пере-генерация хэштегов под бренд для уже завершённого job. */

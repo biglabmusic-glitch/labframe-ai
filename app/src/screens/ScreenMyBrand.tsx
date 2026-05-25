@@ -37,7 +37,7 @@ const PLACEMENTS: BrandData['logoPlacement'][] = [
 ];
 
 export function ScreenMyBrand() {
-  const { brand, setBrand } = useApp();
+  const { brand, syncBrandToServer } = useApp();
   const { back } = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -55,8 +55,12 @@ export function ScreenMyBrand() {
   useBackButton(back);
   useMainButton({
     text: 'Сохранить',
-    onClick: () => {
-      setBrand({
+    onClick: async () => {
+      // Лого как файл здесь НЕ заливаем на сервер (это отдельная фича — storage upload).
+      // Если поле logoUrl осталось blob://... — это локальное превью; в БД лого
+      // сохранится только когда сделаем upload-флоу для bucket 'brand'.
+      // Текстовые поля синхронизируем в БД, чтобы на втором устройстве /me их подтянул.
+      await syncBrandToServer({
         masterName: masterName.trim() || undefined,
         labName: labName.trim() || undefined,
         defaultStyle,
@@ -64,6 +68,7 @@ export function ScreenMyBrand() {
         hashtags,
         logoUrl,
         logoFileName,
+        removeLogo: !logoUrl && Boolean(brand.logoUrl), // юзер удалил лого → стереть и в БД
       });
       back();
     },
