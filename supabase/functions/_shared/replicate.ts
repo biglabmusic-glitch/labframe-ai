@@ -25,7 +25,8 @@ do NOT render any logo, letters, or text in the image yourself.`;
 
 // Единый «скелет» промта — preservation + position lock + allowed edits + общие запреты.
 // Меняется только STYLE и FINAL GOAL для каждого варианта.
-const POSITION_LOCK = `Use the uploaded image as the base photo.
+// Экспортируем POSITION_LOCK и COMMON_OUTPUT — agent.ts оборачивает свой промт ими.
+export const POSITION_LOCK = `Use the uploaded image as the base photo.
 
 Do not regenerate the image.
 Do not recreate the subject.
@@ -60,7 +61,7 @@ Make the same photo look like a professional studio portfolio image, without cha
 // Жёсткий запрет любого текста и подписей — иначе модели «фантазируют»
 // случайные подписи лабораторий и водяные знаки. Эта часть применяется ВСЕГДА,
 // для бренд-логики надстройка делается в агенте/buildPromptWithLogo.
-const COMMON_OUTPUT = `Output:
+export const COMMON_OUTPUT = `Output:
 single clean image, same framing as source, studio-quality final look.
 
 ABSOLUTELY NO TEXT in the image:
@@ -126,8 +127,12 @@ export interface ProcessImageOutput {
 
 export async function processImage(input: ProcessImageInput): Promise<ProcessImageOutput> {
   void input.brandText; // больше не идёт в промт — брендирование постпроцессингом
+  // Если агент дал свой промт — оборачиваем его нашим железным контекстом:
+  // POSITION_LOCK (нельзя менять зуб) + промт агента + COMMON_OUTPUT (нельзя добавлять текст).
+  // Это страховка: GPT-4o-mini может смягчить запреты, sandwich этого не даст.
   const prompt = input.customPrompt
-    ?? (input.logoUrl ? buildPromptWithLogo(input.style) : buildPrompt(input.style));
+    ? `${POSITION_LOCK}\n\n${input.customPrompt}\n\n${COMMON_OUTPUT}`
+    : (input.logoUrl ? buildPromptWithLogo(input.style) : buildPrompt(input.style));
 
   return generateImage(
     {
