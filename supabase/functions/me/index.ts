@@ -49,6 +49,7 @@ Deno.serve(async (req) => {
       hashtags:      brand.hashtags ?? [],
       logoUrl,
       logoFileName:  brand.logo_path ? brand.logo_path.split('/').pop() : undefined,
+      fontId:        brand.font_id ?? undefined,
     };
   }
 

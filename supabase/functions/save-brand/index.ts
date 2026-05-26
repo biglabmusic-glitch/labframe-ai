@@ -17,6 +17,9 @@ interface Body {
   // Передаётся, когда фронт только что загрузил новый файл в bucket 'brand'
   // через /sign-upload (kind='logo') → бэк сохраняет путь в БД.
   logoPath?: string;
+  // ID шрифта подписи из app/src/lib/fonts.ts. Сохраняем как есть — бэк не проверяет,
+  // что значение валидно, фронт сам показывает только известные шрифты.
+  fontId?: string;
 }
 
 Deno.serve(async (req) => {
@@ -50,6 +53,7 @@ Deno.serve(async (req) => {
     default_style:  body.defaultStyle ?? null,
     logo_placement: body.logoPlacement ?? 'bottom-right',
     hashtags:       body.hashtags ?? [],
+    font_id:        body.fontId ?? null,
     updated_at:     new Date().toISOString(),
   };
   if (body.removeLogo) {

@@ -31,6 +31,8 @@ export interface BrandData {
   defaultStyle?: StyleId;
   logoPlacement: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
   hashtags: string[];
+  /** ID из app/src/lib/fonts.ts — шрифт подписи. Передаётся агенту. */
+  fontId?: string;
 }
 
 export interface Draft {

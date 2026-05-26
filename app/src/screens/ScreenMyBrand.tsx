@@ -13,6 +13,8 @@ import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import type { StyleId } from '../state/types';
 import { api, isBackendReady } from '../api/client';
+import { FONTS, DEFAULT_FONT_ID } from '../lib/fonts';
+import { cropToSquareFile } from '../lib/image-crop';
 
 const STYLE_LABELS: { id: StyleId; label: string }[] = [
   { id: 'clean', label: 'Clean White' },
@@ -54,6 +56,7 @@ export function ScreenMyBrand() {
   const [logoError, setLogoError] = useState<string | null>(null);
   const [logoWarn, setLogoWarn]   = useState<string | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);
+  const [fontId, setFontId] = useState<string>(brand.fontId ?? DEFAULT_FONT_ID);
 
   useBackButton(back);
   useMainButton({
@@ -76,6 +79,7 @@ export function ScreenMyBrand() {
         logoFileName,
         logoPath:   logoChanged && !removed ? logoPath : undefined,
         removeLogo: removed,
+        fontId,
       });
       back();
     },
@@ -115,13 +119,20 @@ export function ScreenMyBrand() {
       setLogoUrl(objUrl);
       setLogoFileName(f.name);
 
-      // Загрузка в Storage сразу при выборе — чтобы при «Сохранить» уже был logoPath.
-      // Если бэкенд не настроен (mock-режим) — пропускаем, локальное превью остаётся.
+      // Авто-кроп до квадрата 1024×1024 — даже если юзер выбрал прямоугольное фото,
+      // AI получит готовый квадратный лого. Превью обновляем на cropped-версию.
+      // Загрузка в Storage идёт уже квадратной картинки.
       if (isBackendReady()) {
         setLogoUploading(true);
         try {
-          const { logoPath: newPath } = await api.uploadLogo(f);
+          const squared = await cropToSquareFile(f, 1024);
+          // Обновляем превью на cropped (иначе фронт показывает оригинал, а сервер — квадрат).
+          const cropUrl = URL.createObjectURL(squared);
+          setLogoUrl(cropUrl);
+          const { logoPath: newPath } = await api.uploadLogo(squared);
           setLogoPath(newPath);
+          // Кроп прошёл успешно → ratio-предупреждение из onload-валидации больше не релевантно.
+          setLogoWarn(null);
         } catch (err) {
           setLogoError(`Не удалось загрузить логотип: ${err instanceof Error ? err.message : 'ошибка сети'}`);
         } finally {
@@ -307,9 +318,9 @@ export function ScreenMyBrand() {
             </div>
             <ul style={{ margin: 0, paddingLeft: 16 }}>
               <li>PNG с прозрачным фоном (лучше всего)</li>
-              <li>Квадрат 1:1, минимум 512×512 px</li>
-              <li>До 2 МБ, без мелких деталей и тонких линий</li>
-              <li>Простой контрастный знак или короткое название</li>
+              <li>Можно прямоугольное — мы сами обрежем по центру до квадрата</li>
+              <li>Минимум 512×512 px по короткой стороне, до 2 МБ</li>
+              <li>Простой контрастный знак или короткое название без мелких деталей</li>
             </ul>
           </div>
         </Card>
@@ -363,6 +374,79 @@ export function ScreenMyBrand() {
             style={inputStyle}
           />
         </div>
+      </div>
+
+      {/* Шрифт подписи: горизонтальный скролл с превью.
+          Каждая карточка рендерит реальное имя мастера/лабы выбранным шрифтом. */}
+      <div style={{ padding: '0 16px 12px' }}>
+        <Card kind="dark" pad={16} radius={22}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div
+              className="mono"
+              style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--c-on-dark-3)' }}
+            >
+              ШРИФТ ПОДПИСИ
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--c-on-dark-3)' }}>
+              AI учтёт в стиле работы
+            </div>
+          </div>
+          <div
+            className="no-scrollbar"
+            style={{ display: 'flex', gap: 8, overflowX: 'auto', marginLeft: -4, marginRight: -4, padding: '0 4px' }}
+          >
+            {FONTS.map((f) => {
+              const active = fontId === f.id;
+              const sample = masterName.trim() || labName.trim() || 'Slava Lab';
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setFontId(f.id)}
+                  style={{
+                    flex: '0 0 auto',
+                    minWidth: 140,
+                    padding: '12px 14px',
+                    borderRadius: 14,
+                    border: active ? '2px solid var(--c-accent)' : '1px solid var(--c-line)',
+                    background: active ? 'rgba(147,213,225,0.08)' : 'rgba(239,243,255,0.03)',
+                    cursor: 'pointer',
+                    color: 'var(--c-on-dark)',
+                    textAlign: 'left',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontFamily: f.cssFamily,
+                      fontSize: 18,
+                      fontWeight: 500,
+                      letterSpacing: f.category === 'display' ? 1 : -0.2,
+                      lineHeight: 1.1,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      color: active ? 'var(--c-on-dark)' : 'var(--c-on-dark-2)',
+                    }}
+                  >
+                    {sample}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <div
+                      className="mono"
+                      style={{ fontSize: 9, letterSpacing: 0.5, color: active ? 'var(--c-accent)' : 'var(--c-on-dark-3)' }}
+                    >
+                      {f.label.toUpperCase()}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--c-on-dark-3)' }}>{f.hint}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
       </div>
 
       {/* Предпочтения */}

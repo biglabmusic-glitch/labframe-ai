@@ -41,7 +41,7 @@ export function ScreenHome() {
 
   return (
     <Screen>
-      {/* брендовая мини-шапка */}
+      {/* брендовая мини-шапка с beta-лейблом — сейчас в тестовом режиме, адаптируемся под фидбэк юзеров */}
       <div
         style={{
           padding: '12px 22px 4px',
@@ -60,6 +60,21 @@ export function ScreenHome() {
           }}
         >
           LabFrame <span style={{ fontWeight: 700, color: 'var(--c-on-dark)' }}>Ai</span>
+        </span>
+        <span
+          className="mono"
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: 1,
+            padding: '2px 6px',
+            borderRadius: 4,
+            background: 'rgba(147,213,225,0.12)',
+            color: 'var(--c-accent)',
+            border: '1px solid rgba(147,213,225,0.25)',
+          }}
+        >
+          BETA
         </span>
       </div>
 

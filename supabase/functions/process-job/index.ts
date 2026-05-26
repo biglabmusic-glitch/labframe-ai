@@ -60,10 +60,11 @@ Deno.serve(async (req) => {
     let agentResult: Awaited<ReturnType<typeof buildPersonalizedPrompt>> = null;
 
     if (!agentDisabled) {
-      // Память агента: 10 последних done-jobs юзера. Используем idx_jobs_user_done_created.
+      // Память агента: 10 последних done-jobs юзера + их фидбэк (если есть).
+      // Используем idx_jobs_user_done_created.
       const { data: prevJobs } = await db
         .from('jobs')
-        .select('style, format, work_type, branding, created_at')
+        .select('style, format, work_type, branding, created_at, feedback')
         .eq('user_id', job.user_id)
         .eq('status', 'done')
         .order('created_at', { ascending: false })
@@ -82,6 +83,7 @@ Deno.serve(async (req) => {
           logoPlacement: brand?.logo_placement ?? undefined,
           hashtags:      brand?.hashtags ?? [],
           hasLogo:       Boolean(brand?.logo_path),
+          fontDescription: brand?.font_id ? describeFontForPrompt(brand.font_id) : undefined,
         },
         history: (prevJobs ?? []).map((p) => ({
           style:     p.style,
@@ -89,6 +91,7 @@ Deno.serve(async (req) => {
           workType:  p.work_type ?? undefined,
           branding:  p.branding ?? undefined,
           createdAt: p.created_at,
+          feedback:  p.feedback ?? null,
         })),
       });
 
@@ -172,6 +175,23 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, jobId: job.id, error: message }, { status: 500 });
   }
 });
+
+// Маппинг шрифта (id из app/src/lib/fonts.ts) → описание для image-промта.
+// Дублирование с фронтом намеренное: edge-функции не разделяют код с app/.
+// При добавлении шрифта в fonts.ts нужно синхронно обновить эту таблицу.
+function describeFontForPrompt(fontId: string): string | undefined {
+  const map: Record<string, string> = {
+    inter:      'modern minimal sans-serif, regular weight, neutral',
+    playfair:   'classical high-contrast serif with elegant thin strokes, luxury editorial feel',
+    cormorant:  'thin elegant garamond-style serif, refined, delicate',
+    cinzel:     'classical Roman capitals, all-caps, monumental and premium',
+    italiana:   'fashion magazine style serif, very thin, feminine elegant',
+    bodoni:     'high-contrast Bodoni serif, ultra-thin hairlines, fashion editorial',
+    montserrat: 'clean geometric sans-serif, even strokes, modern lifestyle brand feel',
+    tenor:      'minimalist thin sans-serif, wide proportions, gallery signage feel',
+  };
+  return map[fontId];
+}
 
 // Логирование AI-вызовов в ai_calls. Любая ошибка здесь — только console.error,
 // НИКОГДА не throw: иначе сбой логирования валит весь пайплайн обработки job.

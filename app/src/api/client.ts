@@ -76,6 +76,7 @@ export interface SaveBrandInput {
   hashtags?: string[];
   removeLogo?: boolean;
   logoPath?: string;     // относительный путь в bucket 'brand' (получен через api.uploadLogo)
+  fontId?: string;       // ID шрифта подписи из app/src/lib/fonts.ts
 }
 
 export interface ListJobsResponse {
@@ -170,6 +171,15 @@ export const api = {
     return request<{ hashtags: string[] }>('/regen-hashtags', {
       method: 'POST',
       body: JSON.stringify({ jobId }),
+    });
+  },
+
+  /** Оценка результата job: 👍 / 👎. Сохраняется в БД, агент учитывает в следующих генерациях. */
+  async jobFeedback(jobId: string, feedback: 'liked' | 'disliked'): Promise<{ ok: true }> {
+    if (!API_BASE) return { ok: true };
+    return request<{ ok: true }>('/job-feedback', {
+      method: 'POST',
+      body: JSON.stringify({ jobId, feedback }),
     });
   },
 

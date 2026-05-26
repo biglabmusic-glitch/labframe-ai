@@ -224,6 +224,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       hashtags:      b.hashtags,
       removeLogo:    b.removeLogo,
       logoPath:      b.logoPath,
+      fontId:        b.fontId,
     };
     try { await api.saveBrand(payload); }
     catch { /* локально уже обновили, в следующий раз /me перетянет с сервера */ }

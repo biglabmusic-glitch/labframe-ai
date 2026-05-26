@@ -61,11 +61,21 @@ natural shadows, studio-quality presentation.
 
 Make the same photo look like a professional studio portfolio image, without changing the object or its position.`;
 
+// Жёсткий запрет любого текста и подписей — иначе модели «фантазируют»
+// случайные подписи лабораторий и водяные знаки. Эта часть применяется ВСЕГДА,
+// для бренд-логики надстройка делается в агенте/buildPromptWithLogo.
 const COMMON_OUTPUT = `Output:
-single image, same framing as source, studio-quality final look,
-no collage, no large text, no logo, no watermark, no new scene,
-no face, no patient, no blood, no clinical treatment scene,
-no changed dental work, no changed position.`;
+single clean image, same framing as source, studio-quality final look.
+
+ABSOLUTELY NO TEXT in the image:
+no signature, no watermark, no lab name, no brand name, no master name,
+no logo, no caption, no letters, no numbers, no characters of any kind,
+no autograph, no stamp, no website, no @handle, no copyright mark.
+The frame must be completely free of any text or graphics.
+
+Also forbidden:
+no collage, no new scene, no face, no patient, no blood, no clinical treatment scene,
+no changed dental work, no changed position, no added hands, no instruments.`;
 
 const STYLE_BLOCK: Record<StyleId, string> = {
   clean: `Style:

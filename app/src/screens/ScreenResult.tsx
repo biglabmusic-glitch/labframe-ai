@@ -33,6 +33,7 @@ export function ScreenResult() {
   const [caption, setCaption] = useState<{ main: string; hashtags: string[] } | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [regenLoading, setRegenLoading] = useState(false);
+  const [feedback, setFeedback] = useState<'liked' | 'disliked' | null>(null);
 
   // Тянем результат с бэка, если job был
   useEffect(() => {
@@ -87,6 +88,14 @@ export function ScreenResult() {
       WebApp?.openLink?.(resultUrl);
     },
   });
+
+  const sendFeedback = async (v: 'liked' | 'disliked') => {
+    if (!jobId || feedback === v) return;
+    WebApp?.HapticFeedback?.impactOccurred?.('light');
+    setFeedback(v);
+    try { await api.jobFeedback(jobId, v); }
+    catch { /* визуально оставляем выбор; на сервере можно повторить позже */ }
+  };
 
   const onShare = () => {
     if (!resultUrl) return;
@@ -202,6 +211,64 @@ export function ScreenResult() {
           </div>
         </div>
       </div>
+
+      {/* Фидбэк-плашка: в тестовом режиме спрашиваем юзера как ему результат.
+          Это сигнал для AI-агента — он будет копить такие оценки и подстраиваться. */}
+      {resultUrl && jobId && (
+        <div style={{ padding: '0 16px 12px' }}>
+          <Card
+            kind="dark"
+            pad={14}
+            radius={20}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              background: feedback ? 'rgba(147,213,225,0.08)' : 'var(--c-card-d)',
+              border: '1px solid var(--c-line)',
+            }}
+          >
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                {feedback === 'liked'
+                  ? 'Спасибо! AI запомнит этот вариант.'
+                  : feedback === 'disliked'
+                  ? 'Понял, в следующий раз сделаю иначе.'
+                  : 'Как вам результат?'}
+              </div>
+              {!feedback && (
+                <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
+                  Мы в beta — оценка помогает AI учиться под ваш стиль.
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => sendFeedback('liked')}
+              aria-label="нравится"
+              style={{
+                width: 40, height: 40, borderRadius: 999, cursor: 'pointer',
+                border: '1px solid var(--c-line)',
+                background: feedback === 'liked' ? 'var(--c-accent)' : 'rgba(239,243,255,0.04)',
+                color: feedback === 'liked' ? 'var(--c-ink)' : 'var(--c-on-dark)',
+                fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >👍</button>
+            <button
+              type="button"
+              onClick={() => sendFeedback('disliked')}
+              aria-label="не нравится"
+              style={{
+                width: 40, height: 40, borderRadius: 999, cursor: 'pointer',
+                border: '1px solid var(--c-line)',
+                background: feedback === 'disliked' ? '#F4B19A' : 'rgba(239,243,255,0.04)',
+                color: feedback === 'disliked' ? 'var(--c-ink)' : 'var(--c-on-dark)',
+                fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >👎</button>
+          </Card>
+        </div>
+      )}
 
       {draft.textType !== 'none' && (
         <div style={{ padding: '0 16px 12px' }}>
