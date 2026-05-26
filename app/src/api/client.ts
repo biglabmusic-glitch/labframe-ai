@@ -75,6 +75,7 @@ export interface SaveBrandInput {
   logoPlacement?: BrandData['logoPlacement'];
   hashtags?: string[];
   removeLogo?: boolean;
+  logoPath?: string;     // относительный путь в bucket 'brand' (получен через api.uploadLogo)
 }
 
 export interface ListJobsResponse {
@@ -103,11 +104,31 @@ export const api = {
     }
     const { uploadUrl, photoPath } = await request<{ uploadUrl: string; photoPath: string }>(
       '/sign-upload',
-      { method: 'POST', body: JSON.stringify({ filename: file.name, contentType: file.type }) },
+      { method: 'POST', body: JSON.stringify({ filename: file.name, contentType: file.type, kind: 'photo' }) },
     );
     const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
     if (!put.ok) throw new Error(`upload ${put.status}`);
     return { photoPath, previewUrl: URL.createObjectURL(file) };
+  },
+
+  /**
+   * Загрузка логотипа: фронт получает подписанный URL у `/sign-upload?kind=logo`,
+   * PUT файла в bucket 'brand', возвращает relative path для сохранения в БД через /save-brand.
+   */
+  async uploadLogo(file: File): Promise<{ logoPath: string; previewUrl: string }> {
+    if (!API_BASE) {
+      return {
+        logoPath: `mock-logo/${Date.now()}-${file.name}`,
+        previewUrl: URL.createObjectURL(file),
+      };
+    }
+    const { uploadUrl, photoPath } = await request<{ uploadUrl: string; photoPath: string }>(
+      '/sign-upload',
+      { method: 'POST', body: JSON.stringify({ filename: file.name, contentType: file.type, kind: 'logo' }) },
+    );
+    const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+    if (!put.ok) throw new Error(`upload ${put.status}`);
+    return { logoPath: photoPath, previewUrl: URL.createObjectURL(file) };
   },
 
   async createJob(input: CreateJobInput): Promise<JobResult> {

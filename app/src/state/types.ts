@@ -23,7 +23,8 @@ export interface User {
 }
 
 export interface BrandData {
-  logoUrl?: string;
+  logoUrl?: string;          // публичный/подписанный URL для рендера в UI
+  logoPath?: string;         // путь в storage bucket 'brand' (для отправки в /save-brand)
   logoFileName?: string;
   masterName?: string;
   labName?: string;

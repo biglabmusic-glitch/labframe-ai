@@ -14,6 +14,9 @@ interface Body {
   // Передаётся когда юзер удалил лого через UI (logoUrl=undefined),
   // тогда в БД logo_path занулим. Когда лого было загружено — поле приходит непустое.
   removeLogo?: boolean;
+  // Передаётся, когда фронт только что загрузил новый файл в bucket 'brand'
+  // через /sign-upload (kind='logo') → бэк сохраняет путь в БД.
+  logoPath?: string;
 }
 
 Deno.serve(async (req) => {
@@ -49,7 +52,16 @@ Deno.serve(async (req) => {
     hashtags:       body.hashtags ?? [],
     updated_at:     new Date().toISOString(),
   };
-  if (body.removeLogo) patch.logo_path = null;
+  if (body.removeLogo) {
+    patch.logo_path = null;
+  } else if (body.logoPath) {
+    // Защита: logo_path должен начинаться с `<telegramId>/` —
+    // не даём подсунуть чужой путь и подменить логотип другого юзера.
+    if (!body.logoPath.startsWith(`${tg.id}/`)) {
+      return jsonResponse({ error: 'forbidden_path' }, { status: 403 });
+    }
+    patch.logo_path = body.logoPath;
+  }
 
   const { error } = await db.from('brand').upsert(patch, { onConflict: 'user_id' });
   if (error) return jsonResponse({ error: error.message }, { status: 500 });

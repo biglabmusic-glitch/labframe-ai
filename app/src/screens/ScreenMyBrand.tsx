@@ -12,6 +12,7 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import type { StyleId } from '../state/types';
+import { api, isBackendReady } from '../api/client';
 
 const STYLE_LABELS: { id: StyleId; label: string }[] = [
   { id: 'clean', label: 'Clean White' },
@@ -49,17 +50,22 @@ export function ScreenMyBrand() {
   const [newTag, setNewTag] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | undefined>(brand.logoUrl);
   const [logoFileName, setLogoFileName] = useState<string | undefined>(brand.logoFileName);
+  const [logoPath, setLogoPath] = useState<string | undefined>(brand.logoPath);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [logoWarn, setLogoWarn]   = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
 
   useBackButton(back);
   useMainButton({
-    text: 'Сохранить',
+    text: logoUploading ? 'Загрузка логотипа…' : 'Сохранить',
+    enabled: !logoUploading,
+    progress: logoUploading,
     onClick: async () => {
-      // Лого как файл здесь НЕ заливаем на сервер (это отдельная фича — storage upload).
-      // Если поле logoUrl осталось blob://... — это локальное превью; в БД лого
-      // сохранится только когда сделаем upload-флоу для bucket 'brand'.
-      // Текстовые поля синхронизируем в БД, чтобы на втором устройстве /me их подтянул.
+      // Если лого только что загружен — logoPath есть, его и шлём в БД.
+      // Если юзер удалил — removeLogo=true. В остальных случаях лого не меняем.
+      const logoChanged = logoPath !== brand.logoPath;
+      const removed     = !logoUrl && Boolean(brand.logoUrl);
+
       await syncBrandToServer({
         masterName: masterName.trim() || undefined,
         labName: labName.trim() || undefined,
@@ -68,7 +74,8 @@ export function ScreenMyBrand() {
         hashtags,
         logoUrl,
         logoFileName,
-        removeLogo: !logoUrl && Boolean(brand.logoUrl), // юзер удалил лого → стереть и в БД
+        logoPath:   logoChanged && !removed ? logoPath : undefined,
+        removeLogo: removed,
       });
       back();
     },
@@ -96,7 +103,7 @@ export function ScreenMyBrand() {
     // Проверяем размеры — загружаем как Image и смотрим naturalWidth/Height.
     const objUrl = URL.createObjectURL(f);
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       const w = img.naturalWidth;
       const h = img.naturalHeight;
       const ratio = w / Math.max(h, 1);
@@ -107,6 +114,20 @@ export function ScreenMyBrand() {
       setLogoWarn(warnings.length ? `Логотип ${warnings.join('; ')}.` : null);
       setLogoUrl(objUrl);
       setLogoFileName(f.name);
+
+      // Загрузка в Storage сразу при выборе — чтобы при «Сохранить» уже был logoPath.
+      // Если бэкенд не настроен (mock-режим) — пропускаем, локальное превью остаётся.
+      if (isBackendReady()) {
+        setLogoUploading(true);
+        try {
+          const { logoPath: newPath } = await api.uploadLogo(f);
+          setLogoPath(newPath);
+        } catch (err) {
+          setLogoError(`Не удалось загрузить логотип: ${err instanceof Error ? err.message : 'ошибка сети'}`);
+        } finally {
+          setLogoUploading(false);
+        }
+      }
     };
     img.onerror = () => {
       setLogoError('Не удалось прочитать файл как изображение.');
@@ -214,6 +235,7 @@ export function ScreenMyBrand() {
                       onClick={() => {
                         setLogoUrl(undefined);
                         setLogoFileName(undefined);
+                        setLogoPath(undefined);
                         setLogoError(null);
                         setLogoWarn(null);
                       }}
