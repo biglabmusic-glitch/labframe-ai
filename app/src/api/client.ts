@@ -183,6 +183,12 @@ export const api = {
     });
   },
 
+  /** Сгенерить «вечнозелёный» набор хэштегов под бренд (имя, лаба, типы работ). Сохраняет в brand.hashtags. */
+  async regenBrandHashtags(): Promise<{ hashtags: string[] }> {
+    if (!API_BASE) return { hashtags: ['#зубнойтехник', '#керамика', '#циркон'] };
+    return request<{ hashtags: string[] }>('/regen-brand-hashtags', { method: 'POST', body: '{}' });
+  },
+
   async getHistory(): Promise<Job[]> {
     if (!API_BASE) return [];
     return request<Job[]>('/history');

@@ -57,6 +57,8 @@ export function ScreenMyBrand() {
   const [logoWarn, setLogoWarn]   = useState<string | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);
   const [fontId, setFontId] = useState<string>(brand.fontId ?? DEFAULT_FONT_ID);
+  const [hashLoading, setHashLoading] = useState(false);
+  const [hashError, setHashError]     = useState<string | null>(null);
 
   useBackButton(back);
   useMainButton({
@@ -145,6 +147,20 @@ export function ScreenMyBrand() {
       URL.revokeObjectURL(objUrl);
     };
     img.src = objUrl;
+  };
+
+  const regenerateHashtags = async () => {
+    if (!isBackendReady() || hashLoading) return;
+    setHashError(null);
+    setHashLoading(true);
+    try {
+      const { hashtags: fresh } = await api.regenBrandHashtags();
+      if (fresh?.length) setHashtags(fresh);
+    } catch (err) {
+      setHashError(err instanceof Error ? err.message : 'не удалось сгенерировать');
+    } finally {
+      setHashLoading(false);
+    }
   };
 
   const addTag = (raw: string) => {
@@ -393,7 +409,21 @@ export function ScreenMyBrand() {
           </div>
           <div
             className="no-scrollbar"
-            style={{ display: 'flex', gap: 8, overflowX: 'auto', marginLeft: -4, marginRight: -4, padding: '0 4px' }}
+            // На десктопе у юзера нет touch-скролла, а полоса скрыта — крутим колесом мыши:
+            // вертикальный wheel превращаем в горизонтальный scrollLeft.
+            onWheel={(e) => {
+              if (e.deltaY === 0) return;
+              e.currentTarget.scrollLeft += e.deltaY;
+            }}
+            style={{
+              display: 'flex',
+              gap: 8,
+              overflowX: 'auto',
+              marginLeft: -4,
+              marginRight: -4,
+              padding: '0 4px',
+              scrollBehavior: 'smooth',
+            }}
           >
             {FONTS.map((f) => {
               const active = fontId === f.id;
@@ -504,6 +534,7 @@ export function ScreenMyBrand() {
               alignItems: 'center',
               justifyContent: 'space-between',
               marginBottom: 10,
+              gap: 8,
             }}
           >
             <div
@@ -512,7 +543,43 @@ export function ScreenMyBrand() {
             >
               ФИРМЕННЫЕ ХЭШТЕГИ · {hashtags.length}
             </div>
+            <button
+              type="button"
+              onClick={regenerateHashtags}
+              disabled={hashLoading}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 999,
+                border: '1px solid rgba(147,213,225,0.35)',
+                background: 'rgba(147,213,225,0.1)',
+                color: 'var(--c-accent)',
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: -0.1,
+                cursor: hashLoading ? 'default' : 'pointer',
+                opacity: hashLoading ? 0.55 : 1,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {hashLoading ? '⏳ генерируем…' : '✨ Сгенерировать под бренд'}
+            </button>
           </div>
+
+          {hashError && (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: '6px 10px',
+                borderRadius: 10,
+                background: 'rgba(244,177,154,0.10)',
+                border: '1px solid rgba(244,177,154,0.30)',
+                fontSize: 11,
+                color: '#F4B19A',
+              }}
+            >
+              {hashError}
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
             {hashtags.map((h) => (
