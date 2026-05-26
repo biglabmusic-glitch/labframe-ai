@@ -60,13 +60,14 @@ Deno.serve(async (req) => {
     let agentResult: Awaited<ReturnType<typeof buildPersonalizedPrompt>> = null;
 
     if (!agentDisabled) {
+      // Память агента: 10 последних done-jobs юзера. Используем idx_jobs_user_done_created.
       const { data: prevJobs } = await db
         .from('jobs')
-        .select('style, format, work_type')
+        .select('style, format, work_type, branding, created_at')
         .eq('user_id', job.user_id)
         .eq('status', 'done')
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(10);
 
       agentResult = await buildPersonalizedPrompt({
         photoUrl,
@@ -83,9 +84,11 @@ Deno.serve(async (req) => {
           hasLogo:       Boolean(brand?.logo_path),
         },
         history: (prevJobs ?? []).map((p) => ({
-          style:    p.style,
-          format:   p.format,
-          workType: p.work_type ?? undefined,
+          style:     p.style,
+          format:    p.format,
+          workType:  p.work_type ?? undefined,
+          branding:  p.branding ?? undefined,
+          createdAt: p.created_at,
         })),
       });
 
@@ -131,7 +134,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 5. Сохранить
+    // 5. Сохранить (включая «учебные» поля: какой промт реально ушёл в модель + outputs агента)
     await db.from('jobs').update({
       status: 'done',
       result_path: resultPath,
@@ -139,6 +142,9 @@ Deno.serve(async (req) => {
       caption_alt: text.alt,
       hashtags: text.hashtags,
       finished_at: new Date().toISOString(),
+      prompt_used: agentResult?.prompt ?? null,
+      model_used: img.provider,
+      agent_notes: agentResult?.notes ?? null,
     }).eq('id', job.id);
 
     // 6. Пуш в чат
@@ -167,6 +173,9 @@ Deno.serve(async (req) => {
   }
 });
 
+// Логирование AI-вызовов в ai_calls. Любая ошибка здесь — только console.error,
+// НИКОГДА не throw: иначе сбой логирования валит весь пайплайн обработки job.
+// Раньше этот выброс из logAi (вероятно) был причиной «load failed» при включённом агенте.
 async function logAi(
   jobId: string,
   provider: string,
@@ -176,14 +185,19 @@ async function logAi(
   tokens?: { prompt_tokens?: number; completion_tokens?: number },
   error?: string,
 ) {
-  await db.from('ai_calls').insert({
-    job_id: jobId,
-    provider,
-    model,
-    duration_ms: durationMs,
-    prompt_tokens: tokens?.prompt_tokens ?? null,
-    completion_tokens: tokens?.completion_tokens ?? null,
-    ok,
-    error: error ?? null,
-  });
+  try {
+    const { error: insertErr } = await db.from('ai_calls').insert({
+      job_id: jobId,
+      provider,
+      model,
+      duration_ms: durationMs,
+      prompt_tokens: tokens?.prompt_tokens ?? null,
+      completion_tokens: tokens?.completion_tokens ?? null,
+      ok,
+      error: error ?? null,
+    });
+    if (insertErr) console.error(`[logAi:${provider}] insert failed:`, insertErr.message);
+  } catch (e) {
+    console.error(`[logAi:${provider}] threw:`, e instanceof Error ? e.message : e);
+  }
 }
