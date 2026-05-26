@@ -18,24 +18,28 @@ import { ScreenResult } from './screens/ScreenResult';
 import { ScreenMyBrand } from './screens/ScreenMyBrand';
 import { ScreenExamples } from './screens/ScreenExamples';
 import { ScreenPricing } from './screens/ScreenPricing';
+import { ScreenMyPlan } from './screens/ScreenMyPlan';
+import { ScreenPlansCompare } from './screens/ScreenPlansCompare';
 import { ScreenPhotoHelp } from './screens/ScreenPhotoHelp';
 
 const REGISTRY: Record<RouteId, () => JSX.Element> = {
-  welcome:    ScreenWelcome,
-  onboarding: ScreenOnboardingBrand,
-  home:       ScreenHome,
-  upload:     ScreenUpload,
-  worktype:   ScreenWorkType,
-  style:      ScreenStyle,
-  brand:      ScreenBranding,
-  format:     ScreenFormat,
-  text:       ScreenTextType,
-  proc:       ScreenProcessing,
-  result:     ScreenResult,
-  mybrand:    ScreenMyBrand,
-  examples:   ScreenExamples,
-  pricing:    ScreenPricing,
-  help:       ScreenPhotoHelp,
+  welcome:         ScreenWelcome,
+  onboarding:      ScreenOnboardingBrand,
+  home:            ScreenHome,
+  upload:          ScreenUpload,
+  worktype:        ScreenWorkType,
+  style:           ScreenStyle,
+  brand:           ScreenBranding,
+  format:          ScreenFormat,
+  text:            ScreenTextType,
+  proc:            ScreenProcessing,
+  result:          ScreenResult,
+  mybrand:         ScreenMyBrand,
+  examples:        ScreenExamples,
+  pricing:         ScreenPricing,
+  myplan:          ScreenMyPlan,
+  'plans-compare': ScreenPlansCompare,
+  help:            ScreenPhotoHelp,
 };
 
 function Root() {

@@ -61,7 +61,7 @@ const PLANS: PlanRow[] = [
 export function ScreenPricing() {
   const [selected, setSelected] = useState<Plan>('pro');
   const [period, setPeriod] = useState<'month' | 'year'>('month');
-  const { back } = useRouter();
+  const { back, push } = useRouter();
   const sel = PLANS.find((p) => p.id === selected)!;
   const yearly = period === 'year';
   const rawPrice = sel.price.replace(/\s|—/g, '');
@@ -181,6 +181,31 @@ export function ScreenPricing() {
             </div>
           );
         })}
+      </div>
+
+      <div style={{ padding: '0 16px 24px' }}>
+        <button
+          type="button"
+          onClick={() => push('plans-compare')}
+          style={{
+            width: '100%',
+            padding: '12px 14px',
+            borderRadius: 16,
+            background: 'rgba(239,243,255,0.04)',
+            border: '1px solid var(--c-line)',
+            color: 'var(--c-on-dark-2)',
+            fontSize: 13,
+            fontWeight: 500,
+            letterSpacing: -0.1,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>Сравнить все тарифы в таблице</span>
+          <span style={{ color: 'var(--c-accent)' }}>→</span>
+        </button>
       </div>
     </Screen>
   );

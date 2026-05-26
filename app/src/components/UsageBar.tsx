@@ -6,6 +6,8 @@ interface Props {
   limit: number;
   plan: Plan;
   onUpgrade: () => void;
+  /** Если задан — карточка становится кликабельной (открыть подписку). */
+  onOpen?: () => void;
 }
 
 const PLAN_LABEL: Record<Plan, string> = {
@@ -21,7 +23,7 @@ const PLAN_LABEL: Record<Plan, string> = {
  * При исчерпании Free — кнопка «улучшить» подсвечивается, заголовок становится красным.
  * Pre-release mode (LIMITS_DISABLED=true) — всем показываем «Без ограничений · pre-release».
  */
-export function UsageBar({ used, limit, plan, onUpgrade }: Props) {
+export function UsageBar({ used, limit, plan, onUpgrade, onOpen }: Props) {
   const unlimited = LIMITS_DISABLED || plan === 'pro' || plan === 'lab';
   const pct       = unlimited ? 0 : Math.min(100, Math.round((used / Math.max(limit, 1)) * 100));
   const exhausted = !unlimited && used >= limit;
@@ -34,6 +36,9 @@ export function UsageBar({ used, limit, plan, onUpgrade }: Props) {
 
   return (
     <div
+      role={onOpen ? 'button' : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      onClick={onOpen}
       style={{
         padding: 16,
         borderRadius: 22,
@@ -42,6 +47,7 @@ export function UsageBar({ used, limit, plan, onUpgrade }: Props) {
         display: 'flex',
         flexDirection: 'column',
         gap: 12,
+        cursor: onOpen ? 'pointer' : undefined,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
@@ -86,7 +92,7 @@ export function UsageBar({ used, limit, plan, onUpgrade }: Props) {
         {plan === 'free' && !LIMITS_DISABLED && (
           <button
             type="button"
-            onClick={onUpgrade}
+            onClick={(e) => { e.stopPropagation(); onUpgrade(); }}
             style={{
               padding: '8px 14px',
               borderRadius: 999,

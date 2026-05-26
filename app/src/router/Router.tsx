@@ -23,6 +23,8 @@ export type RouteId =
   | 'mybrand'
   | 'examples'
   | 'pricing'
+  | 'myplan'
+  | 'plans-compare'
   | 'help';
 
 interface RouterValue {

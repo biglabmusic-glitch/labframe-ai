@@ -116,10 +116,10 @@ export function ScreenHome() {
             {brand.masterName || user.name}
           </div>
         </div>
-        {/* Тариф — кликабельный, ведёт на /pricing. Заменяет отдельную карточку «Тарифы». */}
+        {/* Тариф — кликабельный, ведёт на /myplan (детали подписки). Заменяет карточку «Тарифы». */}
         <button
           type="button"
-          onClick={() => push('pricing')}
+          onClick={(e) => { e.stopPropagation(); push('myplan'); }}
           style={{
             padding: '5px 10px',
             borderRadius: 999,
@@ -140,13 +140,14 @@ export function ScreenHome() {
         </button>
       </div>
 
-      {/* usage-bar — главная панель прогресса генераций */}
+      {/* usage-bar — главная панель прогресса генераций. Тап ведёт на «Моя подписка». */}
       <div style={{ padding: '0 16px 18px' }}>
         <UsageBar
           used={user.usage.used}
           limit={user.usage.limit}
           plan={user.plan}
           onUpgrade={() => push('pricing')}
+          onOpen={() => push('myplan')}
         />
       </div>
 
