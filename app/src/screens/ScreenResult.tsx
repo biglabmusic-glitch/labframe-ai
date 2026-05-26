@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Screen } from '../components/Screen';
 import { Card } from '../components/primitives/Card';
 import { Pill } from '../components/primitives/Pill';
 import { Tag } from '../components/primitives/Tag';
 import {
   IconDownload,
+  IconHome,
   IconPlus,
   IconShare,
   IconSpark,
@@ -17,6 +18,7 @@ import { useRouter } from '../router/Router';
 import type { FormatId } from '../state/types';
 import { WebApp } from '../telegram/webapp';
 import { api, isBackendReady } from '../api/client';
+import { BrandedResult, canvasToBlob } from '../components/BrandedResult';
 
 const FORMAT_TABS: FormatId[] = ['1x1', '4x5', '9x16'];
 const FORMAT_LABEL: Record<FormatId, string> = {
@@ -34,6 +36,7 @@ export function ScreenResult() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [regenLoading, setRegenLoading] = useState(false);
   const [feedback, setFeedback] = useState<'liked' | 'disliked' | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Тянем результат с бэка, если job был
   useEffect(() => {
@@ -80,11 +83,24 @@ export function ScreenResult() {
   useMainButton({
     text: resultUrl ? '⬇ Скачать пост' : 'Готовим…',
     enabled: Boolean(resultUrl),
-    onClick: () => {
+    onClick: async () => {
       if (!resultUrl) return;
       WebApp?.HapticFeedback?.notificationOccurred?.('success');
-      // Открываем прямую ссылку — Telegram-WebView/системный браузер
-      // покажет JPG, дальше юзер сохраняет через «Сохранить картинку».
+      // Если canvas с брендингом готов — скачиваем брендированную версию (с подписью/лого).
+      // Иначе fallback — чистая картинка из storage.
+      const canvas = canvasRef.current;
+      if (canvas) {
+        try {
+          const blob = await canvasToBlob(canvas);
+          if (blob) {
+            const blobUrl = URL.createObjectURL(blob);
+            WebApp?.openLink?.(blobUrl);
+            // Не отзываем URL сразу — браузер ещё откроет его в новой вкладке.
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+            return;
+          }
+        } catch { /* fallback ниже */ }
+      }
       WebApp?.openLink?.(resultUrl);
     },
   });
@@ -134,9 +150,12 @@ export function ScreenResult() {
           <div
             style={{
               width: '100%',
-              height: 300,
-              background:
-                draft.style === 'clean'
+              // height фикс только для пустого state (пока картинка ещё грузится).
+              // Когда есть resultUrl — высоту задаёт canvas (он сам в правильном aspect ratio).
+              ...(resultUrl ? {} : { height: 300 }),
+              background: resultUrl
+                ? 'transparent'
+                : draft.style === 'clean'
                   ? '#F4F6FB'
                   : draft.style === 'soft'
                   ? 'linear-gradient(135deg,#D6EEF3 0%,#EFF3FF 100%)'
@@ -153,10 +172,14 @@ export function ScreenResult() {
             }}
           >
             {resultUrl ? (
-              <img
+              // Брендирование делаем на фронте через canvas: AI рисует чистую картинку,
+              // мы накладываем подпись/лого выбранным шрифтом (image-модели рендерят шрифты плохо).
+              <BrandedResult
                 src={resultUrl}
-                alt="result"
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                brand={brand}
+                branding={draft.branding ?? 'none'}
+                styleId={draft.style}
+                onReady={(c) => { canvasRef.current = c; }}
               />
             ) : draft.photo?.url ? (
               <img
@@ -168,24 +191,6 @@ export function ScreenResult() {
               <IconTooth size={120} />
             )}
           </div>
-          {draft.branding !== 'none' && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 12,
-                right: 12,
-                padding: '6px 10px',
-                background: 'rgba(255,255,255,0.92)',
-                borderRadius: 8,
-                fontSize: 9,
-                fontWeight: 700,
-                letterSpacing: 1,
-                color: 'var(--c-ink)',
-              }}
-            >
-              {(brand.masterName ?? 'CERAMIST').toUpperCase()}
-            </div>
-          )}
           <div
             style={{
               position: 'absolute',
@@ -339,38 +344,59 @@ export function ScreenResult() {
         style={{
           padding: '0 16px 14px',
           display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
+          gridTemplateColumns: '1fr 1fr 1fr',
           gap: 8,
         }}
       >
         <Card
           kind="ghost"
-          pad={12}
+          pad={10}
           radius={16}
           onClick={onShare}
           style={{
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
-            gap: 8,
+            justifyContent: 'center',
+            gap: 6,
             opacity: resultUrl ? 1 : 0.5,
             pointerEvents: resultUrl ? 'auto' : 'none',
           }}
         >
           <IconShare size={18} color="var(--c-accent)" />
-          <span style={{ fontSize: 13, fontWeight: 500 }}>Поделиться</span>
+          <span style={{ fontSize: 12, fontWeight: 500 }}>Поделиться</span>
         </Card>
         <Card
           kind="ghost"
-          pad={12}
+          pad={10}
           radius={16}
-          onClick={() => {
-            resetDraft();
-            reset('upload');
+          onClick={() => { resetDraft(); reset('home'); }}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
           }}
-          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+        >
+          <IconHome size={18} color="var(--c-accent)" />
+          <span style={{ fontSize: 12, fontWeight: 500 }}>На главную</span>
+        </Card>
+        <Card
+          kind="ghost"
+          pad={10}
+          radius={16}
+          onClick={() => { resetDraft(); reset('upload'); }}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+          }}
         >
           <IconPlus size={18} color="var(--c-accent)" />
-          <span style={{ fontSize: 13, fontWeight: 500 }}>Новый пост</span>
+          <span style={{ fontSize: 12, fontWeight: 500 }}>Новый пост</span>
         </Card>
       </div>
 

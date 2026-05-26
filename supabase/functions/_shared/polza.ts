@@ -1,6 +1,15 @@
 // Text AI — polza.ai (OpenAI-совместимый эндпоинт, дешевле OpenAI напрямую).
 import { env } from './env.ts';
 
+// Polza иногда возвращает символы с потерянной кодировкой (U+FFFD «replacement»)
+// или одинокие половинки surrogate-пар — это рендерится как «��». Чистим.
+function cleanText(s: string): string {
+  return s
+    .replace(/�/g, '')
+    .replace(/[\uD800-\uDFFF]/g, '')
+    .trim();
+}
+
 export type WorkType = 'crown' | 'veneer' | 'bridge' | 'other';
 export type TextType = 'short' | 'sell' | 'tech' | 'none';
 
@@ -113,9 +122,9 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
   const tags = [...new Set([...(parsed.hashtags ?? []), ...(input.brandHashtags ?? [])])].slice(0, 12);
 
   return {
-    main: parsed.main ?? '',
-    alt: parsed.alt ?? '',
-    hashtags: tags,
+    main: cleanText(parsed.main ?? ''),
+    alt:  cleanText(parsed.alt ?? ''),
+    hashtags: tags.map(cleanText).filter(Boolean),
     promptTokens: data.usage?.prompt_tokens,
     completionTokens: data.usage?.completion_tokens,
     durationMs: Date.now() - t0,

@@ -10,21 +10,17 @@ function buildPrompt(style: StyleId): string {
   return STYLE_PROMPT[style];
 }
 
-// Промпт для случая «С логотипом» (multi-image модель).
-// Дополняет базовый промт LOGO-RULES блоком, который ссылается на «Image 2».
+// Промпт для случая «С логотипом» — image-модель НЕ рисует логотип сама
+// (рендерит криво). Просим оставить пустой угол, лого наложим на фронте через canvas.
 function buildPromptWithLogo(style: StyleId): string {
   const base = STYLE_PROMPT[style];
-  const logoBlock = `
+  const reserveBlock = `
 
-LOGO RULES:
-use Image 2 as the logo reference;
-place the logo small, elegant, and clean in a corner;
-keep the logo proportional and undistorted;
-do not make the logo too large;
-do not place the logo over the restoration;
-do not let the logo distract from the dental work;
-the logo should feel premium and minimal.`;
-  return base + logoBlock;
+LOGO PLACEMENT:
+keep a corner of the frame clean and uncluttered;
+leave space for a logo to be added in post-processing;
+do NOT render any logo, letters, or text in the image yourself.`;
+  return base + reserveBlock;
 }
 
 // Единый «скелет» промта — preservation + position lock + allowed edits + общие запреты.
