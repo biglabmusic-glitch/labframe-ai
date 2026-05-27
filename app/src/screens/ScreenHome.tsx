@@ -14,6 +14,7 @@ import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter, type RouteId } from '../router/Router';
 import { WebApp } from '../telegram/webapp';
+import { isAdmin } from '../lib/admin';
 
 const STYLE_LABELS: Record<string, string> = {
   dark: 'Premium Dark',
@@ -38,6 +39,8 @@ export function ScreenHome() {
   // «Бренд заполнен» — нужен либо логотип, либо имя мастера.
   // Это используем для подсветки CTA «заполните профиль» в шапке.
   const brandReady = Boolean(brand.logoUrl || brand.masterName);
+
+  const admin = isAdmin(user.telegramId);
 
   return (
     <Screen>
@@ -310,6 +313,33 @@ export function ScreenHome() {
           <span style={{ fontSize: 11, color: 'var(--c-on-dark-3)' }}>{history.length}</span>
         )}
       </div>
+
+      {admin && (
+        <div style={{ padding: '0 16px 12px' }}>
+          <Card
+            kind="dark"
+            pad={12}
+            radius={16}
+            onClick={() => push('admin')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              background: 'rgba(255,210,128,0.06)',
+              border: '1px solid rgba(255,210,128,0.20)',
+            }}
+          >
+            <div style={{ fontSize: 18, width: 32, textAlign: 'center' }}>🛠</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Админка</div>
+              <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 1 }}>
+                Мониторинг и управление юзерами
+              </div>
+            </div>
+            <IconArrow size={14} color="var(--c-on-dark-3)" />
+          </Card>
+        </div>
+      )}
 
       {history.length === 0 ? (
         <div style={{ padding: '0 16px 18px' }}>

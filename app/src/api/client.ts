@@ -91,6 +91,32 @@ export interface ListJobsResponse {
   }>;
 }
 
+export interface AdminUser {
+  id: number;
+  username: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  plan: Plan;
+  usageUsed: number;
+  usageLimit: number;
+  banned: boolean;
+  lastSeenAt: string | null;
+  createdAt: string | null;
+  jobsTotal: number;
+}
+
+export interface AdminStats {
+  totalUsers: number;
+  newUsers7d: number;
+  jobs7d: number;
+  successRate7d: number;
+  likeRate30d: number | null;
+  tokens7d: number;
+  recentErrors: Array<{ provider: string; error: string | null; created_at: string }>;
+  topUsers: Array<{ userId: number; jobs: number }>;
+  byDay: Array<{ day: string; total: number; done: number }>;
+}
+
 export const api = {
   /**
    * Загрузка фото: фронт получает подписанный upload-URL у бэка, потом PUT файл прямо в Storage.
@@ -187,6 +213,44 @@ export const api = {
   async regenBrandHashtags(): Promise<{ hashtags: string[] }> {
     if (!API_BASE) return { hashtags: ['#зубнойтехник', '#керамика', '#циркон'] };
     return request<{ hashtags: string[] }>('/regen-brand-hashtags', { method: 'POST', body: '{}' });
+  },
+
+  /** Админ-роутер — все действия идут через единый endpoint /admin (action-based). */
+  async adminStats(): Promise<AdminStats> {
+    return request<AdminStats>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'stats' }),
+    });
+  },
+  async adminUsers(search?: string): Promise<{ items: AdminUser[] }> {
+    return request<{ items: AdminUser[] }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'users', search }),
+    });
+  },
+  async adminSetPlan(userId: number, plan: Plan): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'set-plan', userId, plan }),
+    });
+  },
+  async adminGrantCredits(userId: number, credits: number): Promise<{ ok: true; newLimit: number }> {
+    return request<{ ok: true; newLimit: number }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'grant-credits', userId, credits }),
+    });
+  },
+  async adminSendMessage(userId: number, message: string): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'send-message', userId, message }),
+    });
+  },
+  async adminBan(userId: number, banned: boolean): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'ban', userId, banned }),
+    });
   },
 
   async getHistory(): Promise<Job[]> {

@@ -20,6 +20,7 @@ import { ScreenExamples } from './screens/ScreenExamples';
 import { ScreenPricing } from './screens/ScreenPricing';
 import { ScreenMyPlan } from './screens/ScreenMyPlan';
 import { ScreenPlansCompare } from './screens/ScreenPlansCompare';
+import { ScreenAdmin } from './screens/ScreenAdmin';
 import { ScreenPhotoHelp } from './screens/ScreenPhotoHelp';
 
 const REGISTRY: Record<RouteId, () => JSX.Element> = {
@@ -39,6 +40,7 @@ const REGISTRY: Record<RouteId, () => JSX.Element> = {
   pricing:         ScreenPricing,
   myplan:          ScreenMyPlan,
   'plans-compare': ScreenPlansCompare,
+  admin:           ScreenAdmin,
   help:            ScreenPhotoHelp,
 };
 

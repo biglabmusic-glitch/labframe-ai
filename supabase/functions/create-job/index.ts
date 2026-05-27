@@ -39,6 +39,12 @@ Deno.serve(async (req) => {
     { onConflict: 'id', ignoreDuplicates: false },
   );
 
+  // Проверяем ban — админ из /admin мог забанить юзера.
+  const { data: userRow } = await db.from('users').select('banned').eq('id', tg.id).maybeSingle();
+  if (userRow?.banned) {
+    return jsonResponse({ error: 'banned' }, { status: 403 });
+  }
+
   // Rate-limit per user: не больше 2 активных job одновременно (анти-спам, двойной клик).
   const { count } = await db
     .from('jobs')
