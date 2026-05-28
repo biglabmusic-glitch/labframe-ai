@@ -122,6 +122,9 @@ export interface AdminUser {
   usageUsed: number;
   usageLimit: number;
   banned: boolean;
+  isAdmin: boolean;
+  /** true если id в env ADMIN_IDS — такого админа нельзя снять из приложения. */
+  envAdmin: boolean;
   lastSeenAt: string | null;
   createdAt: string | null;
   jobsTotal: number;
@@ -272,6 +275,12 @@ export const api = {
     return request<{ ok: true }>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'ban', userId, banned }),
+    });
+  },
+  async adminSetAdmin(userId: number, isAdmin: boolean): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'set-admin', userId, isAdmin }),
     });
   },
 

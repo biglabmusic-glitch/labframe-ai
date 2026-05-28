@@ -15,21 +15,29 @@ interface AdminBody {
     | 'set-plan'
     | 'grant-credits'
     | 'send-message'
-    | 'ban';
+    | 'ban'
+    | 'set-admin';
   // зависит от action — валидируем внутри switch
   userId?: number;
   plan?: 'free' | 'start' | 'pro' | 'lab';
   credits?: number;
   message?: string;
   banned?: boolean;
+  isAdmin?: boolean;
   search?: string;
   limit?: number;
 }
 
-function isAdmin(telegramId: number): boolean {
-  const raw = Deno.env.get('ADMIN_IDS') ?? '';
-  const list = raw.split(',').map((s) => Number(s.trim())).filter(Boolean);
-  return list.includes(telegramId);
+function envAdminIds(): number[] {
+  return (Deno.env.get('ADMIN_IDS') ?? '')
+    .split(',').map((s) => Number(s.trim())).filter(Boolean);
+}
+
+// Админ = в env ADMIN_IDS (bootstrap) ИЛИ флаг is_admin в БД (назначенные).
+async function isAdmin(telegramId: number): Promise<boolean> {
+  if (envAdminIds().includes(telegramId)) return true;
+  const { data } = await db.from('users').select('is_admin').eq('id', telegramId).maybeSingle();
+  return Boolean(data?.is_admin);
 }
 
 Deno.serve(async (req) => {
@@ -40,7 +48,7 @@ Deno.serve(async (req) => {
   if ('response' in auth) return auth.response;
   const tg = auth.user;
 
-  if (!isAdmin(tg.id)) {
+  if (!await isAdmin(tg.id)) {
     return jsonResponse({ error: 'not_admin' }, { status: 403 });
   }
 
@@ -55,6 +63,7 @@ Deno.serve(async (req) => {
     case 'grant-credits': return handleGrantCredits(body);
     case 'send-message':  return handleSendMessage(body);
     case 'ban':           return handleBan(body);
+    case 'set-admin':     return handleSetAdmin(body, tg.id);
     default:              return jsonResponse({ error: 'unknown_action' }, { status: 400 });
   }
 });
@@ -154,7 +163,7 @@ function bucketByDay(rows: { created_at: string; status: string }[]) {
 async function listUsers(search: string, limit: number) {
   let q = db
     .from('users')
-    .select('id, username, first_name, last_name, plan, usage_used, usage_limit, banned, last_seen_at, created_at')
+    .select('id, username, first_name, last_name, plan, usage_used, usage_limit, banned, is_admin, last_seen_at, created_at')
     .order('last_seen_at', { ascending: false, nullsFirst: false })
     .limit(Math.min(limit, 200));
 
@@ -190,6 +199,8 @@ async function listUsers(search: string, limit: number) {
       usageUsed:    u.usage_used ?? 0,
       usageLimit:   u.usage_limit ?? 3,
       banned:       u.banned ?? false,
+      isAdmin:      u.is_admin ?? false,
+      envAdmin:     envAdminIds().includes(u.id),
       lastSeenAt:   u.last_seen_at,
       createdAt:    u.created_at,
       jobsTotal:    counts[u.id] ?? 0,
@@ -244,6 +255,24 @@ async function handleBan(body: AdminBody) {
     return jsonResponse({ error: 'bad_input' }, { status: 400 });
   }
   const { error } = await db.from('users').update({ banned: body.banned }).eq('id', body.userId);
+  if (error) return jsonResponse({ error: error.message }, { status: 500 });
+  return jsonResponse({ ok: true });
+}
+
+async function handleSetAdmin(body: AdminBody, callerId: number) {
+  if (!body.userId || typeof body.isAdmin !== 'boolean') {
+    return jsonResponse({ error: 'bad_input' }, { status: 400 });
+  }
+  // Снять админку с env-админа нельзя: ADMIN_IDS всё равно вернёт ему доступ,
+  // так что это была бы вводящая в заблуждение «галочка». Сообщаем явно.
+  if (!body.isAdmin && envAdminIds().includes(body.userId)) {
+    return jsonResponse({ error: 'env_admin_protected' }, { status: 400 });
+  }
+  // Защита от случайного саморазжалования (чтобы не выпасть из админки).
+  if (!body.isAdmin && body.userId === callerId) {
+    return jsonResponse({ error: 'cannot_demote_self' }, { status: 400 });
+  }
+  const { error } = await db.from('users').update({ is_admin: body.isAdmin }).eq('id', body.userId);
   if (error) return jsonResponse({ error: error.message }, { status: 500 });
   return jsonResponse({ ok: true });
 }

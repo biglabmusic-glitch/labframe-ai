@@ -27,6 +27,17 @@ Deno.serve(async (req) => {
     { onConflict: 'id', ignoreDuplicates: false },
   );
 
+  // ADMIN_IDS — «супер-админ bootstrap»: такие id всегда админы. Синхронизируем
+  // флаг в БД, чтобы админы реально отражались в Supabase (а не только в env).
+  // Никогда не сбрасываем is_admin в false отсюда — снятие только через /admin.
+  const adminIds = (Deno.env.get('ADMIN_IDS') ?? '')
+    .split(',').map((s) => Number(s.trim())).filter(Boolean);
+  const envIsAdmin = adminIds.includes(tg.id);
+  if (envIsAdmin) {
+    try { await db.from('users').update({ is_admin: true }).eq('id', tg.id); }
+    catch { /* колонка is_admin могла ещё не появиться — не валим /me */ }
+  }
+
   const { data: user } = await db.from('users').select('*').eq('id', tg.id).single();
   const { data: brand } = await db.from('brand').select('*').eq('user_id', tg.id).maybeSingle();
 
@@ -53,11 +64,9 @@ Deno.serve(async (req) => {
     };
   }
 
-  // isAdmin определяем на бэке по ADMIN_IDS (один источник правды,
-  // не дублируем список в Vercel env). Фронт показывает админ-плашку по этому флагу.
-  const adminIds = (Deno.env.get('ADMIN_IDS') ?? '')
-    .split(',').map((s) => Number(s.trim())).filter(Boolean);
-  const isAdmin = adminIds.includes(tg.id);
+  // isAdmin = флаг из БД (назначаемые админы) ИЛИ env ADMIN_IDS (bootstrap).
+  // Фронт показывает админ-плашку по этому флагу.
+  const isAdmin = Boolean(user?.is_admin) || envIsAdmin;
 
   return jsonResponse({
     user: user ? {

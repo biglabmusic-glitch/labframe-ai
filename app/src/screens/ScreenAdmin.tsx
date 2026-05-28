@@ -211,6 +211,7 @@ function UsersTab() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>
               {[u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || `id ${u.id}`}
+              {u.isAdmin && <span style={{ color: 'var(--c-accent)', marginLeft: 6, fontSize: 10, fontWeight: 700 }}>ADMIN</span>}
               {u.banned && <span style={{ color: '#F4B19A', marginLeft: 6, fontSize: 10 }}>BAN</span>}
             </span>
             <span className="mono" style={{ fontSize: 9.5, color: 'var(--c-accent)' }}>
@@ -347,6 +348,22 @@ function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: (
           onClick={() => wrap('msg', () => api.adminSendMessage(user.id, message))}
           disabled={busy !== null || !message.trim()}
         />
+
+        <Spacer />
+
+        <SectionTitle>Админ</SectionTitle>
+        {user.envAdmin ? (
+          <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', padding: '2px 0 4px' }}>
+            Супер-админ из ADMIN_IDS — снять права можно только в env-переменной.
+          </div>
+        ) : (
+          <ActionBtn
+            label={busy === 'admin' ? '⏳…' : user.isAdmin ? 'Снять права админа' : 'Назначить админом'}
+            danger={user.isAdmin}
+            onClick={() => wrap('admin', () => api.adminSetAdmin(user.id, !user.isAdmin))}
+            disabled={busy !== null}
+          />
+        )}
 
         <Spacer />
 
