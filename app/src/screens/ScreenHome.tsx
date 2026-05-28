@@ -14,7 +14,6 @@ import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter, type RouteId } from '../router/Router';
 import { WebApp } from '../telegram/webapp';
-import { isAdmin } from '../lib/admin';
 
 const STYLE_LABELS: Record<string, string> = {
   dark: 'Premium Dark',
@@ -40,7 +39,7 @@ export function ScreenHome() {
   // Это используем для подсветки CTA «заполните профиль» в шапке.
   const brandReady = Boolean(brand.logoUrl || brand.masterName);
 
-  const admin = isAdmin(user.telegramId);
+  const admin = Boolean(user.isAdmin);
 
   return (
     <Screen>

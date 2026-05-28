@@ -157,6 +157,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             avatarUrl:  me.user!.photoUrl   ?? p.avatarUrl,
             plan:       me.user!.plan,
             usage:      { used: me.user!.usageUsed, limit: me.user!.usageLimit, period: 'месяц' },
+            isAdmin:    me.user!.isAdmin ?? false,
           }));
         }
         if (me?.brand) {

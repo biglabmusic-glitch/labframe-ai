@@ -53,6 +53,12 @@ Deno.serve(async (req) => {
     };
   }
 
+  // isAdmin определяем на бэке по ADMIN_IDS (один источник правды,
+  // не дублируем список в Vercel env). Фронт показывает админ-плашку по этому флагу.
+  const adminIds = (Deno.env.get('ADMIN_IDS') ?? '')
+    .split(',').map((s) => Number(s.trim())).filter(Boolean);
+  const isAdmin = adminIds.includes(tg.id);
+
   return jsonResponse({
     user: user ? {
       telegramId: user.id,
@@ -63,6 +69,7 @@ Deno.serve(async (req) => {
       plan:       user.plan ?? 'free',
       usageUsed:  user.usage_used ?? 0,
       usageLimit: user.usage_limit ?? 3,
+      isAdmin,
     } : null,
     brand: brandOut,
   });

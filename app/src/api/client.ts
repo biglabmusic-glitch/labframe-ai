@@ -64,6 +64,7 @@ export interface MeResponse {
     plan: Plan;
     usageUsed: number;
     usageLimit: number;
+    isAdmin?: boolean;
   } | null;
   brand: Partial<BrandData> | null;
 }

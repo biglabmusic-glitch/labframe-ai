@@ -20,6 +20,7 @@ export interface User {
   avatarUrl?: string;
   plan: Plan;
   usage: { used: number; limit: number; period: string };
+  isAdmin?: boolean;
 }
 
 export interface BrandData {
