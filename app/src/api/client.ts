@@ -12,9 +12,30 @@ function initData(): string {
   return WebApp?.initData ?? '';
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * fetch с ретраями для сетевых сбоев. iOS WebKit при флапе сети / cold-start Edge-функции
+ * бросает TypeError «Load failed» — это transient, на повторе обычно проходит.
+ * Ретраим ТОЛЬКО сетевые ошибки (fetch reject), НЕ HTTP-ответы (4xx/5xx возвращаем как есть —
+ * 401/429/402 повторять смысла нет).
+ */
+async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries) await sleep(600 * (attempt + 1)); // 0.6s, 1.2s
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('network');
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!API_BASE) throw new Error('VITE_API_BASE_URL is not set');
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithRetry(`${API_BASE}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       'x-telegram-initdata': initData(),
@@ -134,7 +155,7 @@ export const api = {
       '/sign-upload',
       { method: 'POST', body: JSON.stringify({ filename: file.name, contentType: file.type, kind: 'photo' }) },
     );
-    const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+    const put = await fetchWithRetry(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
     if (!put.ok) throw new Error(`upload ${put.status}`);
     return { photoPath, previewUrl: URL.createObjectURL(file) };
   },
@@ -154,7 +175,7 @@ export const api = {
       '/sign-upload',
       { method: 'POST', body: JSON.stringify({ filename: file.name, contentType: file.type, kind: 'logo' }) },
     );
-    const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+    const put = await fetchWithRetry(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
     if (!put.ok) throw new Error(`upload ${put.status}`);
     return { logoPath: photoPath, previewUrl: URL.createObjectURL(file) };
   },
@@ -303,6 +324,12 @@ export function friendlyError(raw: string): { title: string; sub: string } {
     return {
       title: 'Файл не загрузился в хранилище',
       sub:   'Проверьте интернет и попробуйте снова.',
+    };
+  }
+  if (raw.includes('Load failed') || raw.includes('Failed to fetch') || raw.includes('NetworkError') || raw.includes('network')) {
+    return {
+      title: 'Нет связи с сервером',
+      sub:   'Похоже, на секунду пропал интернет или сервер «просыпался». Нажмите «Попробовать снова» — обычно со второго раза проходит.',
     };
   }
   return { title: 'Не удалось загрузить', sub: raw };
