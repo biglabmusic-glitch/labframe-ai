@@ -160,25 +160,39 @@ function bucketByDay(rows: { created_at: string; status: string }[]) {
 }
 
 // ─── users list ────────────────────────────────────────────────────────────
+// Колонки запрашиваем строкой, чтобы при отсутствии is_admin (миграция 0009
+// ещё не применена) откатиться на набор без неё — список не должен пропадать.
+const COLS_WITH_ADMIN = 'id, username, first_name, last_name, plan, usage_used, usage_limit, banned, is_admin, last_seen_at, created_at';
+const COLS_NO_ADMIN   = 'id, username, first_name, last_name, plan, usage_used, usage_limit, banned, last_seen_at, created_at';
+
 async function listUsers(search: string, limit: number) {
-  let q = db
-    .from('users')
-    .select('id, username, first_name, last_name, plan, usage_used, usage_limit, banned, is_admin, last_seen_at, created_at')
-    .order('last_seen_at', { ascending: false, nullsFirst: false })
-    .limit(Math.min(limit, 200));
+  const run = (cols: string) => {
+    let q = db
+      .from('users')
+      .select(cols)
+      .order('last_seen_at', { ascending: false, nullsFirst: false })
+      .limit(Math.min(limit, 200));
 
-  if (search) {
-    // username, first/last + численный id.
-    const num = Number(search);
-    if (Number.isFinite(num)) {
-      q = q.or(`id.eq.${num}`);
-    } else {
-      const esc = search.replace(/[%_]/g, (m) => '\\' + m);
-      q = q.or(`username.ilike.%${esc}%,first_name.ilike.%${esc}%,last_name.ilike.%${esc}%`);
+    if (search) {
+      const num = Number(search);
+      if (Number.isFinite(num)) {
+        q = q.or(`id.eq.${num}`);
+      } else {
+        const esc = search.replace(/[%_]/g, (m) => '\\' + m);
+        q = q.or(`username.ilike.%${esc}%,first_name.ilike.%${esc}%,last_name.ilike.%${esc}%`);
+      }
     }
-  }
+    return q;
+  };
 
-  const { data, error } = await q;
+  // деструктурируем через any — набор колонок может отличаться (с/без is_admin)
+  // deno-lint-ignore no-explicit-any
+  let { data, error } = await run(COLS_WITH_ADMIN) as any;
+  if (error) {
+    // Скорее всего нет колонки is_admin — пробуем без неё, чтобы список жил.
+    // deno-lint-ignore no-explicit-any
+    ({ data, error } = await run(COLS_NO_ADMIN) as any);
+  }
   if (error) return { items: [], error: error.message };
 
   // Считаем jobs для каждого user-а одним запросом.
