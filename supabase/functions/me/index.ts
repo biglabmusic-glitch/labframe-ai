@@ -5,6 +5,7 @@
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { signUrl } from '../_shared/storage.ts';
+import { ensureRefCode, referralStats } from '../_shared/referral.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
@@ -40,6 +41,14 @@ Deno.serve(async (req) => {
 
   const { data: user } = await db.from('users').select('*').eq('id', tg.id).single();
   const { data: brand } = await db.from('brand').select('*').eq('user_id', tg.id).maybeSingle();
+
+  // Реф-код (генерим при первом заходе) + статистика приглашений.
+  let refCode = user?.ref_code as string | undefined;
+  try {
+    if (!refCode) refCode = await ensureRefCode(tg.id);
+  } catch { /* не валим /me из-за реф-кода */ }
+  let refStats = { referralsCount: 0, referralsPaid: 0 };
+  try { refStats = await referralStats(tg.id); } catch { /* таблицы может не быть до миграции */ }
 
   // Маппим бренд в camelCase + подписываем логотип (если есть).
   let brandOut: Record<string, unknown> | null = null;
@@ -79,6 +88,9 @@ Deno.serve(async (req) => {
       usageUsed:  user.usage_used ?? 0,
       usageLimit: user.usage_limit ?? 3,
       isAdmin,
+      refCode:        refCode ?? null,
+      referralsCount: refStats.referralsCount,
+      referralsPaid:  refStats.referralsPaid,
     } : null,
     brand: brandOut,
   });
