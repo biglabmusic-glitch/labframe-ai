@@ -292,6 +292,23 @@ export function ScreenHome() {
             <IconArrow size={14} color="var(--c-on-dark-3)" />
           </div>
         </Card>
+
+        <Card kind="dark" pad={14} radius={20} onClick={go('invite')} style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>
+                🎁
+              </div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Пригласить друга</div>
+                <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
+                  Бонусные генерации за друзей
+                </div>
+              </div>
+            </div>
+            <IconArrow size={14} color="var(--c-on-dark-3)" />
+          </div>
+        </Card>
       </div>
 
       <div

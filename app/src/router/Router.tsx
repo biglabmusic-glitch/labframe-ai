@@ -26,6 +26,7 @@ export type RouteId =
   | 'myplan'
   | 'plans-compare'
   | 'admin'
+  | 'invite'
   | 'help';
 
 interface RouterValue {
