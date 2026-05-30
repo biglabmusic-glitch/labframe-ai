@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { BrandData, Draft, Job, User } from './types';
-import { WebApp } from '../telegram/webapp';
+import { WebApp, getStartParam } from '../telegram/webapp';
 import { api, isBackendReady, type SaveBrandInput } from '../api/client';
 
 interface AppState {
@@ -147,6 +147,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const [me, jobs] = await Promise.all([api.me(), api.listJobs(24)]);
         if (cancelled) return;
+
+        // Если зашли по реф-ссылке (start_param='ref_<CODE>') — тихо привязываемся.
+        // Бэк сам отсечёт «не новый юзер»/самоприглашение. Награда — позже, при оплате.
+        const sp = getStartParam();
+        if (sp.startsWith('ref_')) {
+          api.applyReferral({ startParam: sp }).catch(() => { /* молча */ });
+        }
         if (me?.user) {
           setUserState((p) => ({
             ...p,
@@ -158,6 +165,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             plan:       me.user!.plan,
             usage:      { used: me.user!.usageUsed, limit: me.user!.usageLimit, period: 'месяц' },
             isAdmin:    me.user!.isAdmin ?? false,
+            refCode:        me.user!.refCode ?? p.refCode,
+            referralsCount: me.user!.referralsCount ?? 0,
+            referralsPaid:  me.user!.referralsPaid ?? 0,
           }));
         }
         if (me?.brand) {
