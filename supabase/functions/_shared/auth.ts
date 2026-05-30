@@ -72,6 +72,8 @@ export async function verifyInitData(initData: string): Promise<TgUser> {
 
   if (!refOk && !ourMatch) {
     const err = new AuthError('bad_signature');
+    // debug пишем ТОЛЬКО в server-side лог, наружу (в HTTP-ответ) не отдаём.
+    // Никаких фрагментов BOT_TOKEN здесь быть не должно — это секрет.
     (err as { debug?: unknown }).debug = {
       ref_err: refErr.slice(0, 80),
       tg_hash_8: hash.slice(0, 8),
@@ -80,10 +82,8 @@ export async function verifyInitData(initData: string): Promise<TgUser> {
       keys: sortedRaw.map(([k]) => k).join(','),
       dcs_raw_len: dcsRaw.length,
       dcs_dec_len: dcsDecoded.length,
-      bot_id: trimmedToken.split(':')[0],
-      bot_tok_len: trimmedToken.length,           // должно быть ~46 для типичного токена
+      bot_id: trimmedToken.split(':')[0],          // публичный id бота (не секрет)
       bot_tok_ws: tokenHasWhitespace,              // true = в env лишний whitespace
-      bot_tok_pref: trimmedToken.slice(0, 13),     // 13 символов хватит для сравнения с BotFather
     };
     console.error('initdata hash mismatch', (err as { debug?: unknown }).debug);
     throw err;
@@ -109,10 +109,13 @@ export async function authorize(req: Request): Promise<{ user: TgUser } | { resp
   } catch (e) {
     const code = e instanceof AuthError ? e.code : 'unknown';
     const debug = (e as { debug?: unknown }).debug;
+    // Диагностику оставляем только в логах функции. Клиенту отдаём минимум:
+    // тело ответа видно любому анонимному отправителю кривого initData,
+    // поэтому никакие внутренние детали (тем более про токен) туда не уходят.
     console.error('auth failed', code, debug);
     return {
       response: jsonResponse(
-        { error: 'unauthorized', code, debug },
+        { error: 'unauthorized', code },
         { status: 401 },
       ),
     };

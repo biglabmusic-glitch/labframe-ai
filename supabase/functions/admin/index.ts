@@ -178,7 +178,13 @@ async function listUsers(search: string, limit: number) {
       if (Number.isFinite(num)) {
         q = q.or(`id.eq.${num}`);
       } else {
-        const esc = search.replace(/[%_]/g, (m) => '\\' + m);
+        // Сначала вырезаем символы, имеющие смысл в синтаксисе фильтров PostgREST
+        // (',' разделяет условия, '()' группируют, '*' — wildcard, '\' — escape) —
+        // иначе админ мог бы дописать произвольные фильтры в .or(). Затем экранируем
+        // LIKE-wildcards. Для обычных имён/username это поведение не меняет.
+        const esc = search
+          .replace(/[,()*\\]/g, ' ')
+          .replace(/[%_]/g, (m) => '\\' + m);
         q = q.or(`username.ilike.%${esc}%,first_name.ilike.%${esc}%,last_name.ilike.%${esc}%`);
       }
     }
