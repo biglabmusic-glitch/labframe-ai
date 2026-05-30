@@ -7,6 +7,7 @@
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { sendMessage } from '../_shared/telegram.ts';
+import { grantReferralReward } from '../_shared/referral.ts';
 
 interface AdminBody {
   action:
@@ -16,7 +17,8 @@ interface AdminBody {
     | 'grant-credits'
     | 'send-message'
     | 'ban'
-    | 'set-admin';
+    | 'set-admin'
+    | 'mark-paid';
   // зависит от action — валидируем внутри switch
   userId?: number;
   plan?: 'free' | 'start' | 'pro' | 'lab';
@@ -64,6 +66,7 @@ Deno.serve(async (req) => {
     case 'send-message':  return handleSendMessage(body);
     case 'ban':           return handleBan(body);
     case 'set-admin':     return handleSetAdmin(body, tg.id);
+    case 'mark-paid':     return handleMarkPaid(body);
     default:              return jsonResponse({ error: 'unknown_action' }, { status: 400 });
   }
 });
@@ -295,4 +298,13 @@ async function handleSetAdmin(body: AdminBody, callerId: number) {
   const { error } = await db.from('users').update({ is_admin: body.isAdmin }).eq('id', body.userId);
   if (error) return jsonResponse({ error: error.message }, { status: 500 });
   return jsonResponse({ ok: true });
+}
+
+// ВРЕМЕННО: имитация первой оплаты друга для теста реферального начисления.
+// Когда подключим платёжный вебхук — он вызовет grantReferralReward напрямую,
+// а этот экшн можно удалить.
+async function handleMarkPaid(body: AdminBody) {
+  if (!body.userId) return jsonResponse({ error: 'bad_input' }, { status: 400 });
+  const result = await grantReferralReward(body.userId);
+  return jsonResponse(result);
 }
