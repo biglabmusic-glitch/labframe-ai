@@ -20,5 +20,14 @@ export function initTelegramWebApp() {
   }
 }
 
+/** start_param из реф-ссылки (t.me/<bot>/app?startapp=ref_<CODE>). '' если нет. */
+export function getStartParam(): string {
+  try {
+    return WebApp?.initDataUnsafe?.start_param ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export { WebApp };
 export type TgWebApp = typeof WebApp;

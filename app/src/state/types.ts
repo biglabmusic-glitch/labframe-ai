@@ -21,6 +21,9 @@ export interface User {
   plan: Plan;
   usage: { used: number; limit: number; period: string };
   isAdmin?: boolean;
+  refCode?: string;
+  referralsCount?: number;
+  referralsPaid?: number;
 }
 
 export interface BrandData {

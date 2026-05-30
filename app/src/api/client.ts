@@ -86,6 +86,9 @@ export interface MeResponse {
     usageUsed: number;
     usageLimit: number;
     isAdmin?: boolean;
+    refCode?: string | null;
+    referralsCount?: number;
+    referralsPaid?: number;
   } | null;
   brand: Partial<BrandData> | null;
 }
@@ -281,6 +284,19 @@ export const api = {
     return request<{ ok: true }>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'set-admin', userId, isAdmin }),
+    });
+  },
+  async applyReferral(input: { code?: string; startParam?: string }): Promise<{ ok: boolean; already?: boolean; reason?: string }> {
+    if (!API_BASE) return { ok: false, reason: 'mock' };
+    return request<{ ok: boolean; already?: boolean; reason?: string }>('/apply-referral', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+  async adminMarkPaid(userId: number): Promise<{ ok: boolean; reason?: string }> {
+    return request<{ ok: boolean; reason?: string }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'mark-paid', userId }),
     });
   },
 
