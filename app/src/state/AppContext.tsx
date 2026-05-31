@@ -51,16 +51,16 @@ function buildInitialUser(): User {
       initials: getInitials(tg.first_name, tg.last_name, tg.username),
       avatarUrl: tg.photo_url,
       plan: 'free',
-      usage: { used: 0, limit: 3, period: 'месяц' },
-      premium: { used: 0, limit: 3 },
+      usage: { used: 0, limit: 10, period: 'месяц' },
+      premium: { used: 0, limit: 5 },
     };
   }
   return {
     name: 'Гость',
     initials: 'Г',
     plan: 'free',
-    usage: { used: 0, limit: 3, period: 'месяц' },
-    premium: { used: 0, limit: 3 },
+    usage: { used: 0, limit: 10, period: 'месяц' },
+    premium: { used: 0, limit: 5 },
   };
 }
 
@@ -166,7 +166,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             avatarUrl:  me.user!.photoUrl   ?? p.avatarUrl,
             plan:       me.user!.plan,
             usage:      { used: me.user!.usageUsed, limit: me.user!.usageLimit, period: 'месяц' },
-            premium:    { used: me.user!.premiumUsed ?? 0, limit: me.user!.premiumLimit ?? 3 },
+            premium:    { used: me.user!.premiumUsed ?? 0, limit: me.user!.premiumLimit ?? 5 },
             isAdmin:    me.user!.isAdmin ?? false,
             refCode:        me.user!.refCode ?? p.refCode,
             referralsCount: me.user!.referralsCount ?? 0,

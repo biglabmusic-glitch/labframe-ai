@@ -21,7 +21,7 @@ interface AdminBody {
     | 'mark-paid';
   // зависит от action — валидируем внутри switch
   userId?: number;
-  plan?: 'free' | 'start' | 'pro' | 'lab';
+  plan?: 'free' | 'pro';
   credits?: number;
   message?: string;
   banned?: boolean;
@@ -233,17 +233,15 @@ async function listUsers(search: string, limit: number) {
 
 // ─── actions ───────────────────────────────────────────────────────────────
 const PLAN_LIMITS: Record<string, number> = {
-  free:  3,
-  start: 20,
-  pro:   9999,
-  lab:   9999,
+  free: 10,
+  pro:  9999,
 };
 
 async function handleSetPlan(body: AdminBody) {
   if (!body.userId || !body.plan) return jsonResponse({ error: 'bad_input' }, { status: 400 });
   const { error } = await db
     .from('users')
-    .update({ plan: body.plan, usage_limit: PLAN_LIMITS[body.plan] ?? 3 })
+    .update({ plan: body.plan, usage_limit: PLAN_LIMITS[body.plan] ?? 10 })
     .eq('id', body.userId);
   if (error) return jsonResponse({ error: error.message }, { status: 500 });
   return jsonResponse({ ok: true });

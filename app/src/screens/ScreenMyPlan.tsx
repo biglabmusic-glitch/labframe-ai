@@ -5,7 +5,7 @@ import { Pill } from '../components/primitives/Pill';
 import { IconArrow, IconCheck, IconSpark } from '../components/primitives/icons';
 import { UsageBar } from '../components/UsageBar';
 import { LIMITS_DISABLED } from '../lib/feature-flags';
-import { PLAN_BY_ID } from '../lib/plans';
+import { planById } from '../lib/plans';
 import { useApp } from '../state/AppContext';
 import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
@@ -20,12 +20,12 @@ import { useRouter } from '../router/Router';
 export function ScreenMyPlan() {
   const { user } = useApp();
   const { back, push } = useRouter();
-  const plan = PLAN_BY_ID[user.plan];
+  const plan = planById(user.plan);
 
   useBackButton(back);
   useMainButton({
-    text: user.plan === 'pro' || user.plan === 'lab' ? 'Сравнить тарифы' : 'Все тарифы',
-    onClick: () => push(user.plan === 'pro' || user.plan === 'lab' ? 'plans-compare' : 'pricing'),
+    text: user.plan === 'pro' ? 'Сравнить тарифы' : 'Все тарифы',
+    onClick: () => push(user.plan === 'pro' ? 'plans-compare' : 'pricing'),
   });
 
   return (
@@ -42,8 +42,6 @@ export function ScreenMyPlan() {
             background:
               user.plan === 'pro'
                 ? 'linear-gradient(135deg, rgba(147,213,225,0.18), rgba(147,213,225,0.06))'
-                : user.plan === 'lab'
-                ? 'linear-gradient(135deg, rgba(20,24,40,0.9), rgba(15,18,33,0.6))'
                 : 'var(--c-card-d)',
             border: '1px solid var(--c-line)',
           }}
@@ -159,7 +157,7 @@ export function ScreenMyPlan() {
             <div>
               <div style={{ fontSize: 14, fontWeight: 600 }}>Все тарифы</div>
               <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
-                Подключить Start, Pro или Lab
+                Подключить Pro — безлимит и все функции
               </div>
             </div>
             <IconArrow size={14} color="var(--c-on-dark-3)" />

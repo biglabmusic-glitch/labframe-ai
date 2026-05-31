@@ -74,14 +74,17 @@ Deno.serve(async (req) => {
   // Декор: резолвим выбор в {surface, addition}. null = декора нет.
   const decor = resolveDecor(body.decorPreset, body.decorAddition, body.style);
 
-  // Premium-гейт: декор-генерации сверх лимита требуют подписки.
-  if (decor) {
+  // Premium-гейт: генерации «с реквизитами» (декор) сверх лимита требуют Pro.
+  // Демо-период (LIMITS_DISABLED != '0', по умолчанию ВКЛ) — гейт отключён, открыто всем.
+  // Через недельку: supabase secrets set LIMITS_DISABLED=0  (затем deploy) — Pro станет платным.
+  const limitsDisabled = (Deno.env.get('LIMITS_DISABLED') ?? '1') !== '0';
+  if (decor && !limitsDisabled) {
     const { data: u } = await db
       .from('users')
       .select('premium_used, premium_limit')
       .eq('id', tg.id)
       .maybeSingle();
-    if ((u?.premium_used ?? 0) >= (u?.premium_limit ?? 3)) {
+    if ((u?.premium_used ?? 0) >= (u?.premium_limit ?? 5)) {
       return jsonResponse({ error: 'needs_subscription' }, { status: 402 });
     }
   }

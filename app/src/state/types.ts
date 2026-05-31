@@ -3,7 +3,7 @@ export type StyleId = 'clean' | 'dark' | 'soft';
 export type FormatId = '4x5' | '1x1' | '9x16';
 export type TextType = 'short' | 'sell' | 'tech' | 'none';
 export type BrandingKind = 'logo' | 'name' | 'none';
-export type Plan = 'free' | 'start' | 'pro' | 'lab';
+export type Plan = 'free' | 'pro';
 export type JobStatus =
   | 'created'
   | 'photo_uploaded'

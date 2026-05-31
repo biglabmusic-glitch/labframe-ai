@@ -11,10 +11,8 @@ interface Props {
 }
 
 const PLAN_LABEL: Record<Plan, string> = {
-  free:  'Free',
-  start: 'Start',
-  pro:   'Pro',
-  lab:   'Lab',
+  free: 'Free',
+  pro:  'Pro',
 };
 
 /**
@@ -24,7 +22,7 @@ const PLAN_LABEL: Record<Plan, string> = {
  * Pre-release mode (LIMITS_DISABLED=true) — всем показываем «Без ограничений · pre-release».
  */
 export function UsageBar({ used, limit, plan, onUpgrade, onOpen }: Props) {
-  const unlimited = LIMITS_DISABLED || plan === 'pro' || plan === 'lab';
+  const unlimited = LIMITS_DISABLED || plan === 'pro';
   const pct       = unlimited ? 0 : Math.min(100, Math.round((used / Math.max(limit, 1)) * 100));
   const exhausted = !unlimited && used >= limit;
   const remaining = Math.max(0, limit - used);
@@ -56,7 +54,7 @@ export function UsageBar({ used, limit, plan, onUpgrade, onOpen }: Props) {
             className="mono"
             style={{ fontSize: 10, letterSpacing: 0.8, color: 'var(--c-on-dark-3)' }}
           >
-            ГЕНЕРАЦИИ · {PLAN_LABEL[plan].toUpperCase()}
+            ГЕНЕРАЦИИ · {(PLAN_LABEL[plan] ?? 'Free').toUpperCase()}
           </div>
           <div
             style={{

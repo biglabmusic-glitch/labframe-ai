@@ -8,7 +8,7 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
 
 /**
- * Таблица сравнения тарифов: строки — фичи, колонки — Free / Start / Pro / Lab.
+ * Таблица сравнения тарифов: строки — фичи, колонки — Free / Pro.
  * Текущий план юзера подсвечен. MainButton — «Все тарифы» (на ScreenPricing для оплаты).
  *
  * Группировка по категориям (Лимит и форматы / Бренд и тексты / Команда и поддержка)
@@ -52,7 +52,7 @@ export function ScreenPlansCompare() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '1.4fr repeat(4, 1fr)',
+              gridTemplateColumns: '1.6fr repeat(2, 1fr)',
               alignItems: 'stretch',
               borderBottom: '1px solid var(--c-line)',
               background: 'rgba(239,243,255,0.03)',
@@ -147,7 +147,7 @@ export function ScreenPlansCompare() {
                   key={f.id}
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '1.4fr repeat(4, 1fr)',
+                    gridTemplateColumns: '1.6fr repeat(2, 1fr)',
                     alignItems: 'stretch',
                     borderTop: '1px solid var(--c-line)',
                   }}
@@ -207,7 +207,7 @@ export function ScreenPlansCompare() {
             lineHeight: 1.5,
           }}
         >
-          Цены в рублях. При оплате на год — −20%. Pre-release: лимиты не действуют.
+          Сейчас идёт демо-период — все функции открыты бесплатно. Цены вступят в силу позже.
         </div>
       </div>
     </Screen>

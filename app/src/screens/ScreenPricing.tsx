@@ -6,6 +6,7 @@ import { IconCheck } from '../components/primitives/icons';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
+import { LIMITS_DISABLED } from '../lib/feature-flags';
 import type { Plan } from '../state/types';
 
 interface PlanRow {
@@ -22,39 +23,29 @@ const PLANS: PlanRow[] = [
     id: 'free',
     name: 'Free',
     price: '0',
-    sub: '3 обработки',
+    sub: '10 + 5 / месяц',
     kind: 'ghost',
-    points: ['1 формат изображения', 'Без сохранения бренда', 'Базовый текст'],
-  },
-  {
-    id: 'start',
-    name: 'Start',
-    price: '2 000',
-    sub: '20 / месяц',
-    kind: 'dark',
-    points: ['Логотип и бренд в посте', 'Все 3 стиля оформления', 'Тексты к постам', 'Сохранение хэштегов'],
+    points: [
+      '10 обычных генераций в месяц',
+      '5 генераций с реквизитами (про-режим)',
+      'Все форматы и стили',
+      'Базовый текст к посту',
+    ],
   },
   {
     id: 'pro',
     name: 'Pro',
-    price: '4 500',
+    price: '2 000',
     sub: 'безлимит / месяц',
     kind: 'accent',
     points: [
-      'Безлимит генераций',
+      'Безлимит обычных генераций',
+      'Безлимит генераций с реквизитами',
       'Все форматы из одной обработки (1:1 + 4:5 + 9:16)',
-      'Сохранение бренда и хэштегов',
+      'Логотип, бренд и фирменные хэштеги',
       'Несколько вариантов текста',
       'Доступ к новым стилям первым',
     ],
-  },
-  {
-    id: 'lab',
-    name: 'Lab',
-    price: '—',
-    sub: 'для команд',
-    kind: 'dark',
-    points: ['Общий бренд лаборатории', 'До 5 сотрудников', 'Командные роли', 'По запросу'],
   },
 ];
 
@@ -68,7 +59,7 @@ export function ScreenPricing() {
   const monthlyPrice = rawPrice === '0' || rawPrice === '' ? 0 : Number(rawPrice);
   const discountedMonthly = yearly ? Math.round(monthlyPrice * 0.8) : monthlyPrice;
   const ctaPrice =
-    sel.id === 'lab'  ? 'Написать в поддержку'
+    LIMITS_DISABLED   ? 'Сейчас всё бесплатно · демо'
     : monthlyPrice === 0 ? 'Активировать Free'
     : `Подключить ${sel.name} — ${discountedMonthly.toLocaleString('ru-RU')} ₽ / мес`;
 

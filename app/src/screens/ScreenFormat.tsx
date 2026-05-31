@@ -42,7 +42,7 @@ export function ScreenFormat() {
       </div>
       <ScreenIntro
         title="В каком формате подготовить изображение?"
-        sub="В Pro и Lab — сразу все форматы из одной обработки."
+        sub="Выберите формат под вашу задачу."
       />
 
       <div

@@ -295,7 +295,7 @@ function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: (
 
         <SectionTitle>План</SectionTitle>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-          {(['free', 'start', 'pro', 'lab'] as Plan[]).map((p) => (
+          {(['free', 'pro'] as Plan[]).map((p) => (
             <Pill key={p} size="sm" kind={plan === p ? 'accent' : 'ghost'} onClick={() => setPlan(p)}>
               {p.toUpperCase()}
             </Pill>
