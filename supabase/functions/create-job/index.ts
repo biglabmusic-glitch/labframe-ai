@@ -5,6 +5,7 @@
 // Дальше воркер process-job (cron / pg_net) подхватывает job в статусе 'created'.
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
+import { resolveDecor } from '../_shared/decor.ts';
 
 interface Body {
   photoPath: string;
@@ -13,6 +14,8 @@ interface Body {
   format: '4x5' | '1x1' | '9x16';
   branding: 'logo' | 'name' | 'none';
   textType: 'short' | 'sell' | 'tech' | 'none';
+  decorPreset?: string;     // id пресета / 'custom' / отсутствует = без декора
+  decorAddition?: string;   // текст для 'custom'
 }
 
 Deno.serve(async (req) => {
@@ -68,6 +71,21 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'missing_fields', missing }, { status: 400 });
   }
 
+  // Декор: резолвим выбор в {surface, addition}. null = декора нет.
+  const decor = resolveDecor(body.decorPreset, body.decorAddition, body.style);
+
+  // Premium-гейт: декор-генерации сверх лимита требуют подписки.
+  if (decor) {
+    const { data: u } = await db
+      .from('users')
+      .select('premium_used, premium_limit')
+      .eq('id', tg.id)
+      .maybeSingle();
+    if ((u?.premium_used ?? 0) >= (u?.premium_limit ?? 3)) {
+      return jsonResponse({ error: 'needs_subscription' }, { status: 402 });
+    }
+  }
+
   const { data: job, error } = await db
     .from('jobs')
     .insert({
@@ -78,6 +96,9 @@ Deno.serve(async (req) => {
       format: body.format,
       branding: body.branding ?? 'none',
       text_type: body.textType ?? 'short',
+      decor_preset:   decor ? body.decorPreset : null,
+      decor_surface:  decor?.surface  ?? null,
+      decor_addition: decor?.addition ?? null,
       status: 'created',
     })
     .select('id, status')
