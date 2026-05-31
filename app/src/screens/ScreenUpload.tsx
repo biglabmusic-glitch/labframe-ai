@@ -102,7 +102,7 @@ export function ScreenUpload() {
         onChange={onFile}
       />
       <div style={{ padding: '12px 22px 14px' }}>
-        <StepBadge n={1} total={7} />
+        <StepBadge n={1} total={8} />
       </div>
       <ScreenIntro
         title="Загрузите фото вашей работы"

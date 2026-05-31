@@ -30,7 +30,7 @@ export function ScreenWorkType() {
   return (
     <Screen>
       <div style={{ padding: '12px 22px 14px' }}>
-        <StepBadge n={2} total={7} />
+        <StepBadge n={2} total={8} />
       </div>
       <ScreenIntro
         title="Что изображено на фото?"

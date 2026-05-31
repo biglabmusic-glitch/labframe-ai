@@ -15,6 +15,7 @@ export type RouteId =
   | 'upload'
   | 'worktype'
   | 'style'
+  | 'individuality'
   | 'brand'
   | 'format'
   | 'text'

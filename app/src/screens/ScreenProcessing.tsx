@@ -78,6 +78,8 @@ export function ScreenProcessing() {
           format:    draft.format!,
           branding:  draft.branding ?? 'none',
           textType:  draft.textType ?? 'short',
+          decorPreset:   draft.decor?.preset,
+          decorAddition: draft.decor?.addition,
         });
 
         // имитируем плавный прогресс пока бэк работает
@@ -118,7 +120,7 @@ export function ScreenProcessing() {
   return (
     <Screen>
       <div style={{ padding: '12px 22px 14px' }}>
-        <StepBadge n={7} total={7} />
+        <StepBadge n={8} total={8} />
       </div>
       <ScreenIntro
         title={errorMsg ? 'Что-то пошло не так' : 'AI обрабатывает фото...'}

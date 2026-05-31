@@ -10,6 +10,7 @@ import { ScreenHome } from './screens/ScreenHome';
 import { ScreenUpload } from './screens/ScreenUpload';
 import { ScreenWorkType } from './screens/ScreenWorkType';
 import { ScreenStyle } from './screens/ScreenStyle';
+import { ScreenIndividuality } from './screens/ScreenIndividuality';
 import { ScreenBranding } from './screens/ScreenBranding';
 import { ScreenFormat } from './screens/ScreenFormat';
 import { ScreenTextType } from './screens/ScreenTextType';
@@ -31,6 +32,7 @@ const REGISTRY: Record<RouteId, () => JSX.Element> = {
   upload:          ScreenUpload,
   worktype:        ScreenWorkType,
   style:           ScreenStyle,
+  individuality:   ScreenIndividuality,
   brand:           ScreenBranding,
   format:          ScreenFormat,
   text:            ScreenTextType,
