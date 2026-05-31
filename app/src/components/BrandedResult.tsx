@@ -90,10 +90,33 @@ export function BrandedResult({ src, brand, branding, styleId, onReady }: Props)
   );
 }
 
+// Грузим картинку так, чтобы canvas НЕ стал tainted. Если рисовать cross-origin <img>
+// напрямую, canvas «пачкается» и canvas.toBlob() кидает SecurityError — скачивание
+// тогда откатывается на чистый файл без лого/подписи (ровно этот баг).
+// Решение: тянем байты через fetch → blob → object URL (same-origin) и уже его рисуем.
+// cache:'reload' обходит «отравленный» no-cors кэш-энтри: Telegram мог предзагрузить ту же
+// картинку из чата без CORS, и обычный fetch достал бы непрозрачный ответ.
 function loadImage(src: string): Promise<HTMLImageElement> {
+  return fetchAsBlobImage(src).catch(() => loadFromUrl(src, 'anonymous'));
+}
+
+async function fetchAsBlobImage(src: string): Promise<HTMLImageElement> {
+  const res = await fetch(src, { mode: 'cors', cache: 'reload' });
+  if (!res.ok) throw new Error(`fetch ${res.status}`);
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  try {
+    return await loadFromUrl(objUrl);
+  } finally {
+    // img уже декодирован в память — object URL больше не нужен.
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
+function loadFromUrl(src: string, crossOrigin?: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (crossOrigin) img.crossOrigin = crossOrigin;
     img.onload  = () => resolve(img);
     img.onerror = () => reject(new Error('img load failed'));
     img.src = src;
