@@ -65,6 +65,8 @@ export interface CreateJobInput {
   format: FormatId;
   branding: BrandingKind;
   textType: TextType;
+  decorPreset?: string;
+  decorAddition?: string;
 }
 
 export interface JobResult {
@@ -85,6 +87,8 @@ export interface MeResponse {
     plan: Plan;
     usageUsed: number;
     usageLimit: number;
+    premiumUsed?: number;
+    premiumLimit?: number;
     isAdmin?: boolean;
     refCode?: string | null;
     referralsCount?: number;
@@ -337,6 +341,12 @@ export function friendlyError(raw: string): { title: string; sub: string } {
     return {
       title: 'Уже обрабатывается фото',
       sub:   'Дождитесь окончания предыдущей работы и попробуйте снова.',
+    };
+  }
+  if (raw.includes('needs_subscription')) {
+    return {
+      title: 'Закончились бесплатные premium-генерации',
+      sub:   'Оформите подписку в разделе «Тарифы», чтобы добавлять декор к работам.',
     };
   }
   if (raw.includes('usage_limit_reached')) {

@@ -20,6 +20,7 @@ export interface User {
   avatarUrl?: string;
   plan: Plan;
   usage: { used: number; limit: number; period: string };
+  premium: { used: number; limit: number };
   isAdmin?: boolean;
   refCode?: string;
   referralsCount?: number;
@@ -52,6 +53,8 @@ export interface Draft {
   branding?: BrandingKind;
   format?: FormatId;
   textType?: TextType;
+  /** Декор: id пресета (или 'custom'); addition — только для custom. undefined = без декора. */
+  decor?: { preset: string; addition?: string };
   status: JobStatus;
 }
 

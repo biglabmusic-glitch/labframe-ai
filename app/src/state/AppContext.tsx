@@ -52,6 +52,7 @@ function buildInitialUser(): User {
       avatarUrl: tg.photo_url,
       plan: 'free',
       usage: { used: 0, limit: 3, period: 'месяц' },
+      premium: { used: 0, limit: 3 },
     };
   }
   return {
@@ -59,6 +60,7 @@ function buildInitialUser(): User {
     initials: 'Г',
     plan: 'free',
     usage: { used: 0, limit: 3, period: 'месяц' },
+    premium: { used: 0, limit: 3 },
   };
 }
 
@@ -164,6 +166,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             avatarUrl:  me.user!.photoUrl   ?? p.avatarUrl,
             plan:       me.user!.plan,
             usage:      { used: me.user!.usageUsed, limit: me.user!.usageLimit, period: 'месяц' },
+            premium:    { used: me.user!.premiumUsed ?? 0, limit: me.user!.premiumLimit ?? 3 },
             isAdmin:    me.user!.isAdmin ?? false,
             refCode:        me.user!.refCode ?? p.refCode,
             referralsCount: me.user!.referralsCount ?? 0,
