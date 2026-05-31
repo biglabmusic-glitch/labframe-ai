@@ -1,6 +1,7 @@
 // Image AI — модуль с промтами + тонкая обёртка над роутером моделей (image-providers.ts).
 // Сюда добавляем все промты, оттуда — выбираем провайдер (flux-kontext / nano-banana / polza).
 import { generateImage, type ProviderName } from './image-providers.ts';
+import { buildDecorPrompt, COMMON_OUTPUT_DECOR } from './decor.ts';
 
 export type StyleId = 'clean' | 'dark' | 'soft';
 export type FormatId = '4x5' | '1x1' | '9x16';
@@ -117,6 +118,7 @@ export interface ProcessImageInput {
   brandText?: string;
   forceProvider?: ProviderName;      // 'auto' (default) / 'flux-kontext' / 'nano-banana' / 'polza'
   customPrompt?: string;             // если задан — используется вместо STYLE_PROMPT (см. agent.ts)
+  decor?: { surface: string; addition: string }; // если задан — декор-ветка (минуя агента)
 }
 
 export interface ProcessImageOutput {
@@ -130,9 +132,11 @@ export async function processImage(input: ProcessImageInput): Promise<ProcessIma
   // Если агент дал свой промт — оборачиваем его нашим железным контекстом:
   // POSITION_LOCK (нельзя менять зуб) + промт агента + COMMON_OUTPUT (нельзя добавлять текст).
   // Это страховка: GPT-4o-mini может смягчить запреты, sandwich этого не даст.
-  const prompt = input.customPrompt
-    ? `${POSITION_LOCK}\n\n${input.customPrompt}\n\n${COMMON_OUTPUT}`
-    : (input.logoUrl ? buildPromptWithLogo(input.style) : buildPrompt(input.style));
+  const prompt = input.decor
+    ? `${POSITION_LOCK}\n\n${buildDecorPrompt(input.style, input.decor.surface, input.decor.addition)}\n\n${COMMON_OUTPUT_DECOR}`
+    : input.customPrompt
+      ? `${POSITION_LOCK}\n\n${input.customPrompt}\n\n${COMMON_OUTPUT}`
+      : (input.logoUrl ? buildPromptWithLogo(input.style) : buildPrompt(input.style));
 
   return generateImage(
     {

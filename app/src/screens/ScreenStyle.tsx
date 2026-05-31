@@ -96,14 +96,14 @@ export function ScreenStyle() {
   const selectedStyle = STYLES.find((s) => s.id === draft.style);
   useMainButton({
     text: selectedStyle ? `Применить ${selectedStyle.name}` : 'Выберите стиль',
-    onClick: () => push('brand'),
+    onClick: () => push('individuality'),
     enabled: Boolean(draft.style),
   });
 
   return (
     <Screen>
       <div style={{ padding: '12px 22px 14px' }}>
-        <StepBadge n={3} total={7} />
+        <StepBadge n={3} total={8} />
       </div>
       <ScreenIntro
         title="Выберите стиль оформления"

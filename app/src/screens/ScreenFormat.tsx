@@ -38,7 +38,7 @@ export function ScreenFormat() {
   return (
     <Screen>
       <div style={{ padding: '12px 22px 14px' }}>
-        <StepBadge n={5} total={7} />
+        <StepBadge n={6} total={8} />
       </div>
       <ScreenIntro
         title="В каком формате подготовить изображение?"

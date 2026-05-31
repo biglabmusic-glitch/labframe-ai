@@ -50,7 +50,7 @@ export function ScreenTextType() {
   return (
     <Screen>
       <div style={{ padding: '12px 22px 14px' }}>
-        <StepBadge n={6} total={7} />
+        <StepBadge n={7} total={8} />
       </div>
       <ScreenIntro
         title="Текст к публикации"

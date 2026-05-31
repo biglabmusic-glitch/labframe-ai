@@ -28,7 +28,7 @@ export function ScreenBranding() {
   return (
     <Screen>
       <div style={{ padding: '12px 22px 14px' }}>
-        <StepBadge n={4} total={7} />
+        <StepBadge n={5} total={8} />
       </div>
       <ScreenIntro
         title="Добавить логотип или имя мастера?"
