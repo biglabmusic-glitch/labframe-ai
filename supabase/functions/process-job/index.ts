@@ -56,10 +56,11 @@ Deno.serve(async (req) => {
     // 2. AI-агент (опц., через env): vision-анализ фото + бренд + история → кастомный промт.
     //    AGENT_DISABLED=true — пропускаем, идём по дефолтным правилам.
     //    Это даёт быстрый kill-switch, если агент валится или раздувает таймаут процессинга.
+    const hasDecor = Boolean(job.decor_preset);
     const agentDisabled = Deno.env.get('AGENT_DISABLED') === 'true';
     let agentResult: Awaited<ReturnType<typeof buildPersonalizedPrompt>> = null;
 
-    if (!agentDisabled) {
+    if (!agentDisabled && !hasDecor) {
       // Память агента: 10 последних done-jobs юзера + их фидбэк (если есть).
       // Используем idx_jobs_user_done_created.
       const { data: prevJobs } = await db
@@ -115,7 +116,8 @@ Deno.serve(async (req) => {
       logoUrl,
       style:         job.style,
       format:        job.format,
-      customPrompt:  agentResult?.prompt,
+      customPrompt:  hasDecor ? undefined : agentResult?.prompt,
+      decor:         hasDecor ? { surface: job.decor_surface, addition: job.decor_addition } : undefined,
     });
     await logAi(job.id, 'image-ai', img.provider, img.durationMs, true);
 
