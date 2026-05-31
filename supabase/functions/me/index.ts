@@ -87,6 +87,8 @@ Deno.serve(async (req) => {
       plan:       user.plan ?? 'free',
       usageUsed:  user.usage_used ?? 0,
       usageLimit: user.usage_limit ?? 3,
+      premiumUsed:  user.premium_used ?? 0,
+      premiumLimit: user.premium_limit ?? 3,
       isAdmin,
       refCode:        refCode ?? null,
       referralsCount: refStats.referralsCount,
