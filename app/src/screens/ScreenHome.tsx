@@ -27,13 +27,30 @@ const FORMAT_LABELS: Record<string, string> = {
 };
 
 export function ScreenHome() {
-  const { user, brand, history, resetDraft } = useApp();
+  const { user, brand, history, resetDraft, setDraft } = useApp();
   const { push } = useRouter();
 
   useBackButton(() => WebApp?.close?.());
   useMainButton(null);
 
   const go = (r: RouteId) => () => push(r);
+
+  // Тап по работе в ленте → открыть её результат.
+  // ScreenResult тянет картинку/подпись по lastJobId из sessionStorage,
+  // а стиль/формат/режим брендинга берёт из draft — поэтому восстанавливаем их из Job.
+  // Брендинг в Job не хранится: подставляем дефолт по текущему бренду (как на шаге «Бренд»).
+  const openJob = (p: (typeof history)[number]) => {
+    WebApp?.HapticFeedback?.impactOccurred?.('light');
+    sessionStorage.setItem('labframe.lastJobId', p.id);
+    setDraft({
+      style: p.style,
+      format: p.format,
+      workType: p.workType,
+      branding: brand.logoUrl ? 'logo' : brand.masterName ? 'name' : 'none',
+      status: 'done',
+    });
+    push('result');
+  };
 
   // «Бренд заполнен» — нужен либо логотип, либо имя мастера.
   // Это используем для подсветки CTA «заполните профиль» в шапке.
@@ -381,6 +398,15 @@ export function ScreenHome() {
             return (
               <div
                 key={p.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => openJob(p)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openJob(p);
+                  }
+                }}
                 style={{
                   flex: '0 0 110px',
                   height: 130,
@@ -391,6 +417,7 @@ export function ScreenHome() {
                   padding: 8,
                   position: 'relative',
                   overflow: 'hidden',
+                  cursor: 'pointer',
                   color: dark ? 'var(--c-on-dark)' : 'var(--c-ink)',
                 }}
               >
