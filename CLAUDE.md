@@ -30,11 +30,26 @@ HANDOFF.md  — дизайн-handoff для разработчиков
 Все деплоятся с `--no-verify-jwt`. Telegram initData проверяется через `_shared/auth.ts → authorize()`.
 
 - `me` — upsert юзера + профиль/бренд
-- `sign-upload` — подписанный PUT URL на bucket `photos`
-- `create-job` — insert в `jobs`, триггерит `process-job` через `EdgeRuntime.waitUntil` (без pg_cron)
+- `sign-upload` — подписанный PUT URL на bucket `photos` (принимает только `image/*`)
+- `create-job` — insert в `jobs`, триггерит `process-job` через `EdgeRuntime.waitUntil` (без pg_cron), передавая `{ jobId }`
 - `get-job` — polling статуса для фронта
 - `process-job` — воркер: Replicate (Flux Kontext) + polza.ai (gpt-4o-mini), пушит результат в TG-чат через бота
 - `notify-bot` — служебная
+
+### Как воркер выбирает job
+
+pg_cron на проекте **не включён**, поэтому единственный триггер — вызов из `create-job`.
+Из-за этого воркер устроен так, чтобы ни один job не потерялся без cron:
+
+1. `create-job` передаёт `{ jobId }` — воркер лочит именно его, а не «самый старый в очереди».
+2. Если наш job уже забрали — идём по очереди, пробуя несколько кандидатов подряд
+   (раньше проигранная гонка означала выход ни с чем, и чужой job мог осиротеть).
+3. Перед выбором `sweepStale()` добивает зависшие: `processing` старше 5 мин → `failed: timeout`,
+   `created` старше 15 мин → `failed: not_picked_up`. Это дубль `0003_watchdog.sql` на случай,
+   что pg_cron не работает; система лечится при первом же действии любого юзера.
+4. Фронт (`waitForJob`) сдаётся через 6 минут — спиннер больше не крутится вечно.
+5. Rate-limit в `create-job` (2 активных job) не считает job старше 15 мин — иначе пара
+   зависших блокировала юзера навсегда.
 
 ## Секреты
 
@@ -52,15 +67,20 @@ HANDOFF.md  — дизайн-handoff для разработчиков
 
 Конкретные значения секретов хранятся **только у пользователя** в его заметках. В чат не присылать — пользователь обещал ротировать.
 
-## Известные блокеры (на момент паузы)
+## Известные блокеры
 
-🔴 **`401 bad_signature` от `sign-upload`** — HMAC проверка initData не сходится при загрузке фото из мини-аппа в Telegram. Уже исправлено:
-1. ✅ Порядок HMAC: key=BOT_TOKEN, data="WebAppData" (было наоборот)
-2. ✅ CORS: добавили `x-telegram-initdata` в `Access-Control-Allow-Headers`
-3. ⏳ Если всё ещё `bad_signature` — посмотри `auth.ts` debug-вывод (возвращает `tg_hash_8`, `our_hash_8`, `keys`, `dcs_len`, `bot_id` в JSON). Скорее всего проблема в одном из:
-   - порядок сортировки в `dataCheckString` (сортировать по ключу, не по строке `key=value`)
-   - URL-encoding значений (`URLSearchParams` декодирует — это правильно, но проверь)
-   - наличие лишних/невалидных полей в initData
+🔴 **Бот нигде не запущен.** Railway не поднят, `/start`, `/help`, `/app`, `/pricing` не отвечают.
+Мини-апп при этом открывается (menu button) и реф-ссылки `?startapp=ref_CODE` работают — им бот-процесс не нужен.
+Но пока юзер не начал диалог, Telegram запрещает боту писать первым, поэтому пуш результата
+в чат из `process-job` возвращает 403. Такие провалы теперь пишутся в `ai_calls`
+(provider=`telegram`) и видны в админке в «последних ошибках».
+Деплой: `bot/railway.json` уже готов, нужен только сам проект на Railway (DEPLOY.md шаг 4).
+
+✅ **`401 bad_signature`** — починено. Причина: Telegram с конца 2024 добавил в initData поле
+`signature`, которое нужно исключать из `data_check_string` (коммит `b2d1731`).
+Сейчас `auth.ts` валидирует через reference-валидатор `@telegram-apps/init-data-node`,
+ручной HMAC остался вторым эшелоном для диагностики. Диагностика пишется только в логи функции —
+наружу в 401 не отдаётся.
 
 ## Как продолжить
 
@@ -72,8 +92,10 @@ Set-Location 'c:\Users\Слава\Desktop\зубтех'
 # деплой одной функции
 supabase functions deploy sign-upload --no-verify-jwt
 
-# деплой всех auth-функций
-foreach ($fn in @('me','sign-upload','create-job','get-job','notify-bot','process-job')) {
+# деплой всех функций
+foreach ($fn in @('me','sign-upload','create-job','get-job','list-jobs','job-feedback',
+                  'save-brand','admin','apply-referral','regen-hashtags',
+                  'regen-brand-hashtags','notify-bot','process-job')) {
   supabase functions deploy $fn --no-verify-jwt
 }
 
@@ -83,6 +105,17 @@ git add -A && git commit -m "..."
 git push
 ```
 
+Проверка перед деплоем (Deno стоит через scoop, `npm run typecheck` в app/ сломан — юзать `build`):
+
+```powershell
+deno test --allow-all supabase/functions/_shared/    # нужны заглушки env, см. ниже
+deno check supabase/functions/process-job/index.ts
+```
+
+`_shared/env.ts` требует переменные на импорте, поэтому для тестов:
+`$env:SUPABASE_URL='http://localhost'` + `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+`REPLICATE_API_TOKEN`, `POLZA_API_KEY`, `BOT_TOKEN` — любые непустые значения.
+
 ## Гитарь
 
 - main branch
@@ -90,8 +123,13 @@ git push
 
 ## Дальше по плану
 
-1. Починить `bad_signature` (см. блокер)
+1. **Задеплоить бот на Railway** — единственный оставшийся блокер (DEPLOY.md шаг 4,
+   конфиг `bot/railway.json` готов). Без этого `/start` молчит и пуш результата в чат не доходит.
 2. Прогнать end-to-end в TG: загрузка → AI → пуш в чат
-3. Задеплоить бот на Railway (есть `bot/`, есть DEPLOY.md шаг 4)
-4. Ротировать секреты, которые юзер шарил в чате
-5. Telegram Stars payments (когда продукт подтвердится)
+3. Ротировать секреты, которые юзер шарил в чате
+4. Платёжный вебхук: он должен звать `grantReferralReward()` напрямую,
+   после чего можно удалить временный админ-экшн `mark-paid`
+5. Включить оплату — **два** флага с одинаковым смыслом, менять вместе:
+   `LIMITS_DISABLED=0` в секретах Supabase (бэк начнёт применять лимиты в `create-job`)
+   и `VITE_LIMITS_DISABLED=0` на Vercel (UI начнёт показывать лимиты и тарифы).
+   Триггер `enforce_usage_limit` возвращать НЕ нужно — лимит теперь проверяется в `create-job`.

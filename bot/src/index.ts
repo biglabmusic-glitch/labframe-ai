@@ -67,49 +67,57 @@ bot.catch((err) => {
 });
 
 async function main() {
-  if (WEBHOOK_URL) {
-    // Production: webhook через HTTP-сервер (Railway)
-    await bot.api.setWebhook(WEBHOOK_URL, {
+  const useWebhook = Boolean(WEBHOOK_URL);
+
+  // HTTP-сервер поднимаем ВСЕГДА, ещё до настройки вебхука: у Railway healthcheck
+  // бьётся в /health, а WEBHOOK_URL можно узнать только после того, как домен выдан.
+  // Раньше сервер стартовал лишь при заданном WEBHOOK_URL, поэтому самый первый
+  // деплой гарантированно падал по healthcheck-у.
+  const handle = useWebhook
+    ? webhookCallback(bot, 'std/http', { secretToken: WEBHOOK_SECRET || undefined })
+    : null;
+
+  const server = createServer(async (req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200);
+      res.end('ok');
+      return;
+    }
+    if (handle && req.url === '/webhook' && req.method === 'POST') {
+      try {
+        const response = await handle(
+          new Request(`http://localhost${req.url}`, {
+            method: req.method,
+            headers: req.headers as HeadersInit,
+            body: await streamToString(req),
+          }),
+        );
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        res.end(await response.text());
+      } catch (err) {
+        console.error(err);
+        res.writeHead(500);
+        res.end('error');
+      }
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+
+  server.listen(PORT, () =>
+    console.log(`Bot listening on :${PORT} (${useWebhook ? 'webhook' : 'long polling'})`),
+  );
+
+  if (useWebhook) {
+    // Production: обновления приходят на /webhook выше.
+    await bot.api.setWebhook(WEBHOOK_URL!, {
       secret_token: WEBHOOK_SECRET || undefined,
       drop_pending_updates: true,
     });
     console.log('Webhook set to', WEBHOOK_URL);
-
-    const handle = webhookCallback(bot, 'std/http', {
-      secretToken: WEBHOOK_SECRET || undefined,
-    });
-
-    const server = createServer(async (req, res) => {
-      if (req.url === '/webhook' && req.method === 'POST') {
-        try {
-          const response = await handle(
-            new Request(`http://localhost${req.url}`, {
-              method: req.method,
-              headers: req.headers as HeadersInit,
-              body: await streamToString(req),
-            }),
-          );
-          res.writeHead(response.status, Object.fromEntries(response.headers));
-          res.end(await response.text());
-        } catch (err) {
-          console.error(err);
-          res.writeHead(500);
-          res.end('error');
-        }
-        return;
-      }
-      if (req.url === '/health') {
-        res.writeHead(200);
-        res.end('ok');
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    });
-
-    server.listen(PORT, () => console.log(`Bot listening on :${PORT}`));
   } else {
-    // Dev: long polling
+    // Dev / первый деплой до появления домена: long polling.
     await bot.api.deleteWebhook({ drop_pending_updates: true });
     console.log('Long polling…');
     await bot.start();

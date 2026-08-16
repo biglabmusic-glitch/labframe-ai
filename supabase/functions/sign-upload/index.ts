@@ -7,6 +7,9 @@
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 
+// Расширения, которые сохраняем как есть. Всё остальное превращаем в jpg.
+const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif', 'gif']);
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
   if (req.method !== 'POST') return jsonResponse({ error: 'method' }, { status: 405 });
@@ -22,8 +25,20 @@ Deno.serve(async (req) => {
   const kind = body.kind === 'logo' ? 'logo' : 'photo';
   const bucket = kind === 'logo' ? 'brand' : 'photos';
 
+  // Принимаем только картинки. Проверяем именно префикс image/, а не белый список
+  // подтипов: iOS шлёт heic/heif, Android — webp, и запрещать их нельзя.
+  // Пустой contentType пропускаем — некоторые мобильные WebView не проставляют его,
+  // и отказ здесь сломал бы загрузку у части живых юзеров.
+  const contentType = body.contentType?.trim() ?? '';
+  if (contentType && !contentType.startsWith('image/')) {
+    return jsonResponse({ error: 'unsupported_type' }, { status: 400 });
+  }
+
   const filename = (body.filename ?? `${kind}.jpg`).replace(/[^a-zA-Z0-9._-]/g, '_');
-  const ext = filename.includes('.') ? filename.split('.').pop() : 'jpg';
+  const rawExt = filename.includes('.') ? filename.split('.').pop()!.toLowerCase() : '';
+  // Расширение идёт в путь объекта, поэтому неизвестное сводим к jpg —
+  // чтобы в bucket не оседали пути вида `<id>/….exe`.
+  const ext = IMAGE_EXTENSIONS.has(rawExt) ? rawExt : 'jpg';
   const path = `${tg.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
 
   const { data, error } = await db.storage

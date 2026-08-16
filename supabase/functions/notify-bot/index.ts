@@ -10,12 +10,16 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'forbidden' }, { status: 403 });
   }
 
-  const body = await req.json() as {
+  let body: {
     chatId: number;
     text?: string;
     photoUrl?: string;
     caption?: string;
   };
+  try { body = await req.json(); }
+  catch { return jsonResponse({ error: 'bad_json' }, { status: 400 }); }
+
+  if (!body?.chatId) return jsonResponse({ error: 'missing chatId' }, { status: 400 });
 
   try {
     if (body.photoUrl) {

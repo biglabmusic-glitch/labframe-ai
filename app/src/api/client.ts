@@ -15,6 +15,13 @@ function initData(): string {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Сколько ждём готовности job, прежде чем показать ошибку.
+ * Больше, чем watchdog в process-job (5 мин на processing), чтобы юзер сначала
+ * увидел настоящую причину сбоя от бэка, а не общий таймаут.
+ */
+const JOB_POLL_TIMEOUT_MS = 6 * 60 * 1000;
+
+/**
  * fetch с ретраями для сетевых сбоев. iOS WebKit при флапе сети / cold-start Edge-функции
  * бросает TypeError «Load failed» — это transient, на повторе обычно проходит.
  * Ретраим ТОЛЬКО сетевые ошибки (fetch reject), НЕ HTTP-ответы (4xx/5xx возвращаем как есть —
@@ -309,12 +316,24 @@ export const api = {
     return request<Job[]>('/history');
   },
 
-  /** Polling — опрашивает get-job до done/failed. */
-  async waitForJob(id: string, onTick?: (j: JobResult) => void, intervalMs = 2000): Promise<JobResult> {
+  /**
+   * Polling — опрашивает get-job до done/failed.
+   * Ограничен по времени: без этого зависший job означал вечный спиннер и
+   * бесконечные запросы к бэку каждые 2 секунды, пока юзер не закроет приложение.
+   * Нормальная обработка укладывается в 15–25 сек, так что порог задан с запасом.
+   */
+  async waitForJob(
+    id: string,
+    onTick?: (j: JobResult) => void,
+    intervalMs = 2000,
+    timeoutMs = JOB_POLL_TIMEOUT_MS,
+  ): Promise<JobResult> {
+    const deadline = Date.now() + timeoutMs;
     for (;;) {
       const j = await this.getJob(id);
       onTick?.(j);
       if (j.status === 'done' || j.status === 'failed') return j;
+      if (Date.now() >= deadline) throw new Error(`job_timeout ${id}`);
       await new Promise((r) => setTimeout(r, intervalMs));
     }
   },
@@ -337,6 +356,12 @@ export function friendlyError(raw: string): { title: string; sub: string } {
       sub:   'Откройте мини-апп заново через бота — иногда Telegram даёт устаревший ключ.',
     };
   }
+  if (raw.includes('job_timeout') || raw.includes('not_picked_up') || raw === 'timeout') {
+    return {
+      title: 'Обработка затянулась',
+      sub:   'Сервер не успел вернуть результат. Работа могла всё же дойти — загляните в «Ваши работы» или попробуйте ещё раз.',
+    };
+  }
   if (raw.includes('too_many_in_progress') || raw.includes('429 ')) {
     return {
       title: 'Уже обрабатывается фото',
@@ -353,6 +378,12 @@ export function friendlyError(raw: string): { title: string; sub: string } {
     return {
       title: 'Лимит исчерпан',
       sub:   'Откройте раздел «Тарифы», чтобы продолжить.',
+    };
+  }
+  if (raw.includes('unsupported_type')) {
+    return {
+      title: 'Это не похоже на фото',
+      sub:   'Загрузите изображение — JPG, PNG или снимок прямо с камеры.',
     };
   }
   if (raw.startsWith('upload ')) {

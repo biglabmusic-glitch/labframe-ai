@@ -1,6 +1,7 @@
-// POST /process-job  (вызывается pg_cron каждые 10 сек ИЛИ напрямую из create-job)
-// Берёт первый job в статусе 'created', обрабатывает (Image AI + Text AI),
-// апдейтит статус, шлёт уведомление в чат через бота.
+// POST /process-job  (вызывается напрямую из create-job ИЛИ pg_cron каждые 10 сек)
+// Body: { jobId? } — если передан, берём именно этот job; иначе первый в очереди.
+// Обрабатывает job (Image AI + Text AI), апдейтит статус, шлёт результат в чат через бота.
+// Перед выбором добивает зависшие job-ы (см. sweepStale).
 import { jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { processImage } from '../_shared/replicate.ts';
@@ -17,32 +18,18 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'forbidden' }, { status: 403 });
   }
 
-  // Берём один job в работу атомарно
-  const { data: jobs, error: pickErr } = await db
-    .from('jobs')
-    .select('*')
-    .eq('status', 'created')
-    .order('created_at', { ascending: true })
-    .limit(1);
+  // create-job передаёт id только что созданного job — лочим именно его.
+  // Cron и ручной вызов шлют пустое тело, тогда идём по общей очереди.
+  let preferredId: string | undefined;
+  try {
+    const body = await req.json() as { jobId?: string } | null;
+    if (typeof body?.jobId === 'string') preferredId = body.jobId;
+  } catch { /* пустое или кривое тело — работаем по очереди */ }
 
-  if (pickErr) return jsonResponse({ error: pickErr.message }, { status: 500 });
-  if (!jobs?.length) return jsonResponse({ ok: true, picked: 0 });
+  await sweepStale();
 
-  const job = jobs[0];
-
-  // Оптимистическая блокировка: ставим processing только если статус всё ещё created.
-  // Проверяем, что строка действительно обновилась — иначе job уже забрал другой воркер
-  // (без этого второй воркер тратил бы деньги Replicate на тот же job).
-  const { data: locked, error: lockErr } = await db
-    .from('jobs')
-    .update({ status: 'processing', started_at: new Date().toISOString() })
-    .eq('id', job.id)
-    .eq('status', 'created')
-    .select('id')
-    .maybeSingle();
-
-  if (lockErr) return jsonResponse({ error: lockErr.message }, { status: 500 });
-  if (!locked)  return jsonResponse({ ok: true, picked: 0, reason: 'lost_race' });
+  const job = await pickJob(preferredId);
+  if (!job) return jsonResponse({ ok: true, picked: 0 });
 
   try {
     const { data: brand } = await db.from('brand').select('*').eq('user_id', job.user_id).maybeSingle();
@@ -161,7 +148,14 @@ Deno.serve(async (req) => {
       ].filter(Boolean).join('\n');
       await sendPhoto(Number(job.user_id), publicUrl('results', resultPath), captionFull);
     } catch (e) {
-      console.error('telegram push failed', e);
+      // Самый частый случай — юзер не начинал диалог с ботом: Telegram запрещает
+      // боту писать первым (403 «bot can't initiate conversation with a user»).
+      // Результат уже готов и виден в мини-аппе, поэтому job не валим. Но пишем
+      // в ai_calls: иначе провал не видно нигде, кроме логов функции, а именно
+      // он ломает обещание «свернём Telegram — пришлём уведомление».
+      const message = e instanceof Error ? e.message : String(e);
+      console.error('telegram push failed', message);
+      await logAi(job.id, 'telegram', 'sendPhoto', 0, false, undefined, message);
     }
 
     console.log(`job ${job.id} done in ${Date.now() - t0}ms`);
@@ -177,6 +171,104 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, jobId: job.id, error: message }, { status: 500 });
   }
 });
+
+// Сколько кандидатов пробуем забрать за один проход и сколько раз перечитываем очередь.
+const PICK_ATTEMPTS = 5;
+
+// Пороги «зависших» job-ов для watchdog-а ниже.
+// processing — воркер умер или Replicate не ответил (нормальная обработка < 2 мин).
+// created    — триггер из create-job не доехал и никто job так и не подобрал.
+const STALE_PROCESSING_MIN = 5;
+const STALE_CREATED_MIN = 15;
+
+function minutesAgo(min: number): string {
+  return new Date(Date.now() - min * 60_000).toISOString();
+}
+
+/**
+ * Оптимистическая блокировка: ставим processing, только если статус всё ещё created.
+ * Вернёт полную строку job или null, если её уже забрал другой воркер
+ * (без этой проверки второй воркер тратил бы деньги Replicate на тот же job).
+ */
+async function lockJob(id: string) {
+  const { data } = await db
+    .from('jobs')
+    .update({ status: 'processing', started_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('status', 'created')
+    .select('*')
+    .maybeSingle();
+  return data ?? null;
+}
+
+/**
+ * Выбирает job в работу.
+ * 1. Если create-job передал свой jobId — забираем именно его, гонки за чужой job нет.
+ * 2. Иначе (или если наш уже забрали) — идём по очереди, пробуя несколько кандидатов
+ *    подряд и перечитывая её.
+ *
+ * Раньше воркер брал только самый старый job и при проигранной гонке выходил ни с чем.
+ * Два одновременных create-job выбирали одного и того же кандидата, проигравший
+ * возвращал lost_race — и второй job оставался в created навсегда, потому что
+ * pg_cron (0002_cron.sql) на проекте не включён и подобрать его было некому.
+ */
+async function pickJob(preferredId?: string) {
+  if (preferredId) {
+    const mine = await lockJob(preferredId);
+    if (mine) return mine;
+  }
+
+  for (let attempt = 0; attempt < PICK_ATTEMPTS; attempt++) {
+    const { data: candidates, error } = await db
+      .from('jobs')
+      .select('id')
+      .eq('status', 'created')
+      .order('created_at', { ascending: true })
+      .limit(PICK_ATTEMPTS);
+
+    if (error) {
+      console.error('pickJob query failed:', error.message);
+      return null;
+    }
+    if (!candidates?.length) return null;
+
+    for (const c of candidates) {
+      const locked = await lockJob(c.id);
+      if (locked) return locked;
+    }
+  }
+  return null;
+}
+
+/**
+ * Добивает зависшие job-ы, чтобы они не висели вечно: фронт из-за таких крутил
+ * спиннер без конца, а rate-limit в create-job считал их активными и блокировал юзера.
+ *
+ * Намеренно дублирует cron из 0003_watchdog.sql: pg_cron на проекте может быть
+ * не включён, а воркер стартует на каждое создание job — то есть система
+ * самовосстанавливается при первом же действии любого пользователя.
+ * Ошибки только логируем: сбой уборки не должен мешать основной обработке.
+ */
+async function sweepStale() {
+  const now = new Date().toISOString();
+  try {
+    const { error: procErr } = await db
+      .from('jobs')
+      .update({ status: 'failed', error_message: 'timeout', finished_at: now })
+      .eq('status', 'processing')
+      .lt('started_at', minutesAgo(STALE_PROCESSING_MIN));
+    if (procErr) console.error('sweepStale processing:', procErr.message);
+
+    const { error: createdErr } = await db
+      .from('jobs')
+      .update({ status: 'failed', error_message: 'not_picked_up', finished_at: now })
+      .eq('status', 'created')
+      .lt('created_at', minutesAgo(STALE_CREATED_MIN));
+    if (createdErr) console.error('sweepStale created:', createdErr.message);
+  } catch (e) {
+    console.error('sweepStale threw:', e instanceof Error ? e.message : e);
+  }
+}
 
 // Маппинг шрифта (id из app/src/lib/fonts.ts) → описание для image-промта.
 // Дублирование с фронтом намеренное: edge-функции не разделяют код с app/.

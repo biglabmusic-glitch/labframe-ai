@@ -7,7 +7,7 @@ import { useApp } from '../state/AppContext';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
-import { api, isBackendReady } from '../api/client';
+import { api, isBackendReady, friendlyError } from '../api/client';
 
 const STEPS = [
   'Анализ фото',
@@ -93,6 +93,8 @@ export function ScreenProcessing() {
         clearInterval(tick);
         setActiveIdx(STEPS.length - 1);
 
+        // Известные коды («не подобрали job», таймаут воркера) переводим в человеческий
+        // текст. Незнакомые friendlyError возвращает как есть — поведение не меняется.
         if (finalJob.status === 'done') {
           setDraft({
             status: 'done',
@@ -104,10 +106,10 @@ export function ScreenProcessing() {
           sessionStorage.setItem('labframe.lastJobId', finalJob.id);
           replace('result');
         } else {
-          setErrorMsg(finalJob.error ?? 'Обработка не удалась');
+          setErrorMsg(friendlyError(finalJob.error ?? 'Обработка не удалась').sub);
         }
       } catch (e) {
-        setErrorMsg(e instanceof Error ? e.message : 'Ошибка обработки');
+        setErrorMsg(friendlyError(e instanceof Error ? e.message : 'Ошибка обработки').sub);
       }
     })();
   }, [draft, replace, setDraft]);

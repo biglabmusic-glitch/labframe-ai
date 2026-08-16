@@ -168,6 +168,24 @@ function bucketByDay(rows: { created_at: string; status: string }[]) {
 const COLS_WITH_ADMIN = 'id, username, first_name, last_name, plan, usage_used, usage_limit, banned, is_admin, last_seen_at, created_at';
 const COLS_NO_ADMIN   = 'id, username, first_name, last_name, plan, usage_used, usage_limit, banned, last_seen_at, created_at';
 
+// Форма строки одинакова для обоих наборов колонок; is_admin опционален, потому что
+// в COLS_NO_ADMIN его нет. Явный тип нужен, чтобы map ниже не получал implicit any.
+interface AdminUserRow {
+  id: number;
+  username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  plan: string | null;          // enum plan в БД: free | start | pro | lab
+  usage_used: number | null;
+  usage_limit: number | null;
+  banned: boolean | null;
+  is_admin?: boolean | null;
+  last_seen_at: string | null;
+  created_at: string | null;
+}
+
+type UsersQueryResult = { data: AdminUserRow[] | null; error: { message: string } | null };
+
 async function listUsers(search: string, limit: number) {
   const run = (cols: string) => {
     let q = db
@@ -194,13 +212,11 @@ async function listUsers(search: string, limit: number) {
     return q;
   };
 
-  // деструктурируем через any — набор колонок может отличаться (с/без is_admin)
-  // deno-lint-ignore no-explicit-any
-  let { data, error } = await run(COLS_WITH_ADMIN) as any;
+  // Приводим к общей форме: select() со строкой колонок не даёт статического типа строки.
+  let { data, error } = await run(COLS_WITH_ADMIN) as unknown as UsersQueryResult;
   if (error) {
     // Скорее всего нет колонки is_admin — пробуем без неё, чтобы список жил.
-    // deno-lint-ignore no-explicit-any
-    ({ data, error } = await run(COLS_NO_ADMIN) as any);
+    ({ data, error } = await run(COLS_NO_ADMIN) as unknown as UsersQueryResult);
   }
   if (error) return { items: [], error: error.message };
 
@@ -220,7 +236,7 @@ async function listUsers(search: string, limit: number) {
       lastName:     u.last_name ?? null,
       plan:         u.plan ?? 'free',
       usageUsed:    u.usage_used ?? 0,
-      usageLimit:   u.usage_limit ?? 3,
+      usageLimit:   u.usage_limit ?? PLAN_LIMITS.free,
       banned:       u.banned ?? false,
       isAdmin:      u.is_admin ?? false,
       envAdmin:     envAdminIds().includes(u.id),
@@ -253,7 +269,7 @@ async function handleGrantCredits(body: AdminBody) {
   }
   // Поднимаем usage_limit (а не сбрасываем used) — это и есть «бонусные генерации».
   const { data: cur } = await db.from('users').select('usage_limit').eq('id', body.userId).maybeSingle();
-  const newLimit = (cur?.usage_limit ?? 3) + body.credits;
+  const newLimit = (cur?.usage_limit ?? PLAN_LIMITS.free) + body.credits;
   const { error } = await db.from('users').update({ usage_limit: newLimit }).eq('id', body.userId);
   if (error) return jsonResponse({ error: error.message }, { status: 500 });
   return jsonResponse({ ok: true, newLimit });

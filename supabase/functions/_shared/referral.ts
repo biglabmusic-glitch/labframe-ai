@@ -140,7 +140,9 @@ export async function grantReferralReward(refereeId: number): Promise<RewardResu
 
 async function bumpLimit(userId: number, by: number): Promise<void> {
   const { data } = await db.from('users').select('usage_limit').eq('id', userId).maybeSingle();
-  const next = (data?.usage_limit ?? 3) + by;
+  // 10 — лимит тарифа Free (миграция 0012). В БД колонка NOT NULL с дефолтом,
+  // так что fallback срабатывает только если юзера успели удалить.
+  const next = (data?.usage_limit ?? 10) + by;
   await db.from('users').update({ usage_limit: next }).eq('id', userId);
 }
 

@@ -18,6 +18,10 @@ interface Body {
   decorAddition?: string;   // текст для 'custom'
 }
 
+// Через сколько минут активный job считается зависшим и перестаёт занимать слот
+// в rate-limit. Должно быть не меньше порогов sweepStale в process-job.
+const STALE_ACTIVE_MIN = 15;
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
   if (req.method !== 'POST') return jsonResponse({ error: 'method' }, { status: 405 });
@@ -49,11 +53,15 @@ Deno.serve(async (req) => {
   }
 
   // Rate-limit per user: не больше 2 активных job одновременно (анти-спам, двойной клик).
+  // Считаем только свежие: job старше STALE_ACTIVE_MIN — это зависший хвост, его
+  // добьёт sweepStale в воркере. Раньше пара таких намертво блокировала юзера
+  // ошибкой too_many_in_progress, и починить это можно было только руками в БД.
   const { count } = await db
     .from('jobs')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', tg.id)
-    .in('status', ['created', 'processing']);
+    .in('status', ['created', 'processing'])
+    .gte('created_at', new Date(Date.now() - STALE_ACTIVE_MIN * 60_000).toISOString());
 
   if ((count ?? 0) >= 2) {
     return jsonResponse({ error: 'too_many_in_progress' }, { status: 429 });
@@ -74,17 +82,27 @@ Deno.serve(async (req) => {
   // Декор: резолвим выбор в {surface, addition}. null = декора нет.
   const decor = resolveDecor(body.decorPreset, body.decorAddition, body.style);
 
-  // Premium-гейт: генерации «с реквизитами» (декор) сверх лимита требуют Pro.
-  // Демо-период (LIMITS_DISABLED != '0', по умолчанию ВКЛ) — гейт отключён, открыто всем.
-  // Через недельку: supabase secrets set LIMITS_DISABLED=0  (затем deploy) — Pro станет платным.
+  // Лимиты — один выключатель на весь бэк: LIMITS_DISABLED != '0' (по умолчанию ВКЛ)
+  // значит демо-период, всё открыто всем.
+  //
+  // Обычный лимит генераций проверяем здесь, а не триггером enforce_usage_limit:
+  // тот снят миграцией 0005 и возвращать его не нужно, иначе «включить оплату»
+  // означало бы ещё и накатить миграцию на прод в момент запуска продаж.
+  // Включение оплаты: supabase secrets set LIMITS_DISABLED=0
+  //                 + VITE_LIMITS_DISABLED=0 на Vercel (это уже про показ в UI).
   const limitsDisabled = (Deno.env.get('LIMITS_DISABLED') ?? '1') !== '0';
-  if (decor && !limitsDisabled) {
+  if (!limitsDisabled) {
     const { data: u } = await db
       .from('users')
-      .select('premium_used, premium_limit')
+      .select('usage_used, usage_limit, premium_used, premium_limit')
       .eq('id', tg.id)
       .maybeSingle();
-    if ((u?.premium_used ?? 0) >= (u?.premium_limit ?? 5)) {
+
+    if ((u?.usage_used ?? 0) >= (u?.usage_limit ?? 10)) {
+      return jsonResponse({ error: 'usage_limit_reached' }, { status: 402 });
+    }
+    // Генерации «с реквизитами» (декор) сверх premium-лимита требуют Pro.
+    if (decor && (u?.premium_used ?? 0) >= (u?.premium_limit ?? 5)) {
       return jsonResponse({ error: 'needs_subscription' }, { status: 402 });
     }
   }
@@ -116,6 +134,9 @@ Deno.serve(async (req) => {
 
   // Триггерим process-job асинхронно — пользователю отдаём id сразу,
   // обработка идёт фоном (15–25 сек), фронт опрашивает get-job до done.
+  // Передаём jobId: воркер заберёт именно этот job, а не «самый старый в очереди»,
+  // иначе два одновременных create-job дрались за одного кандидата и один из job-ов
+  // мог остаться необработанным.
   const internalSecret = Deno.env.get('INTERNAL_SECRET') ?? '';
   const supabaseUrl    = Deno.env.get('SUPABASE_URL')    ?? '';
   // @ts-expect-error EdgeRuntime is provided by Supabase Edge Runtime
@@ -126,7 +147,7 @@ Deno.serve(async (req) => {
         'Content-Type':      'application/json',
         'x-internal-secret': internalSecret,
       },
-      body: '{}',
+      body: JSON.stringify({ jobId: job.id }),
     }).catch((e) => console.error('process-job trigger failed', e)),
   );
 
