@@ -6,7 +6,6 @@ import { BrandMark } from '../components/primitives/BrandMark';
 import { UsageBar } from '../components/UsageBar';
 import {
   IconArrow,
-  IconGrid,
   IconTooth,
 } from '../components/primitives/icons';
 import { useApp } from '../state/AppContext';
@@ -290,26 +289,12 @@ export function ScreenHome() {
         </div>
       )}
 
-      {/* Быстрая ссылка — только Примеры. «Мой бренд» теперь сверху (шапка-кликабельная).
-          «Тарифы» переехали в FREE-пилл, «Как снимать» — в ScreenUpload. */}
-      <div style={{ padding: '0 16px 12px', display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
-        <Card kind="dark" pad={14} radius={20} onClick={go('examples')} style={{ position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <CircleBtn size={32} kind="ghost">
-                <IconGrid size={16} color="var(--c-accent)" />
-              </CircleBtn>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>Примеры</div>
-                <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
-                  Реальные до / после по стилям
-                </div>
-              </div>
-            </div>
-            <IconArrow size={14} color="var(--c-on-dark-3)" />
-          </div>
-        </Card>
-
+      {/* Единственная быстрая ссылка. Остальное разведено по контексту:
+          «Мой бренд» — кликабельная шапка, «Тарифы» — пилл с планом,
+          «Как снимать» — ScreenUpload (там это и нужно).
+          Экран «Примеры» остался в роутере, но с главной убран — не выдерживал
+          соседства с основным CTA и растягивал путь до создания поста. */}
+      <div style={{ padding: '0 16px 12px' }}>
         <Card kind="dark" pad={14} radius={20} onClick={go('invite')} style={{ position: 'relative' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

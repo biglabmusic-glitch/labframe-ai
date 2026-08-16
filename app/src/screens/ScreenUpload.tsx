@@ -6,7 +6,6 @@ import { Card } from '../components/primitives/Card';
 import { CircleBtn } from '../components/primitives/CircleBtn';
 import {
   IconCam,
-  IconHistory,
   IconImg,
   IconSpark,
 } from '../components/primitives/icons';
@@ -26,7 +25,8 @@ export function ScreenUpload() {
 
   useBackButton(back);
   useMainButton({
-    text: uploading ? 'Загружается…' : picked ? 'Далее' : 'Выбрать из галереи',
+    // То же действие, что и тап по дропзоне, — значит и называться должно так же.
+    text: uploading ? 'Загружается…' : picked ? 'Далее' : 'Добавить фото',
     onClick: () => {
       if (uploading) return;
       if (picked) {
@@ -156,35 +156,15 @@ export function ScreenUpload() {
                 <IconImg size={24} />
               </CircleBtn>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>Перетащите фото сюда</div>
+                {/* Называем действие, а не жест: перетаскивания на телефоне нет,
+                    тап по всей области открывает выбор файла (камера или галерея). */}
+                <div style={{ fontSize: 17, fontWeight: 600 }}>Добавить фото</div>
                 <div style={{ fontSize: 12, color: 'var(--c-on-dark-2)', marginTop: 4 }}>
                   JPG, PNG · до 20 МБ
                 </div>
               </div>
             </>
           )}
-        </div>
-
-        <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-          <Card
-            kind="ghost"
-            pad={14}
-            radius={18}
-            onClick={() => fileRef.current?.click()}
-            style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}
-          >
-            <IconCam size={20} color="var(--c-accent)" />
-            <span style={{ fontSize: 13, fontWeight: 500 }}>Снять сейчас</span>
-          </Card>
-          <Card
-            kind="ghost"
-            pad={14}
-            radius={18}
-            style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}
-          >
-            <IconHistory size={20} color="var(--c-accent)" />
-            <span style={{ fontSize: 13, fontWeight: 500 }}>История</span>
-          </Card>
         </div>
 
         {error && (
@@ -263,31 +243,35 @@ export function ScreenUpload() {
           </div>
         </Card>
 
-        {/* Ссылка на «Как снимать» — в контексте, где это реально нужно (перед загрузкой). */}
+        {/* «Как снимать» — в контексте, где это реально нужно (перед загрузкой).
+            Единственная ссылка на экране, поэтому крупнее соседней справки: качество
+            исходника определяет результат сильнее любых настроек дальше по флоу. */}
         <Card
           kind="dark"
-          pad={12}
-          radius={16}
+          pad={16}
+          radius={20}
           onClick={() => push('help')}
           style={{
-            marginTop: 10,
+            marginTop: 12,
             display: 'flex',
             alignItems: 'center',
-            gap: 10,
+            gap: 12,
             background: 'rgba(147,213,225,0.06)',
             border: '1px solid rgba(147,213,225,0.18)',
           }}
         >
-          <CircleBtn size={28} kind="ghost">
-            <IconCam size={14} color="var(--c-accent)" />
+          <CircleBtn size={36} kind="ghost">
+            <IconCam size={18} color="var(--c-accent)" />
           </CircleBtn>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600 }}>Как снимать, чтобы AI лучше отработал</div>
-            <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.25 }}>
+              Как снимать, чтобы AI лучше отработал
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--c-on-dark-2)', marginTop: 3 }}>
               Свет, фокус, ракурс — 7 коротких правил
             </div>
           </div>
-          <span style={{ color: 'var(--c-on-dark-3)', fontSize: 14 }}>→</span>
+          <span style={{ color: 'var(--c-on-dark-3)', fontSize: 15 }}>→</span>
         </Card>
       </div>
     </Screen>
