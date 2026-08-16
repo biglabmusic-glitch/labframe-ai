@@ -46,13 +46,25 @@ HANDOFF.md  — дизайн-handoff для разработчиков
 | `process-jobs-tick` | `*/10 * * * * *` | ❌ **падает на каждом запуске**: `unrecognized configuration parameter "app.project_ref"` |
 | `process-jobs-watchdog` | `*/1 * * * *` | ✅ работает, 120 успешных запусков за 2 часа |
 
-Причина падения тика — не выполнен ручной шаг из DEPLOY.md:
+Тик читал настройки через `current_setting('app.project_ref' / 'app.internal_secret')`,
+а выставить их **нельзя**: в управляемом Supabase роль `postgres` не суперюзер, и
+`alter database ... set` для кастомных параметров отдаёт `42501: permission denied to set
+parameter`. Шаг из DEPLOY.md с `alter database postgres set` — нерабочий, не пытайся его повторить.
+
+Починка — миграция `0014_cron_vault.sql`: project ref литералом (не секрет), секрет из Vault.
+Остался **один ручной шаг** — положить секрет в Vault (в репозиторий значение не попадает):
+
 ```sql
-alter database postgres set app.project_ref     = 'mmegdmfmozgaycuyeacl';
-alter database postgres set app.internal_secret = '<INTERNAL_SECRET из секретов функций>';
+select vault.create_secret(
+  '<значение INTERNAL_SECRET из секретов Edge Functions>',
+  'internal_secret',
+  'Секрет для вызова process-job из cron'
+);
 ```
-Пока это не сделано, **тик не разгребает очередь** и единственный триггер — вызов из `create-job`.
-Watchdog при этом чинит зависшие `processing`, но статус `created` не покрывает.
+
+Пока Vault пуст, тик шлёт пустой заголовок и получает 403 — очередь не разгребается,
+единственный триггер — вызов из `create-job`. Watchdog при этом чинит зависшие
+`processing`, но статус `created` не покрывает.
 
 Поэтому воркер устроен так, чтобы ни один job не потерялся без рабочего тика:
 
