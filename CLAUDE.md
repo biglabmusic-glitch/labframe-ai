@@ -38,20 +38,28 @@ HANDOFF.md  — дизайн-handoff для разработчиков
 
 ### Как воркер выбирает job
 
-⚠️ **Состояние pg_cron (проверено 16.08.2026 запросом к `cron.job_run_details`).**
-Расширение установлено, обе задачи из `0002_cron.sql` / `0003_watchdog.sql` существуют и активны. Но:
+**Состояние pg_cron (проверено 16.08.2026 на проде).** Расширение 1.6.4, обе задачи активны:
 
-| Задача | Расписание | Реальность |
+| Задача | Расписание | Состояние |
 |---|---|---|
-| `process-jobs-tick` | `*/10 * * * * *` | ❌ **падает на каждом запуске**: `unrecognized configuration parameter "app.project_ref"` |
-| `process-jobs-watchdog` | `*/1 * * * *` | ✅ работает, 120 успешных запусков за 2 часа |
+| `process-jobs-tick` | `* * * * *` (раз в минуту) | ⏳ SQL отрабатывает, `process-job` отвечает 403 — ждёт секрет в Vault |
+| `process-jobs-watchdog` | `*/1 * * * *` | ✅ работает |
 
-Тик читал настройки через `current_setting('app.project_ref' / 'app.internal_secret')`,
-а выставить их **нельзя**: в управляемом Supabase роль `postgres` не суперюзер, и
-`alter database ... set` для кастомных параметров отдаёт `42501: permission denied to set
-parameter`. Шаг из DEPLOY.md с `alter database postgres set` — нерабочий, не пытайся его повторить.
+Здесь было **две** ошибки, обе из `0002_cron.sql`, обе чинились миграциями:
 
-Починка — миграция `0014_cron_vault.sql`: project ref литералом (не секрет), секрет из Vault.
+1. Тик читал настройки через `current_setting('app.project_ref' / 'app.internal_secret')`
+   и падал с `unrecognized configuration parameter`. Выставить их **нельзя**: роль `postgres`
+   в управляемом Supabase не суперюзер, `alter database ... set` отдаёт
+   `42501: permission denied to set parameter`. **Шаг из DEPLOY.md с `alter database postgres set`
+   нерабочий — не пытайся его повторить.** Починено `0014_cron_vault.sql`: project ref литералом
+   (не секрет), секрет из Vault.
+2. Расписание `*/10 * * * * *` с комментарием «каждые 10 секунд» на деле давало **раз в 10 минут**:
+   pg_cron разбирает строку как пятипольный cron, `*/10` попадает в поле минут, шестое поле
+   игнорируется (замерено — 6 запусков за час). Для sub-minute нужен интервал (`'10 seconds'`),
+   а не шесть полей. Починено `0015_cron_schedule_fix.sql` — раз в минуту: тик нужен только как
+   страховка на непроехавший фоновый fetch, а 10 секунд сожгли бы половину бесплатной квоты
+   вызовов функций вхолостую.
+
 Остался **один ручной шаг** — положить секрет в Vault (в репозиторий значение не попадает):
 
 ```sql
@@ -60,6 +68,15 @@ select vault.create_secret(
   'internal_secret',
   'Секрет для вызова process-job из cron'
 );
+```
+
+Проверить, что заработало (должен появиться `200` вместо `403`):
+
+```sql
+select status_code, count(*), max(created)
+  from net._http_response
+ where created > now() - interval '10 minutes'
+ group by status_code;
 ```
 
 Пока Vault пуст, тик шлёт пустой заголовок и получает 403 — очередь не разгребается,
