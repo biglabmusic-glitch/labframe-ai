@@ -17,11 +17,26 @@ alter table public.users
 -- Админы работают без ограничений; тариф pro никто реально не оплачивал
 -- (оплата не была подключена), поэтому им подарок, а не 9999 навсегда.
 -- coalesce не нужен: is_admin, plan, usage_limit и usage_used — все NOT NULL.
-update public.users set credits = case
-  when is_admin     then 9999
-  when plan = 'pro' then 50
-  else greatest(usage_limit - usage_used, 5)
-end;
+--
+-- Перенос выполняется РОВНО ОДИН РАЗ — под защитой проверки на новый триггер.
+-- Без неё повторный прогон файла (например, `supabase db push` после того, как
+-- SQL уже вставили руками в дашборде) переписал бы credits заново и **стёр бы
+-- купленные генерации** у всех, кто успел оплатить. Остальные операции ниже
+-- идемпотентны сами по себе (if not exists / or replace / if exists).
+do $$
+begin
+  if not exists (
+    select 1 from pg_trigger
+     where tgname = 'trg_spend_credits_on_done'
+       and tgrelid = 'public.jobs'::regclass
+  ) then
+    update public.users set credits = case
+      when is_admin     then 9999
+      when plan = 'pro' then 50
+      else greatest(usage_limit - usage_used, 5)
+    end;
+  end if;
+end $$;
 
 -- ─── Списание при done ──────────────────────────────────────────────────────
 -- Списываем по факту готовой работы, а не при создании job: за упавшую
