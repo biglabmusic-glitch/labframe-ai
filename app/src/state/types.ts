@@ -3,7 +3,6 @@ export type StyleId = 'clean' | 'dark' | 'soft';
 export type FormatId = '4x5' | '1x1' | '9x16';
 export type TextType = 'short' | 'sell' | 'tech' | 'none';
 export type BrandingKind = 'logo' | 'name' | 'none';
-export type Plan = 'free' | 'pro';
 export type JobStatus =
   | 'created'
   | 'photo_uploaded'
@@ -18,9 +17,8 @@ export interface User {
   name: string;
   initials: string;
   avatarUrl?: string;
-  plan: Plan;
-  usage: { used: number; limit: number; period: string };
-  premium: { used: number; limit: number };
+  /** Остаток генераций. Не сгорает, пополняется покупкой пакета. */
+  credits: number;
   isAdmin?: boolean;
   refCode?: string;
   referralsCount?: number;

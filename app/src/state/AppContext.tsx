@@ -50,17 +50,16 @@ function buildInitialUser(): User {
       name,
       initials: getInitials(tg.first_name, tg.last_name, tg.username),
       avatarUrl: tg.photo_url,
-      plan: 'free',
-      usage: { used: 0, limit: 10, period: 'месяц' },
-      premium: { used: 0, limit: 5 },
+      // Ноль намеренно: реальный баланс придёт из /me. Показывать до ответа
+      // сервера выдуманную пятёрку значило бы обещать генерации, которых может
+      // не быть.
+      credits: 0,
     };
   }
   return {
     name: 'Гость',
     initials: 'Г',
-    plan: 'free',
-    usage: { used: 0, limit: 10, period: 'месяц' },
-    premium: { used: 0, limit: 5 },
+    credits: 0,
   };
 }
 
@@ -138,7 +137,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [user.telegramId]);
 
-  // Синхронизация с сервером на старте: /me даёт бренд+тариф+usage,
+  // Синхронизация с сервером на старте: /me даёт бренд + баланс генераций,
   // /list-jobs даёт ленту «ваши работы». Локальный localStorage остаётся
   // как кэш до ответа сервера — UI не моргает между устройствами.
   useEffect(() => {
@@ -164,9 +163,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             name:       [me.user!.firstName, me.user!.lastName].filter(Boolean).join(' ') || p.name,
             initials:   getInitials(me.user!.firstName, me.user!.lastName, me.user!.username),
             avatarUrl:  me.user!.photoUrl   ?? p.avatarUrl,
-            plan:       me.user!.plan,
-            usage:      { used: me.user!.usageUsed, limit: me.user!.usageLimit, period: 'месяц' },
-            premium:    { used: me.user!.premiumUsed ?? 0, limit: me.user!.premiumLimit ?? 5 },
+            credits:    me.user!.credits ?? 0,
             isAdmin:    me.user!.isAdmin ?? false,
             refCode:        me.user!.refCode ?? p.refCode,
             referralsCount: me.user!.referralsCount ?? 0,

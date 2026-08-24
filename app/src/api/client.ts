@@ -2,7 +2,7 @@
  * Тонкий fetch-клиент. Если VITE_API_BASE_URL не задан — работаем в mock-режиме,
  * чтобы UI можно было листать без бэка. Когда задан — реальные вызовы Edge Functions.
  */
-import type { BrandData, Job, StyleId, TextType, WorkType, FormatId, BrandingKind, Plan } from '../state/types';
+import type { BrandData, Job, StyleId, TextType, WorkType, FormatId, BrandingKind } from '../state/types';
 import { WebApp } from '../telegram/webapp';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -91,11 +91,7 @@ export interface MeResponse {
     firstName?: string;
     lastName?: string;
     photoUrl?: string;
-    plan: Plan;
-    usageUsed: number;
-    usageLimit: number;
-    premiumUsed?: number;
-    premiumLimit?: number;
+    credits: number;
     isAdmin?: boolean;
     refCode?: string | null;
     referralsCount?: number;
@@ -132,9 +128,7 @@ export interface AdminUser {
   username: string | null;
   firstName: string | null;
   lastName: string | null;
-  plan: Plan;
-  usageUsed: number;
-  usageLimit: number;
+  credits: number;
   banned: boolean;
   isAdmin: boolean;
   /** true если id в env ADMIN_IDS — такого админа нельзя снять из приложения. */
@@ -267,14 +261,8 @@ export const api = {
       body: JSON.stringify({ action: 'users', search }),
     });
   },
-  async adminSetPlan(userId: number, plan: Plan): Promise<{ ok: true }> {
-    return request<{ ok: true }>('/admin', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'set-plan', userId, plan }),
-    });
-  },
-  async adminGrantCredits(userId: number, credits: number): Promise<{ ok: true; newLimit: number }> {
-    return request<{ ok: true; newLimit: number }>('/admin', {
+  async adminGrantCredits(userId: number, credits: number): Promise<{ ok: true; credits: number }> {
+    return request<{ ok: true; credits: number }>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'grant-credits', userId, credits }),
     });
@@ -368,16 +356,10 @@ export function friendlyError(raw: string): { title: string; sub: string } {
       sub:   'Дождитесь окончания предыдущей работы и попробуйте снова.',
     };
   }
-  if (raw.includes('needs_subscription')) {
+  if (raw.includes('insufficient_credits')) {
     return {
-      title: 'Закончились бесплатные premium-генерации',
-      sub:   'Оформите подписку в разделе «Тарифы», чтобы добавлять декор к работам.',
-    };
-  }
-  if (raw.includes('usage_limit_reached')) {
-    return {
-      title: 'Лимит исчерпан',
-      sub:   'Откройте раздел «Тарифы», чтобы продолжить.',
+      title: 'Генерации закончились',
+      sub:   'Пополните баланс в разделе «Пакеты» — купленные генерации не сгорают.',
     };
   }
   if (raw.includes('unsupported_type')) {
