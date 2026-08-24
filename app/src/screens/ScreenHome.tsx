@@ -168,17 +168,15 @@ export function ScreenHome() {
             gap: 4,
           }}
         >
-          {user.plan.toUpperCase()}
+          {user.credits} ГЕН
           <span style={{ opacity: 0.5, fontSize: 9 }}>→</span>
         </button>
       </div>
 
-      {/* usage-bar — главная панель прогресса генераций. Тап ведёт на «Моя подписка». */}
+      {/* баланс генераций; тап ведёт на «Мой баланс». */}
       <div style={{ padding: '0 16px 18px' }}>
         <UsageBar
-          used={user.usage.used}
-          limit={user.usage.limit}
-          plan={user.plan}
+          credits={user.credits}
           onUpgrade={() => push('pricing')}
           onOpen={() => push('myplan')}
         />
