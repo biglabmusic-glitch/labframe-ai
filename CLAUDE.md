@@ -99,7 +99,7 @@ select status_code, count(*), max(created)
 
 Все в Supabase Functions Secrets (через `supabase secrets set`):
 
-- `BOT_TOKEN`, `REPLICATE_API_TOKEN`, `POLZA_API_KEY`, `INTERNAL_SECRET`
+- `BOT_TOKEN`, `REPLICATE_API_TOKEN`, `POLZA_API_KEY`, `INTERNAL_SECRET` (ротирован 24.08.2026 — старое значение в заметках недействительно), `LIMITS_DISABLED=0`
 - `REPLICATE_MODEL=black-forest-labs/flux-kontext-pro`
 - `POLZA_BASE_URL=https://api.polza.ai/api/v1`, `POLZA_MODEL=gpt-4o-mini`
 
@@ -220,23 +220,27 @@ deno check --allow-import supabase/functions/process-job/index.ts
    (`already exists, skipping`), балансы уцелели только благодаря защите из `5fea56f`.
    Мораль: применяй миграции через `db push`, иначе журнал врёт о состоянии базы.
 
-1. 🔴 **Секрет в Vault неверный — cron до сих пор не работает.** В `vault.secrets`
-   под именем `internal_secret` лежит текст плейсхолдера, а не сам секрет: команду
-   выполнили, не заменив `'сюда_настоящий_INTERNAL_SECRET'`. Из-за этого тик получает
-   403 и очередь не разгребается. Починка:
-   ```sql
-   select vault.update_secret(
-     (select id from vault.secrets where name = 'internal_secret'),
-     'настоящее значение INTERNAL_SECRET'
-   );
-   ```
-   Проверить, не зная секрета, — сверить хеш с дайджестом из `supabase secrets list`:
+1. ✅ **Cron очереди работает (24.08.2026).** Тик `process-jobs-tick` получает `200`,
+   впервые за всё время существования проекта. До этого он не отработал ни разу:
+   сначала падал на `current_setting('app.project_ref')`, потом в Vault лежал текст
+   плейсхолдера вместо секрета.
+
+   ⚠️ **`INTERNAL_SECRET` при этом РОТИРОВАН** — старое значение восстановить было
+   нельзя (Supabase не отдаёт значения секретов, только SHA-256), поэтому сгенерировано
+   новое на 48 символов и прописано в оба места: секреты Edge Functions и Vault.
+   **Значение в старых заметках владельца больше не действует.**
+
+   Проверить связку, не зная секрета, — сверить хеш с дайджестом из `supabase secrets list`:
    ```sql
    select encode(extensions.digest(decrypted_secret,'sha256'),'hex')
           = '<DIGEST столбца INTERNAL_SECRET>' as ok
      from vault.decrypted_secrets where name = 'internal_secret';
    ```
-   Затем убедиться, что в `net._http_response` пошли `200` вместо `403`.
+   И что тик реально доходит:
+   ```sql
+   select status_code, count(*) from net._http_response
+    where created > now() - interval '10 minutes' group by status_code;
+   ```
 
 2. **На Vercel добавить `VITE_OWNER_TG=DanyaSanta`** и передеплоить: Vite вшивает env
    на сборке. Без неё кнопки покупки скрыты (это безопасный дефолт, не битая ссылка).
