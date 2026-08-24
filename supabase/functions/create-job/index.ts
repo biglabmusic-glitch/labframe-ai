@@ -4,6 +4,7 @@
 // Возвращает: { id, status: 'created' }
 // Дальше воркер process-job (cron / pg_net) подхватывает job в статусе 'created'.
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
+import { creditCost } from '../_shared/credits.ts';
 import { db } from '../_shared/db.ts';
 import { resolveDecor } from '../_shared/decor.ts';
 
@@ -85,25 +86,28 @@ Deno.serve(async (req) => {
   // Лимиты — один выключатель на весь бэк: LIMITS_DISABLED != '0' (по умолчанию ВКЛ)
   // значит демо-период, всё открыто всем.
   //
-  // Обычный лимит генераций проверяем здесь, а не триггером enforce_usage_limit:
-  // тот снят миграцией 0005 и возвращать его не нужно, иначе «включить оплату»
-  // означало бы ещё и накатить миграцию на прод в момент запуска продаж.
+  // Баланс проверяем здесь, а не триггером enforce_usage_limit: тот снят
+  // миграцией 0005 и возвращать его не нужно, иначе «включить оплату» означало
+  // бы ещё и накатить миграцию на прод в момент запуска продаж.
   // Включение оплаты: supabase secrets set LIMITS_DISABLED=0
-  //                 + VITE_LIMITS_DISABLED=0 на Vercel (это уже про показ в UI).
+  //
+  // Здесь только гейт. Само списание — в триггере spend_credits_on_done, по
+  // факту done: за упавшую генерацию пользователь платить не должен.
+  const cost = creditCost(decor ? body.decorPreset : null);
   const limitsDisabled = (Deno.env.get('LIMITS_DISABLED') ?? '1') !== '0';
   if (!limitsDisabled) {
     const { data: u } = await db
       .from('users')
-      .select('usage_used, usage_limit, premium_used, premium_limit')
+      .select('credits')
       .eq('id', tg.id)
       .maybeSingle();
 
-    if ((u?.usage_used ?? 0) >= (u?.usage_limit ?? 10)) {
-      return jsonResponse({ error: 'usage_limit_reached' }, { status: 402 });
-    }
-    // Генерации «с реквизитами» (декор) сверх premium-лимита требуют Pro.
-    if (decor && (u?.premium_used ?? 0) >= (u?.premium_limit ?? 5)) {
-      return jsonResponse({ error: 'needs_subscription' }, { status: 402 });
+    // needed/have отдаём наружу: фронту нужно показать «нужно 3, у вас 1».
+    if ((u?.credits ?? 0) < cost) {
+      return jsonResponse(
+        { error: 'insufficient_credits', needed: cost, have: u?.credits ?? 0 },
+        { status: 402 },
+      );
     }
   }
 
@@ -126,9 +130,6 @@ Deno.serve(async (req) => {
     .single();
 
   if (error) {
-    if (error.message.includes('usage_limit_reached')) {
-      return jsonResponse({ error: 'usage_limit_reached' }, { status: 402 });
-    }
     return jsonResponse({ error: error.message }, { status: 500 });
   }
 
