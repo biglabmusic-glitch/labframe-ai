@@ -126,8 +126,8 @@ export async function grantReferralReward(refereeId: number): Promise<RewardResu
   const referrerBonus = envInt('REFERRER_BONUS', 10);
   const refereeBonus = envInt('REFEREE_BONUS', 5);
 
-  await bumpLimit(updated.referrer_id, referrerBonus);
-  await bumpLimit(refereeId, refereeBonus);
+  await addCredits(updated.referrer_id, referrerBonus);
+  await addCredits(refereeId, refereeBonus);
   await db.from('users').update({ referral_rewarded: true }).eq('id', refereeId);
 
   return {
@@ -138,12 +138,12 @@ export async function grantReferralReward(refereeId: number): Promise<RewardResu
   };
 }
 
-async function bumpLimit(userId: number, by: number): Promise<void> {
-  const { data } = await db.from('users').select('usage_limit').eq('id', userId).maybeSingle();
-  // 10 — лимит тарифа Free (миграция 0012). В БД колонка NOT NULL с дефолтом,
-  // так что fallback срабатывает только если юзера успели удалить.
-  const next = (data?.usage_limit ?? 10) + by;
-  await db.from('users').update({ usage_limit: next }).eq('id', userId);
+async function addCredits(userId: number, by: number): Promise<void> {
+  const { data } = await db.from('users').select('credits').eq('id', userId).maybeSingle();
+  // В БД колонка NOT NULL с дефолтом 5 (миграция 0016), так что fallback
+  // срабатывает только если юзера успели удалить между чтением и записью.
+  const next = (data?.credits ?? 0) + by;
+  await db.from('users').update({ credits: next }).eq('id', userId);
 }
 
 /** Сводка по рефералам юзера — для /me. */

@@ -1,7 +1,7 @@
 // POST /admin — единый роутер для админ-действий.
 // Доступ только юзерам из env ADMIN_IDS (telegram_id через запятую).
 //
-// Body: { action: 'stats' | 'users' | 'set-plan' | 'grant-credits' | 'send-message' | 'ban', ... }
+// Body: { action: 'stats' | 'users' | 'grant-credits' | 'send-message' | 'ban', ... }
 //
 // Намеренно одна функция вместо 6 — меньше деплоев, проще поддерживать.
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
@@ -13,7 +13,6 @@ interface AdminBody {
   action:
     | 'stats'
     | 'users'
-    | 'set-plan'
     | 'grant-credits'
     | 'send-message'
     | 'ban'
@@ -21,7 +20,6 @@ interface AdminBody {
     | 'mark-paid';
   // зависит от action — валидируем внутри switch
   userId?: number;
-  plan?: 'free' | 'pro';
   credits?: number;
   message?: string;
   banned?: boolean;
@@ -61,7 +59,6 @@ Deno.serve(async (req) => {
   switch (body.action) {
     case 'stats':         return jsonResponse(await getStats());
     case 'users':         return jsonResponse(await listUsers(body.search ?? '', body.limit ?? 50));
-    case 'set-plan':      return handleSetPlan(body);
     case 'grant-credits': return handleGrantCredits(body);
     case 'send-message':  return handleSendMessage(body);
     case 'ban':           return handleBan(body);
@@ -165,8 +162,8 @@ function bucketByDay(rows: { created_at: string; status: string }[]) {
 // ─── users list ────────────────────────────────────────────────────────────
 // Колонки запрашиваем строкой, чтобы при отсутствии is_admin (миграция 0009
 // ещё не применена) откатиться на набор без неё — список не должен пропадать.
-const COLS_WITH_ADMIN = 'id, username, first_name, last_name, plan, usage_used, usage_limit, banned, is_admin, last_seen_at, created_at';
-const COLS_NO_ADMIN   = 'id, username, first_name, last_name, plan, usage_used, usage_limit, banned, last_seen_at, created_at';
+const COLS_WITH_ADMIN = 'id, username, first_name, last_name, credits, banned, is_admin, last_seen_at, created_at';
+const COLS_NO_ADMIN   = 'id, username, first_name, last_name, credits, banned, last_seen_at, created_at';
 
 // Форма строки одинакова для обоих наборов колонок; is_admin опционален, потому что
 // в COLS_NO_ADMIN его нет. Явный тип нужен, чтобы map ниже не получал implicit any.
@@ -175,9 +172,7 @@ interface AdminUserRow {
   username: string | null;
   first_name: string | null;
   last_name: string | null;
-  plan: string | null;          // enum plan в БД: free | start | pro | lab
-  usage_used: number | null;
-  usage_limit: number | null;
+  credits: number | null;       // остаток генераций (миграция 0016)
   banned: boolean | null;
   is_admin?: boolean | null;
   last_seen_at: string | null;
@@ -234,9 +229,7 @@ async function listUsers(search: string, limit: number) {
       username:     u.username ?? null,
       firstName:    u.first_name ?? null,
       lastName:     u.last_name ?? null,
-      plan:         u.plan ?? 'free',
-      usageUsed:    u.usage_used ?? 0,
-      usageLimit:   u.usage_limit ?? PLAN_LIMITS.free,
+      credits:      u.credits ?? 0,
       banned:       u.banned ?? false,
       isAdmin:      u.is_admin ?? false,
       envAdmin:     envAdminIds().includes(u.id),
@@ -248,31 +241,18 @@ async function listUsers(search: string, limit: number) {
 }
 
 // ─── actions ───────────────────────────────────────────────────────────────
-const PLAN_LIMITS: Record<string, number> = {
-  free: 10,
-  pro:  9999,
-};
-
-async function handleSetPlan(body: AdminBody) {
-  if (!body.userId || !body.plan) return jsonResponse({ error: 'bad_input' }, { status: 400 });
-  const { error } = await db
-    .from('users')
-    .update({ plan: body.plan, usage_limit: PLAN_LIMITS[body.plan] ?? 10 })
-    .eq('id', body.userId);
-  if (error) return jsonResponse({ error: error.message }, { status: 500 });
-  return jsonResponse({ ok: true });
-}
 
 async function handleGrantCredits(body: AdminBody) {
   if (!body.userId || !body.credits || body.credits < 1) {
     return jsonResponse({ error: 'bad_input' }, { status: 400 });
   }
-  // Поднимаем usage_limit (а не сбрасываем used) — это и есть «бонусные генерации».
-  const { data: cur } = await db.from('users').select('usage_limit').eq('id', body.userId).maybeSingle();
-  const newLimit = (cur?.usage_limit ?? PLAN_LIMITS.free) + body.credits;
-  const { error } = await db.from('users').update({ usage_limit: newLimit }).eq('id', body.userId);
+  // Ключевая кнопка первого этапа продаж: человек оплатил счёт из кабинета
+  // ЮKassa — владелец начисляет генерации отсюда, вручную.
+  const { data: cur } = await db.from('users').select('credits').eq('id', body.userId).maybeSingle();
+  const next = (cur?.credits ?? 0) + body.credits;
+  const { error } = await db.from('users').update({ credits: next }).eq('id', body.userId);
   if (error) return jsonResponse({ error: error.message }, { status: 500 });
-  return jsonResponse({ ok: true, newLimit });
+  return jsonResponse({ ok: true, credits: next });
 }
 
 async function handleSendMessage(body: AdminBody) {
