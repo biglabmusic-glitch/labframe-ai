@@ -253,7 +253,7 @@ deno check --allow-import supabase/functions/process-job/index.ts
    Поэтому `scripts/backup-data.ps1` — выгрузка данных через Management API:
    ```powershell
    $env:SUPABASE_ACCESS_TOKEN = 'sbp_...'
-   .\scriptsackup-data.ps1
+   .\scripts\backup-data.ps1
    ```
    Кладёт `data_<дата>.sql` в `~/Desktop/labframe-backups` (вне репозитория —
    внутри персональные данные; в `.gitignore` подстраховка). Схему не выгружает
