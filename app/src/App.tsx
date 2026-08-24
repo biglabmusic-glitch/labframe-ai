@@ -20,7 +20,6 @@ import { ScreenMyBrand } from './screens/ScreenMyBrand';
 import { ScreenExamples } from './screens/ScreenExamples';
 import { ScreenPricing } from './screens/ScreenPricing';
 import { ScreenMyPlan } from './screens/ScreenMyPlan';
-import { ScreenPlansCompare } from './screens/ScreenPlansCompare';
 import { ScreenAdmin } from './screens/ScreenAdmin';
 import { ScreenInvite } from './screens/ScreenInvite';
 import { ScreenPhotoHelp } from './screens/ScreenPhotoHelp';
@@ -42,7 +41,6 @@ const REGISTRY: Record<RouteId, () => JSX.Element> = {
   examples:        ScreenExamples,
   pricing:         ScreenPricing,
   myplan:          ScreenMyPlan,
-  'plans-compare': ScreenPlansCompare,
   admin:           ScreenAdmin,
   invite:          ScreenInvite,
   help:            ScreenPhotoHelp,

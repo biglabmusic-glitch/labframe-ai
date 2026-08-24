@@ -7,7 +7,6 @@ import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
 import { api, type AdminStats, type AdminUser } from '../api/client';
-import type { Plan } from '../state/types';
 
 type Tab = 'dashboard' | 'users';
 
@@ -215,11 +214,11 @@ function UsersTab() {
               {u.banned && <span style={{ color: '#F4B19A', marginLeft: 6, fontSize: 10 }}>BAN</span>}
             </span>
             <span className="mono" style={{ fontSize: 9.5, color: 'var(--c-accent)' }}>
-              {u.plan.toUpperCase()}
+              {u.credits} ГЕН
             </span>
           </div>
           <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>{u.username ? `@${u.username}` : `id ${u.id}`} · {u.jobsTotal} jobs · {u.usageUsed}/{u.usageLimit}</span>
+            <span>{u.username ? `@${u.username}` : `id ${u.id}`} · {u.jobsTotal} jobs · баланс {u.credits}</span>
             <span style={{ color: 'var(--c-on-dark-3)' }}>{u.lastSeenAt ? new Date(u.lastSeenAt).toLocaleDateString('ru-RU') : '—'}</span>
           </div>
         </button>
@@ -237,7 +236,6 @@ function UsersTab() {
 }
 
 function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: () => void; onChanged: () => void }) {
-  const [plan, setPlan] = useState<Plan>(user.plan);
   const [credits, setCredits] = useState('10');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -293,23 +291,7 @@ function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: (
           </div>
         )}
 
-        <SectionTitle>План</SectionTitle>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-          {(['free', 'pro'] as Plan[]).map((p) => (
-            <Pill key={p} size="sm" kind={plan === p ? 'accent' : 'ghost'} onClick={() => setPlan(p)}>
-              {p.toUpperCase()}
-            </Pill>
-          ))}
-        </div>
-        <ActionBtn
-          label={busy === 'plan' ? '⏳ сохраняем…' : 'Сменить план'}
-          onClick={() => wrap('plan', () => api.adminSetPlan(user.id, plan))}
-          disabled={busy !== null || plan === user.plan}
-        />
-
-        <Spacer />
-
-        <SectionTitle>Бонусные генерации</SectionTitle>
+        <SectionTitle>Начислить генерации</SectionTitle>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
           <input
             value={credits}
@@ -320,10 +302,10 @@ function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: (
               color: 'var(--c-on-dark)', fontSize: 13, fontFamily: 'inherit',
             }}
           />
-          <span style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)' }}>прибавится к лимиту</span>
+          <span style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)' }}>прибавится к балансу</span>
         </div>
         <ActionBtn
-          label={busy === 'credits' ? '⏳ выдаём…' : `+${credits || 0} к лимиту`}
+          label={busy === 'credits' ? '⏳ выдаём…' : `+${credits || 0} на баланс`}
           onClick={() => wrap('credits', () => api.adminGrantCredits(user.id, Number(credits) || 0))}
           disabled={busy !== null || !credits || Number(credits) < 1}
         />

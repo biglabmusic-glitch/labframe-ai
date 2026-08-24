@@ -25,7 +25,6 @@ export type RouteId =
   | 'examples'
   | 'pricing'
   | 'myplan'
-  | 'plans-compare'
   | 'admin'
   | 'invite'
   | 'help';

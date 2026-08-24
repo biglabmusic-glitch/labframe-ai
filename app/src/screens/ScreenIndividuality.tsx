@@ -8,7 +8,6 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import { DECOR_PRESETS_UI, DECOR_CUSTOM_ID } from '../lib/presets';
-import { LIMITS_DISABLED } from '../lib/feature-flags';
 
 export function ScreenIndividuality() {
   const { draft, setDraft, user } = useApp();
@@ -20,9 +19,10 @@ export function ScreenIndividuality() {
   useBackButton(back);
   useMainButton({ text: 'Продолжить', onClick: () => push('brand'), enabled: true });
 
-  const left = Math.max(0, (user.premium?.limit ?? 5) - (user.premium?.used ?? 0));
-  // Демо-период: про-режим открыт всем без ограничений (см. feature-flags.ts).
-  const locked = !LIMITS_DISABLED && left <= 0;
+  // Декор стоит 3 генерации — значение зафиксировано в _shared/credits.ts
+  // (COST_DECOR) и закреплено тестом credits_test.ts.
+  const DECOR_COST = 3;
+  const locked = user.credits < DECOR_COST;
   const selectedId = draft.decor?.preset ?? 'none';
 
   const selectPreset = (id: string) => {
@@ -80,11 +80,9 @@ export function ScreenIndividuality() {
       </div>
       <ScreenIntro
         title="Индивидуальность"
-        sub={LIMITS_DISABLED
-          ? 'Добавьте к работе декоративный элемент или реквизит. Сейчас открыто бесплатно для всех.'
-          : locked
-          ? 'Бесплатные генерации с реквизитами закончились — оформите Pro в «Тарифах».'
-          : `Добавьте к работе декоративный элемент. Бесплатно осталось: ${left} из ${user.premium?.limit ?? 5}.`}
+        sub={locked
+          ? `Нужно ${DECOR_COST} генерации, а на балансе ${user.credits} — пополните в «Пакетах».`
+          : `Добавьте к работе декоративный элемент. Списывается ${DECOR_COST} генерации с баланса.`}
       />
 
       <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
