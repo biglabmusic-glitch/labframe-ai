@@ -1,123 +1,77 @@
-// Единый источник правды по тарифам. Используется в ScreenPricing,
-// ScreenMyPlan и ScreenPlansCompare — не дублируем тексты в разных местах.
+// Единый источник правды по пакетам генераций. Используется в ScreenPricing
+// и ScreenMyPlan — не дублируем цены в разных местах.
 //
-// Два тарифа: Free и Pro (2 000 ₽/мес).
-//  • Free — 10 обычных генераций + 5 генераций «с реквизитами» (про-режим) в месяц.
-//  • Pro  — всё без ограничений.
-// Сейчас идёт демо-период: лимиты не действуют, всё открыто всем (см. feature-flags.ts).
+// Пакеты не сгорают: купленные генерации лежат на балансе, пока не потратятся.
+// Обычная генерация стоит 1, генерация с декором — 3 (см. _shared/credits.ts).
 
-import type { Plan } from '../state/types';
-
-export interface PlanRow {
-  id: Plan;
-  name: string;
-  /** Без валюты и пробелов: '0' | '2000'. */
-  priceRaw: string;
-  /** Готовая цена с разделителями: '0', '2 000'. */
-  price: string;
-  /** Подсказка ниже названия: '10 + 5 / месяц' и т.п. */
-  sub: string;
-  /** Бэйдж рекомендуемого тарифа (в UI выделим). */
+export interface Package {
+  id: string;
+  /** Сколько генераций начисляется. */
+  count: number;
+  /** Цена в рублях. */
+  price: number;
+  /** Цена за одну генерацию — для подписи «выгоднее». */
+  perUnit: number;
   recommended?: boolean;
-  /** Сводка для карточек ScreenPricing. */
   points: string[];
-  /** Подробные значения по фичам — для таблицы сравнения. */
-  features: Record<FeatureId, FeatureValue>;
 }
 
-export type FeatureId =
-  | 'limit'
-  | 'decor'
-  | 'formats'
-  | 'styles'
-  | 'logo'
-  | 'brand-save'
-  | 'hashtags'
-  | 'texts'
-  | 'priority'
-  | 'support';
-
-export type FeatureValue = string | true | false;
-
-export interface FeatureSpec {
-  id: FeatureId;
-  label: string;
-  /** Категория для группировки строк в таблице. */
-  group: 'Лимит и форматы' | 'Бренд и тексты' | 'Команда и поддержка';
-}
-
-export const FEATURES: FeatureSpec[] = [
-  { id: 'limit',      label: 'Обычные генерации',          group: 'Лимит и форматы'  },
-  { id: 'decor',      label: 'Генерации с реквизитами',    group: 'Лимит и форматы'  },
-  { id: 'formats',    label: 'Форматы (1:1, 4:5, 9:16)',   group: 'Лимит и форматы'  },
-  { id: 'styles',     label: 'Стили оформления',           group: 'Лимит и форматы'  },
-  { id: 'logo',       label: 'Логотип в посте',            group: 'Бренд и тексты'   },
-  { id: 'brand-save', label: 'Сохранение бренда',          group: 'Бренд и тексты'   },
-  { id: 'hashtags',   label: 'Фирменные хэштеги',          group: 'Бренд и тексты'   },
-  { id: 'texts',      label: 'Варианты текста к посту',    group: 'Бренд и тексты'   },
-  { id: 'priority',   label: 'Приоритет генерации',        group: 'Команда и поддержка' },
-  { id: 'support',    label: 'Поддержка',                  group: 'Команда и поддержка' },
-];
-
-export const PLANS: PlanRow[] = [
+export const PACKAGES: Package[] = [
   {
-    id: 'free',
-    name: 'Free',
-    priceRaw: '0',
-    price: '0',
-    sub: '10 + 5 / месяц',
-    points: [
-      '10 обычных генераций в месяц',
-      '5 генераций с реквизитами (про-режим)',
-      'Все форматы и стили',
-      'Базовый текст к посту',
-    ],
-    features: {
-      limit:        '10 / месяц',
-      decor:        '5 / месяц',
-      formats:      'все',
-      styles:       'все',
-      logo:         false,
-      'brand-save': false,
-      hashtags:     false,
-      texts:        '1 короткий',
-      priority:     'обычный',
-      support:      'FAQ',
-    },
+    id: 'p20',
+    count: 20,
+    price: 700,
+    perUnit: 35,
+    points: ['20 генераций на баланс', 'Не сгорают', 'Все форматы и стили'],
   },
   {
-    id: 'pro',
-    name: 'Pro',
-    priceRaw: '2000',
-    price: '2 000',
-    sub: 'безлимит / месяц',
+    id: 'p50',
+    count: 50,
+    price: 1500,
+    perUnit: 30,
     recommended: true,
+    points: ['50 генераций на баланс', 'Не сгорают', 'Все форматы и стили', 'Выгоднее на 14%'],
+  },
+  {
+    id: 'p150',
+    count: 150,
+    price: 3500,
+    perUnit: 23,
     points: [
-      'Безлимит обычных генераций',
-      'Безлимит генераций с реквизитами',
-      'Все форматы из одной обработки (1:1 + 4:5 + 9:16)',
-      'Логотип и бренд в посте, фирменные хэштеги',
-      'Несколько вариантов текста',
-      'Доступ к новым стилям первым',
+      '150 генераций на баланс',
+      'Не сгорают',
+      'Все форматы и стили',
+      'Лучшая цена за генерацию',
     ],
-    features: {
-      limit:        'безлимит',
-      decor:        'безлимит',
-      formats:      'все из одной обработки',
-      styles:       'все + ранний доступ',
-      logo:         true,
-      'brand-save': true,
-      hashtags:     true,
-      texts:        '3 типа + альты',
-      priority:     'высокий',
-      support:      'приоритетная',
-    },
   },
 ];
 
-export const PLAN_BY_ID = Object.fromEntries(PLANS.map((p) => [p.id, p])) as Record<Plan, PlanRow>;
+export const PACKAGE_BY_ID = Object.fromEntries(
+  PACKAGES.map((p) => [p.id, p]),
+) as Record<string, Package>;
 
-/** Безопасный доступ к тарифу: неизвестный/устаревший план → Free. */
-export function planById(id: string | undefined | null): PlanRow {
-  return (id && PLAN_BY_ID[id as Plan]) || PLAN_BY_ID.free;
+/**
+ * Ник владельца в Telegram для ручной продажи. Берётся из env, а не хардкодится:
+ * контакт для продаж меняется чаще, чем код. Пустая строка = кнопки покупки скрыты.
+ */
+export const OWNER_TG: string = import.meta.env.VITE_OWNER_TG ?? '';
+
+/**
+ * Ссылка на чат с владельцем с префиллом текста.
+ * Платёжную ссылку внутри мини-аппа не открываем сознательно: Telegram требует
+ * продавать цифровые товары внутри своих приложений только за Stars. Здесь мы
+ * лишь открываем переписку, счёт владелец выставляет вручную из кабинета ЮKassa.
+ */
+export function buyLink(pkg: Package): string {
+  const text = `Хочу пакет ${pkg.count} генераций за ${pkg.price} ₽`;
+  return `https://t.me/${OWNER_TG}?text=${encodeURIComponent(text)}`;
+}
+
+/** Склонение «генерация/генерации/генераций» для подписей. */
+export function pluralGenerations(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'генерация';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'генерации';
+  return 'генераций';
 }
