@@ -8,6 +8,7 @@ import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { sendMessage } from '../_shared/telegram.ts';
 import { grantReferralReward } from '../_shared/referral.ts';
+import { PACKAGES, buildOrderId, packageById } from '../_shared/packages.ts';
 
 interface AdminBody {
   action:
@@ -17,13 +18,15 @@ interface AdminBody {
     | 'send-message'
     | 'ban'
     | 'set-admin'
-    | 'mark-paid';
+    | 'mark-paid'
+    | 'payment-link';
   // зависит от action — валидируем внутри switch
   userId?: number;
   credits?: number;
   message?: string;
   banned?: boolean;
   isAdmin?: boolean;
+  packageId?: string;
   search?: string;
   limit?: number;
 }
@@ -64,6 +67,7 @@ Deno.serve(async (req) => {
     case 'ban':           return handleBan(body);
     case 'set-admin':     return handleSetAdmin(body, tg.id);
     case 'mark-paid':     return handleMarkPaid(body);
+    case 'payment-link':  return handlePaymentLink(body);
     default:              return jsonResponse({ error: 'unknown_action' }, { status: 400 });
   }
 });
@@ -301,4 +305,57 @@ async function handleMarkPaid(body: AdminBody) {
   if (!body.userId) return jsonResponse({ error: 'bad_input' }, { status: 400 });
   const result = await grantReferralReward(body.userId);
   return jsonResponse(result);
+}
+
+// ─── payment-link ─────────────────────────────────────────────────────────
+// Собирает ссылку на оплату пакета для конкретного юзера. Владелец отправляет
+// её покупателю в чат, оплата прилетает в payment-webhook и начисляется сама.
+//
+// Ссылку выдаём ТОЛЬКО отсюда, а не из мини-аппа: Telegram запрещает продавать
+// цифровые товары внутри своих приложений за что-либо кроме Stars
+// (core.telegram.org/bots/payments-stars). Внутри аппа кнопка «Купить» ведёт
+// в чат с владельцем — этим правило и соблюдается.
+async function handlePaymentLink(body: AdminBody) {
+  if (!body.userId) {
+    return jsonResponse({ error: 'userId required' }, { status: 400 });
+  }
+  const pkg = packageById(body.packageId ?? '');
+  if (!pkg) {
+    return jsonResponse(
+      { error: 'unknown_package', known: PACKAGES.map((p) => p.id) },
+      { status: 400 },
+    );
+  }
+
+  // Базовый адрес формы вида https://<магазин>.payform.ru — из env, потому что
+  // он появится только после регистрации в Продамусе и может смениться.
+  const formUrl = (Deno.env.get('PRODAMUS_FORM_URL') ?? '').replace(/\/+$/, '');
+  if (!formUrl) {
+    return jsonResponse({ error: 'PRODAMUS_FORM_URL не задан' }, { status: 500 });
+  }
+
+  const { data: user } = await db
+    .from('users').select('id, username').eq('id', body.userId).maybeSingle();
+  if (!user) return jsonResponse({ error: 'user_not_found' }, { status: 404 });
+
+  const orderId = buildOrderId(body.userId, pkg.id);
+
+  // order_id входит в подписанные данные уведомления — именно по нему вебхук
+  // поймёт, кому и сколько начислить, поэтому подделать адресата нельзя.
+  const q = new URLSearchParams({
+    order_id: orderId,
+    customer_extra: `Пакет ${pkg.credits} генераций для @${user.username ?? user.id}`,
+    do: 'pay',
+  });
+  q.set('products[0][name]', `${pkg.credits} генераций LabFrame AI`);
+  q.set('products[0][price]', String(pkg.priceRub));
+  q.set('products[0][quantity]', '1');
+
+  return jsonResponse({
+    ok: true,
+    url: `${formUrl}/?${q.toString()}`,
+    orderId,
+    credits: pkg.credits,
+    priceRub: pkg.priceRub,
+  });
 }
