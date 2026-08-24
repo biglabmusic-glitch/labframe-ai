@@ -29,18 +29,23 @@
 
 ## Перед началом
 
-Репозиторий сейчас на ветке `main`. Заведите рабочую ветку:
+Работа идёт в ветке `feat/credit-packages` (создана командой `git checkout -b feat/credit-packages`
+от `main`).
 
-```bash
-git checkout -b feat/credit-packages
-```
-
-Проверочные команды в этом плане (Deno 2.9 требует `--allow-import`, чего нет в
-устаревших примерах `CLAUDE.md`):
+Deno стоит через scoop, поэтому перед проверками:
 
 ```bash
 export PATH="$HOME/scoop/shims:$PATH"
 ```
+
+Про флаги Deno 2.9 — они у `test` и `check` разные, и перепутать легко:
+
+- `deno test --allow-all …` — **без** `--allow-import`, эти флаги несовместимы
+  (`--allow-all` уже включает доступ к импортам);
+- `deno check --allow-import …` — **с** флагом, у `check` нет `--allow-all`.
+
+Примеры в `CLAUDE.md` устарели: там `deno test` и `deno check` без `--allow-import`,
+на Deno 2.9 второй так не работает.
 
 Фронт проверяется через `npm run build`, а не `npm run typecheck` — последний в этом
 репозитории сломан (см. `CLAUDE.md`).
@@ -87,7 +92,7 @@ Deno.test('константы совпадают с контрактом SQL-т�
 - [ ] **Step 2: Запустить тест и убедиться, что он падает**
 
 ```bash
-deno test --allow-all --allow-import supabase/functions/_shared/credits_test.ts
+deno test --allow-all supabase/functions/_shared/credits_test.ts
 ```
 
 Ожидается: FAIL, модуль `./credits.ts` не найден.
@@ -120,7 +125,7 @@ export function creditCost(decorPreset: string | null | undefined): number {
 - [ ] **Step 4: Запустить тест и убедиться, что он проходит**
 
 ```bash
-deno test --allow-all --allow-import supabase/functions/_shared/credits_test.ts
+deno test --allow-all supabase/functions/_shared/credits_test.ts
 ```
 
 Ожидается: PASS, 3 теста.
@@ -386,7 +391,7 @@ async function addCredits(userId: number, by: number): Promise<void> {
 - [ ] **Step 2: Прогнать существующие тесты referral**
 
 ```bash
-deno test --allow-all --allow-import supabase/functions/_shared/referral_test.ts
+deno test --allow-all supabase/functions/_shared/referral_test.ts
 ```
 
 Ожидается: PASS. Тесты покрывают `normalizeCode`, `parseStartParam`,
@@ -1178,13 +1183,13 @@ cd app && npm run build
 - [ ] **Step 6: Прогнать все тесты бэкенда**
 
 ```bash
-deno test --allow-all --allow-import supabase/functions/_shared/
+deno test --allow-all supabase/functions/_shared/
 ```
 
 Ожидается: PASS. Для тестов, которые импортируют `env.ts`, нужны заглушки:
 
 ```bash
-SUPABASE_URL=http://localhost SUPABASE_ANON_KEY=x SUPABASE_SERVICE_ROLE_KEY=x REPLICATE_API_TOKEN=x POLZA_API_KEY=x BOT_TOKEN=x deno test --allow-all --allow-import supabase/functions/_shared/
+SUPABASE_URL=http://localhost SUPABASE_ANON_KEY=x SUPABASE_SERVICE_ROLE_KEY=x REPLICATE_API_TOKEN=x POLZA_API_KEY=x BOT_TOKEN=x deno test --allow-all supabase/functions/_shared/
 ```
 
 - [ ] **Step 7: Коммит**
