@@ -28,3 +28,8 @@ Thumbs.db
 # Supabase CLI local state
 supabase/.branches
 supabase/.temp
+
+# Бэкапы данных — содержат персональные данные (first_name, last_name, photo_url).
+# Скрипт кладёт их вне репозитория, но подстрахуемся на случай запуска с -OutDir внутрь.
+labframe-backups/
+data_*.sql
