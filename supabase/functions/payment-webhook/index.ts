@@ -15,6 +15,24 @@ import { parsePhpFormBody, verifySignature, type PhpValue } from '../_shared/pro
 import { grantReferralReward } from '../_shared/referral.ts';
 import { sendMessage } from '../_shared/telegram.ts';
 
+// Где искать НАШ номер заказа.
+//
+// Продамус кладёт в order_id собственный UUID, а переданное нами значение
+// возвращает под другим именем. Перебираем известных кандидатов и берём первое
+// поле, которое разбирается в формат lf-<tgId>-<пакет>-<nonce>. Порядок значения
+// не имеет: чужой UUID под наш формат всё равно не подойдёт.
+const ORDER_FIELDS = ['order_num', 'order_id', 'orderNum', 'order_number', 'ORDER_ID'];
+
+function findOrder(data: Record<string, PhpValue>) {
+  for (const field of ORDER_FIELDS) {
+    const value = data[field];
+    if (typeof value !== 'string') continue;
+    const parsed = parseOrderId(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonResponse({ error: 'method' }, { status: 405 });
 
@@ -53,11 +71,16 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, ignored: status });
   }
 
-  const order = parseOrderId(orderId);
+  const order = findOrder(data);
   if (!order) {
     // Чужой или ручной платёж мимо наших ссылок. Повтор не поможет — отвечаем 200,
     // но громко логируем: деньги пришли, а кому начислять, неизвестно.
+    //
+    // Печатаем уведомление целиком: в новом API Продамуса order_id приходит
+    // его внутренним UUID, а наш номер лежит в каком-то другом поле. Пока не
+    // ясно, в каком именно, — без полного тела это не выяснить.
     console.error(`НЕ РАЗОБРАН order_id=${orderId}, сумма=${sum} — начисление вручную`);
+    console.error('тело уведомления:', JSON.stringify(data).slice(0, 2000));
     return jsonResponse({ ok: true, ignored: 'unparsable_order_id' });
   }
 
