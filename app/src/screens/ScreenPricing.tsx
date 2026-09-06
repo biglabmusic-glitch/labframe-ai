@@ -6,21 +6,24 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import { WebApp } from '../telegram/webapp';
-import { OWNER_TG, PACKAGES, buyLink, pluralGenerations } from '../lib/plans';
+import { BOT_TG, PACKAGES, buyLink, pluralGenerations } from '../lib/plans';
 import { useApp } from '../state/AppContext';
 
 /**
- * Покупка пакета генераций. Оплата на этом этапе ручная: кнопка открывает чат
- * с владельцем, он выставляет счёт из кабинета ЮKassa и начисляет генерации
- * в админке. Автоматический приём платежей появится на сайте вне Telegram —
- * внутри мини-аппа Telegram разрешает продавать цифровые товары только за Stars.
+ * Покупка пакета генераций. Кнопка открывает чат с ботом и передаёт ему выбранный
+ * пакет — бот присылает ссылку на оплату Продамуса, а после оплаты вебхук сам
+ * начисляет генерации на баланс. Владелец в сделке не участвует.
+ *
+ * Платёжную страницу прямо отсюда не открываем: внутри мини-аппа Telegram
+ * разрешает продавать цифровые товары только за Stars, поэтому оплата живёт
+ * в чате с ботом.
  */
 export function ScreenPricing() {
   const [selected, setSelected] = useState<string>('p50');
   const { back } = useRouter();
   const { user } = useApp();
   const sel = PACKAGES.find((p) => p.id === selected)!;
-  const canBuy = OWNER_TG !== '';
+  const canBuy = BOT_TG !== '';
 
   useBackButton(back);
   useMainButton({
@@ -123,7 +126,7 @@ export function ScreenPricing() {
         }}
       >
         {canBuy
-          ? 'Нажмите кнопку внизу — откроется чат, вам выставят счёт. После оплаты генерации появятся на балансе.'
+          ? 'Нажмите кнопку внизу — бот пришлёт ссылку на оплату. После оплаты генерации появятся на балансе автоматически.'
           : 'Покупка временно недоступна. Напишите нам, если нужны генерации.'}
       </div>
     </Screen>

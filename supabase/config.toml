@@ -1,5 +1,20 @@
 # Конфиг Supabase CLI. Минимальный — детали в Dashboard.
+#
+# verify_jwt = false нужен КАЖДОЙ функции. По умолчанию CLI ставит true, и тогда
+# шлюз Supabase режет запрос до того, как он дойдёт до кода: мини-апп ходит не с
+# JWT Supabase, а с Telegram initData (заголовок x-telegram-initdata, проверка в
+# _shared/auth.ts). Функция без своей секции получит true и молча перестанет
+# отвечать — при добавлении новой не забудьте вписать её сюда.
 [functions]
+
+[functions.admin]
+verify_jwt = false
+
+[functions.apply-referral]
+verify_jwt = false
+
+[functions.bot-webhook]
+verify_jwt = false             # зовёт Telegram, защищено X-Telegram-Bot-Api-Secret-Token
 
 [functions.create-job]
 verify_jwt = false             # авторизация через Telegram initData
@@ -7,11 +22,35 @@ verify_jwt = false             # авторизация через Telegram init
 [functions.get-job]
 verify_jwt = false
 
+[functions.job-feedback]
+verify_jwt = false
+
+[functions.list-jobs]
+verify_jwt = false
+
 [functions.me]
 verify_jwt = false
+
+[functions.notify-bot]
+verify_jwt = false             # защищено x-internal-secret
+
+[functions.payment-link]
+verify_jwt = false
+
+[functions.payment-webhook]
+verify_jwt = false             # зовёт Продамус, защищено подписью в заголовке Sign
 
 [functions.process-job]
 verify_jwt = false             # защищено x-internal-secret
 
-[functions.notify-bot]
-verify_jwt = false             # защищено x-internal-secret
+[functions.regen-brand-hashtags]
+verify_jwt = false
+
+[functions.regen-hashtags]
+verify_jwt = false
+
+[functions.save-brand]
+verify_jwt = false
+
+[functions.sign-upload]
+verify_jwt = false
