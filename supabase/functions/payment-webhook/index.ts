@@ -13,6 +13,7 @@ import { db } from '../_shared/db.ts';
 import { amountMatches, parseOrderId } from '../_shared/packages.ts';
 import { parsePhpFormBody, verifySignature, type PhpValue } from '../_shared/prodamus.ts';
 import { grantReferralReward } from '../_shared/referral.ts';
+import { sendMessage } from '../_shared/telegram.ts';
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonResponse({ error: 'method' }, { status: 405 });
@@ -91,6 +92,31 @@ Deno.serve(async (req) => {
   }
 
   console.log(`начислено ${order.pkg.credits} генераций юзеру ${order.tgId} (${orderId})`);
+
+  // Говорим покупателю, что деньги дошли. Только здесь, после credited === true:
+  // на повторное уведомление Продамуса поздравлять второй раз не нужно.
+  //
+  // Баланс перечитываем из БД, а не считаем сами: между начислением и этим
+  // моментом человек мог потратить генерацию, и цифра из головы разошлась бы
+  // с той, что он видит в приложении.
+  //
+  // Сбой отправки не роняет вебхук: деньги уже начислены, повтор уведомления
+  // баланс не удвоит (apply_payment идемпотентен), но и сообщение не починит.
+  try {
+    const { data: u } = await db
+      .from('users').select('credits').eq('id', order.tgId).maybeSingle();
+    const balance = u?.credits;
+
+    await sendMessage(
+      order.tgId,
+      'Оплата прошла, спасибо!\n\n' +
+      `Зачислено ${order.pkg.credits} генераций.` +
+      (typeof balance === 'number' ? ` Теперь на балансе ${balance}.` : '') +
+      '\n\nГенерации не сгорают — тратьте когда удобно.',
+    );
+  } catch (e) {
+    console.error('не смогли сообщить об оплате:', e instanceof Error ? e.message : e);
+  }
 
   // Реферальная награда — за первую оплату приглашённого. Внутри idempotent:
   // переводит связку joined → paid только один раз.
