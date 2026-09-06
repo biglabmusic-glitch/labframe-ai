@@ -14,7 +14,7 @@ import { useRouter } from '../router/Router';
  * и переход к покупке пакета.
  */
 export function ScreenMyPlan() {
-  const { user } = useApp();
+  const { user, balanceLoaded } = useApp();
   const { back, push } = useRouter();
 
   useBackButton(back);
@@ -70,7 +70,11 @@ export function ScreenMyPlan() {
       </div>
 
       <div style={{ padding: '0 16px 14px' }}>
-        <UsageBar credits={user.credits} onUpgrade={() => push('pricing')} />
+        <UsageBar
+          credits={user.credits}
+          loading={!balanceLoaded}
+          onUpgrade={() => push('pricing')}
+        />
       </div>
 
       <div style={{ padding: '0 16px 18px' }}>

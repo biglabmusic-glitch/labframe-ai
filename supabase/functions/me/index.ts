@@ -34,21 +34,29 @@ Deno.serve(async (req) => {
   const adminIds = (Deno.env.get('ADMIN_IDS') ?? '')
     .split(',').map((s) => Number(s.trim())).filter(Boolean);
   const envIsAdmin = adminIds.includes(tg.id);
-  if (envIsAdmin) {
-    try { await db.from('users').update({ is_admin: true }).eq('id', tg.id); }
-    catch { /* колонка is_admin могла ещё не появиться — не валим /me */ }
-  }
 
-  const { data: user } = await db.from('users').select('*').eq('id', tg.id).single();
-  const { data: brand } = await db.from('brand').select('*').eq('user_id', tg.id).maybeSingle();
+  // Эти запросы друг от друга не зависят — отправляем разом. По очереди это
+  // четыре круга до базы, и на холодном старте функции они складывались в
+  // заметную паузу: пользователь всё это время смотрел на пустой баланс.
+  const [{ data: user }, { data: brand }, refStats] = await Promise.all([
+    db.from('users').select('*').eq('id', tg.id).single(),
+    db.from('brand').select('*').eq('user_id', tg.id).maybeSingle(),
+    // Таблиц рефералов может не быть до миграции — /me из-за этого не валим.
+    referralStats(tg.id).catch(() => ({ referralsCount: 0, referralsPaid: 0 })),
+    // Синхронизация флага админа в БД. Результат не читаем: ниже isAdmin всё
+    // равно считается с учётом envIsAdmin, так что гонка с select безопасна.
+    // Колонки is_admin могло ещё не быть — глушим ошибку.
+    envIsAdmin
+      ? db.from('users').update({ is_admin: true }).eq('id', tg.id).then(() => {}, () => {})
+      : Promise.resolve(),
+  ]);
 
-  // Реф-код (генерим при первом заходе) + статистика приглашений.
+  // Реф-код генерим только при первом заходе, поэтому он вне общей пачки:
+  // обычно его уже видно в user и лишний запрос не нужен.
   let refCode = user?.ref_code as string | undefined;
   try {
     if (!refCode) refCode = await ensureRefCode(tg.id);
   } catch { /* не валим /me из-за реф-кода */ }
-  let refStats = { referralsCount: 0, referralsPaid: 0 };
-  try { refStats = await referralStats(tg.id); } catch { /* таблицы может не быть до миграции */ }
 
   // Маппим бренд в camelCase + подписываем логотип (если есть).
   let brandOut: Record<string, unknown> | null = null;

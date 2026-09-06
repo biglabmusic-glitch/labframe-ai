@@ -30,6 +30,12 @@ interface AppContextValue extends AppState {
   syncBrandToServer: (b: Partial<BrandData> & { removeLogo?: boolean }) => Promise<void>;
   /** true пока тянем /me и /list-jobs при старте — UI может показать спиннер если нужно. */
   syncing: boolean;
+  /**
+   * false, пока /me ни разу не ответил. До этого момента user.credits равен нулю
+   * просто потому, что настоящего значения ещё нет, — и выдавать его за «генерации
+   * закончились» нельзя.
+   */
+  balanceLoaded: boolean;
 }
 
 const STORAGE_KEY = 'labframe.v1';
@@ -128,6 +134,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [history, setHistoryState] = useState<Job[]>(persisted.history ?? []);
   const [onboarded, setOnboarded] = useState<boolean>(persisted.onboarded ?? false);
   const [syncing, setSyncing] = useState<boolean>(false);
+  const [balanceLoaded, setBalanceLoaded] = useState<boolean>(false);
 
   // Перечитать пользователя, когда WebApp реально прогрузится (initDataUnsafe иногда заполняется позже)
   useEffect(() => {
@@ -141,7 +148,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // /list-jobs даёт ленту «ваши работы». Локальный localStorage остаётся
   // как кэш до ответа сервера — UI не моргает между устройствами.
   useEffect(() => {
-    if (!isBackendReady()) return;
+    // Без бэкенда (mock-режим) ждать нечего — сразу показываем то, что есть локально.
+    if (!isBackendReady()) { setBalanceLoaded(true); return; }
     let cancelled = false;
     (async () => {
       setSyncing(true);
@@ -190,7 +198,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // молча — на iPhone мог быть кратковременный сетевой сбой,
         // в следующий раз подтянется. Локальный кэш остаётся.
       } finally {
-        if (!cancelled) setSyncing(false);
+        if (!cancelled) {
+          setSyncing(false);
+          // Ставим и при ошибке: иначе карточка баланса навсегда осталась бы
+          // в состоянии «загружаем».
+          setBalanceLoaded(true);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -242,8 +255,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AppContextValue>(
-    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing }),
-    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing],
+    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded }),
+    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

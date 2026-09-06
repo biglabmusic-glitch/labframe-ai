@@ -6,6 +6,12 @@ interface Props {
   onUpgrade: () => void;
   /** Если задан — карточка становится кликабельной (открыть баланс). */
   onOpen?: () => void;
+  /**
+   * Баланс ещё не пришёл с сервера. Важно отличать от нуля: до ответа /me
+   * в состоянии лежит 0, и без этого флага любой заходящий видел бы
+   * «Генерации закончились» — включая того, кто только что оплатил пакет.
+   */
+  loading?: boolean;
 }
 
 /**
@@ -13,9 +19,9 @@ interface Props {
  * Полосы прогресса нет намеренно: у баланса нет верхней границы, от которой
  * можно считать процент — пакеты складываются.
  */
-export function UsageBar({ credits, onUpgrade, onOpen }: Props) {
-  const empty = credits <= 0;
-  const low = !empty && credits <= 3;
+export function UsageBar({ credits, onUpgrade, onOpen, loading }: Props) {
+  const empty = !loading && credits <= 0;
+  const low = !loading && !empty && credits <= 3;
 
   const titleColor = empty ? '#F4B19A' : 'var(--c-on-dark)';
 
@@ -52,10 +58,16 @@ export function UsageBar({ credits, onUpgrade, onOpen }: Props) {
             color: titleColor,
           }}
         >
-          {empty ? 'Генерации закончились' : `${credits} ${pluralGenerations(credits)}`}
+          {loading
+            ? 'Загружаем баланс…'
+            : empty
+            ? 'Генерации закончились'
+            : `${credits} ${pluralGenerations(credits)}`}
         </div>
         <div style={{ marginTop: 2, fontSize: 11.5, color: 'var(--c-on-dark-3)' }}>
-          {empty
+          {loading
+            ? 'Секунду, уточняем на сервере'
+            : empty
             ? 'Пополните баланс, чтобы продолжить'
             : low
             ? 'Скоро закончатся — есть смысл пополнить'

@@ -26,7 +26,7 @@ const FORMAT_LABELS: Record<string, string> = {
 };
 
 export function ScreenHome() {
-  const { user, brand, history, resetDraft, setDraft } = useApp();
+  const { user, brand, history, resetDraft, setDraft, balanceLoaded } = useApp();
   const { push } = useRouter();
 
   useBackButton(() => WebApp?.close?.());
@@ -177,6 +177,7 @@ export function ScreenHome() {
       <div style={{ padding: '0 16px 18px' }}>
         <UsageBar
           credits={user.credits}
+          loading={!balanceLoaded}
           onUpgrade={() => push('pricing')}
           onOpen={() => push('myplan')}
         />
