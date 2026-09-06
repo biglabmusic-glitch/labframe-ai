@@ -7,16 +7,18 @@ import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import { WebApp } from '../telegram/webapp';
 import { BOT_TG, PACKAGES, buyLink, pluralGenerations } from '../lib/plans';
+import { createPaymentLink } from '../api/client';
 import { useApp } from '../state/AppContext';
 
 /**
- * Покупка пакета генераций. Кнопка открывает чат с ботом и передаёт ему выбранный
- * пакет — бот присылает ссылку на оплату Продамуса, а после оплаты вебхук сам
- * начисляет генерации на баланс. Владелец в сделке не участвует.
+ * Покупка пакета генераций. Кнопка запрашивает у бэкенда ссылку Продамуса и
+ * открывает её сразу — покупателю не нужно никуда переходить. После оплаты
+ * вебхук начисляет генерации сам, владелец в сделке не участвует.
  *
- * Платёжную страницу прямо отсюда не открываем: внутри мини-аппа Telegram
- * разрешает продавать цифровые товары только за Stars, поэтому оплата живёт
- * в чате с ботом.
+ * Про правила Telegram: внутри мини-аппов он разрешает продавать цифровые
+ * товары только за Stars, и раньше кнопка уводила в чат с ботом именно поэтому.
+ * Прямая ссылка быстрее, но это сознательное отступление от правила. Путь через
+ * бота никуда не делся и остаётся запасным — если бэкенд не ответит, уходим туда.
  */
 export function ScreenPricing() {
   const [selected, setSelected] = useState<string>('p50');
@@ -24,13 +26,31 @@ export function ScreenPricing() {
   const { user } = useApp();
   const sel = PACKAGES.find((p) => p.id === selected)!;
   const canBuy = BOT_TG !== '';
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useBackButton(back);
   useMainButton({
-    text: canBuy ? `Купить ${sel.count} за ${sel.price.toLocaleString('ru-RU')} ₽` : 'Скоро',
+    text: busy
+      ? 'Готовим оплату…'
+      : canBuy
+        ? `Купить ${sel.count} за ${sel.price.toLocaleString('ru-RU')} ₽`
+        : 'Скоро',
+    progress: busy,
+    enabled: canBuy && !busy,
     onClick: () => {
-      if (!canBuy) return;
-      WebApp?.openTelegramLink?.(buyLink(sel));
+      if (!canBuy || busy) return;
+      setBusy(true);
+      setFailed(false);
+      createPaymentLink(sel.id)
+        .then(({ url }) => WebApp?.openLink?.(url))
+        .catch(() => {
+          // Бэкенд не ответил — уводим в бота: там та же покупка живёт
+          // независимым путём, человек не остаётся ни с чем.
+          setFailed(true);
+          WebApp?.openTelegramLink?.(buyLink(sel));
+        })
+        .finally(() => setBusy(false));
     },
   });
 
@@ -125,9 +145,11 @@ export function ScreenPricing() {
           lineHeight: 1.5,
         }}
       >
-        {canBuy
-          ? 'Нажмите кнопку внизу — бот пришлёт ссылку на оплату. После оплаты генерации появятся на балансе автоматически.'
-          : 'Покупка временно недоступна. Напишите нам, если нужны генерации.'}
+        {!canBuy
+          ? 'Покупка временно недоступна. Напишите нам, если нужны генерации.'
+          : failed
+            ? 'Не получилось открыть оплату — открываем бота, купить можно там.'
+            : 'Нажмите кнопку внизу — откроется страница оплаты. После оплаты генерации появятся на балансе автоматически.'}
       </div>
     </Screen>
   );

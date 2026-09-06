@@ -327,6 +327,25 @@ export const api = {
   },
 };
 
+export interface PaymentLink {
+  url: string;
+  orderId: string;
+  credits: number;
+  priceRub: number;
+}
+
+/**
+ * Ссылка на оплату пакета. Всё существенное решает бэкенд: и цену, и то, кому
+ * потом начислять — фронт передаёт только id пакета. Подменить сумму, правя
+ * запрос, бесполезно: payment-webhook сверяет её с серверным прайсом.
+ */
+export function createPaymentLink(packageId: string): Promise<PaymentLink> {
+  return request<PaymentLink>('/payment-link', {
+    method: 'POST',
+    body: JSON.stringify({ packageId }),
+  });
+}
+
 /** Возвращает true, если бэкенд сконфигурирован (есть VITE_API_BASE_URL). */
 export function isBackendReady(): boolean {
   return Boolean(API_BASE);
