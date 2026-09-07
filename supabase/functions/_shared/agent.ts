@@ -129,7 +129,15 @@ function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<R
   return fetch(url, { ...init, signal: ctl.signal }).finally(() => clearTimeout(timer));
 }
 
-export async function buildPersonalizedPrompt(input: AgentInput): Promise<AgentOutput | null> {
+export async function buildPersonalizedPrompt(
+  input: AgentInput,
+  // Причину отказа отдаём через этот объект, а не через возвращаемое значение:
+  // вызывающий код завязан на «null значит откат к стандартному промту», и ломать
+  // этот контракт ради диагностики незачем. А причина нужна: без неё в админке
+  // видно только «агент вернул null», и не понять, чья это беда — модели,
+  // сети или нашего разбора ответа.
+  failure: { reason?: string } = {},
+): Promise<AgentOutput | null> {
   const t0 = Date.now();
   const model = Deno.env.get('POLZA_AGENT_MODEL') ?? 'gpt-4o-mini';
   const baseUrl = env.POLZA_BASE_URL;
@@ -164,6 +172,7 @@ export async function buildPersonalizedPrompt(input: AgentInput): Promise<AgentO
     if (!res.ok) {
       const text = (await res.text()).slice(0, 400);
       console.error(`agent ${res.status}: ${text}`);
+      failure.reason = `модель ответила ${res.status}: ${text.slice(0, 120)}`;
       return null;
     }
 
@@ -174,6 +183,7 @@ export async function buildPersonalizedPrompt(input: AgentInput): Promise<AgentO
     const raw = data.choices?.[0]?.message?.content;
     if (!raw) {
       console.error('agent: empty content');
+      failure.reason = 'модель вернула пустой ответ';
       return null;
     }
 
@@ -185,6 +195,7 @@ export async function buildPersonalizedPrompt(input: AgentInput): Promise<AgentO
       const m = raw.match(/\{[\s\S]*\}/);
       if (!m) {
         console.error('agent: no JSON in', raw.slice(0, 200));
+        failure.reason = 'в ответе модели нет JSON';
         return null;
       }
       parsed = JSON.parse(m[0]);
@@ -192,6 +203,7 @@ export async function buildPersonalizedPrompt(input: AgentInput): Promise<AgentO
 
     if (!parsed.prompt || typeof parsed.prompt !== 'string') {
       console.error('agent: missing prompt in', JSON.stringify(parsed).slice(0, 200));
+      failure.reason = 'в JSON модели нет поля prompt';
       return null;
     }
 
@@ -211,6 +223,7 @@ export async function buildPersonalizedPrompt(input: AgentInput): Promise<AgentO
     };
   } catch (e) {
     console.error('agent failed', e);
+    failure.reason = e instanceof Error ? e.message : String(e);
     return null;
   }
 }

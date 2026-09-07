@@ -19,7 +19,8 @@ interface AdminBody {
     | 'ban'
     | 'set-admin'
     | 'mark-paid'
-    | 'payment-link';
+    | 'payment-link'
+    | 'payments';
   // зависит от action — валидируем внутри switch
   userId?: number;
   credits?: number;
@@ -68,6 +69,7 @@ Deno.serve(async (req) => {
     case 'set-admin':     return handleSetAdmin(body, tg.id);
     case 'mark-paid':     return handleMarkPaid(body);
     case 'payment-link':  return handlePaymentLink(body);
+    case 'payments':      return listPayments(body.limit ?? 50);
     default:              return jsonResponse({ error: 'unknown_action' }, { status: 400 });
   }
 });
@@ -83,6 +85,9 @@ async function getStats() {
     feedbacks,
     tokens7d,
     recentErrors,
+    agentFallback7d,
+    recentFailures,
+    allPayments,
     topUsers,
     byDay,
   ] = await Promise.all([
@@ -99,11 +104,32 @@ async function getStats() {
       .select('prompt_tokens, completion_tokens')
       .gte('created_at', sinceISO(7))
       .then((r) => (r.data ?? []).reduce((s, c) => s + (c.prompt_tokens ?? 0) + (c.completion_tokens ?? 0), 0)),
+    // Ошибки, которые реально видел клиент. Откат агента на стандартный промт
+    // сюда не берём: работа при нём доводится до конца и человек получает
+    // картинку, а список из-за таких записей забивался так, что настоящие сбои
+    // в нём терялись — восемь строк шума на две значимых.
     db.from('ai_calls')
       .select('provider, error, created_at')
       .eq('ok', false)
+      .neq('model', 'fallback')
       .order('created_at', { ascending: false })
       .limit(10)
+      .then((r) => r.data ?? []),
+    // Сам откат никуда не деваем — показываем числом: если он вдруг случается
+    // почти на каждой работе, персонализация фактически не работает.
+    countWhere('ai_calls', () => db.from('ai_calls').select('id', { count: 'exact', head: true }).eq('model', 'fallback').gte('created_at', sinceISO(7))),
+    // Упавшие работы — с причиной и владельцем, чтобы можно было написать человеку.
+    db.from('jobs')
+      .select('id, user_id, error_message, created_at')
+      .eq('status', 'failed')
+      .gte('created_at', sinceISO(7))
+      .order('created_at', { ascending: false })
+      .limit(10)
+      .then((r) => r.data ?? []),
+    // Все платежи разом: их пока сотни, агрегировать в SQL смысла нет.
+    // Понадобится — заменим на представление с суммами по периодам.
+    db.from('payments')
+      .select('amount_rub, credits, created_at')
       .then((r) => r.data ?? []),
     db.from('jobs')
       .select('user_id')
@@ -119,6 +145,17 @@ async function getStats() {
   const disliked = feedbacks.filter((f) => f.feedback === 'disliked').length;
   const total    = liked + disliked;
 
+  // Выручка. Считаем здесь, а не в SQL, потому что платежи уже в памяти.
+  const sumRub = (rows: Array<{ amount_rub: number | string }>) =>
+    rows.reduce((acc, r) => acc + Number(r.amount_rub ?? 0), 0);
+  const since = (days: number) => {
+    const from = sinceISO(days);
+    return allPayments.filter((p) => p.created_at >= from);
+  };
+
+  const revenueTotal = sumRub(allPayments);
+  const payments30d = since(30);
+
   return {
     totalUsers,
     newUsers7d,
@@ -127,9 +164,56 @@ async function getStats() {
     likeRate30d: total > 0 ? Math.round((liked / total) * 100) : null,
     tokens7d,
     recentErrors,
+    agentFallback7d,
+    recentFailures,
     topUsers,
     byDay,
+
+    revenueTotal,
+    revenue7d:  sumRub(since(7)),
+    revenue30d: sumRub(payments30d),
+    paymentsTotal: allPayments.length,
+    payments30d: payments30d.length,
+    // Средний чек — по всем платежам за всё время: на малых числах помесячный
+    // прыгает так, что смотреть на него бесполезно.
+    avgCheck: allPayments.length > 0 ? Math.round(revenueTotal / allPayments.length) : 0,
+    creditsSold: allPayments.reduce((acc, p) => acc + Number(p.credits ?? 0), 0),
   };
+}
+
+// ─── payments ─────────────────────────────────────────────────────────────
+// История покупок: кто, что и когда купил. Нужна, чтобы разбирать споры
+// («я платил, ничего не пришло») и просто видеть, чем берут.
+async function listPayments(limit: number) {
+  const { data, error } = await db
+    .from('payments')
+    .select('order_id, user_id, package_id, credits, amount_rub, created_at')
+    .order('created_at', { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 200));
+
+  if (error) return jsonResponse({ error: error.message }, { status: 500 });
+  const rows = data ?? [];
+
+  // Имена покупателей забираем одним запросом на всю страницу, а не по одному
+  // на строку: иначе полсотни лишних круговых поездок до базы.
+  const ids = [...new Set(rows.map((r) => r.user_id))];
+  const { data: users } = ids.length
+    ? await db.from('users').select('id, username, first_name').in('id', ids)
+    : { data: [] as Array<{ id: number; username: string | null; first_name: string | null }> };
+  const byId = new Map((users ?? []).map((u) => [u.id, u]));
+
+  return jsonResponse({
+    payments: rows.map((r) => ({
+      orderId:   r.order_id,
+      userId:    r.user_id,
+      username:  byId.get(r.user_id)?.username ?? null,
+      firstName: byId.get(r.user_id)?.first_name ?? null,
+      packageId: r.package_id,
+      credits:   r.credits,
+      amountRub: Number(r.amount_rub),
+      createdAt: r.created_at,
+    })),
+  });
 }
 
 async function countWhere(_label: string, run: () => unknown): Promise<number> {

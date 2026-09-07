@@ -146,8 +146,35 @@ export interface AdminStats {
   likeRate30d: number | null;
   tokens7d: number;
   recentErrors: Array<{ provider: string; error: string | null; created_at: string }>;
+  /**
+   * Сколько раз за неделю агент не смог собрать промт и пайплайн откатился на
+   * стандартный. Это не сбой — работа доходит до конца, — но если число близко
+   * к количеству работ, значит персонализация фактически не работает.
+   */
+  agentFallback7d: number;
+  /** Работы, упавшие за неделю: с причиной и владельцем, чтобы написать человеку. */
+  recentFailures: Array<{ id: string; user_id: number; error_message: string | null; created_at: string }>;
   topUsers: Array<{ userId: number; jobs: number }>;
   byDay: Array<{ day: string; total: number; done: number }>;
+
+  revenueTotal: number;
+  revenue7d: number;
+  revenue30d: number;
+  paymentsTotal: number;
+  payments30d: number;
+  avgCheck: number;
+  creditsSold: number;
+}
+
+export interface AdminPayment {
+  orderId: string;
+  userId: number;
+  username: string | null;
+  firstName: string | null;
+  packageId: string;
+  credits: number;
+  amountRub: number;
+  createdAt: string;
 }
 
 export const api = {
@@ -253,6 +280,13 @@ export const api = {
     return request<AdminStats>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'stats' }),
+    });
+  },
+  /** История покупок: кто, что и когда купил. */
+  async adminPayments(limit = 50): Promise<{ payments: AdminPayment[] }> {
+    return request<{ payments: AdminPayment[] }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'payments', limit }),
     });
   },
   async adminUsers(search?: string): Promise<{ items: AdminUser[] }> {

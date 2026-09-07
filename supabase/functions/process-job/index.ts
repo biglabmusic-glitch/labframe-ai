@@ -7,7 +7,8 @@ import { db } from '../_shared/db.ts';
 import { processImage } from '../_shared/replicate.ts';
 import { generateText } from '../_shared/polza.ts';
 import { signUrl, uploadFromUrl, publicUrl } from '../_shared/storage.ts';
-import { sendPhoto } from '../_shared/telegram.ts';
+import { sendMessage, sendPhoto } from '../_shared/telegram.ts';
+import { explainJobFailure } from '../_shared/job-error.ts';
 import { buildPersonalizedPrompt } from '../_shared/agent.ts';
 
 Deno.serve(async (req) => {
@@ -46,6 +47,9 @@ Deno.serve(async (req) => {
     const hasDecor = Boolean(job.decor_preset);
     const agentDisabled = Deno.env.get('AGENT_DISABLED') === 'true';
     let agentResult: Awaited<ReturnType<typeof buildPersonalizedPrompt>> = null;
+    // Сюда агент кладёт причину, если не смог собрать промт, — она уходит в
+    // ai_calls и видна в админке. Иначе там было бы просто «вернул null».
+    const agentFailure: { reason?: string } = {};
 
     if (!agentDisabled && !hasDecor) {
       // Память агента: 10 последних done-jobs юзера + их фидбэк (если есть).
@@ -81,7 +85,7 @@ Deno.serve(async (req) => {
           createdAt: p.created_at,
           feedback:  p.feedback ?? null,
         })),
-      });
+      }, agentFailure);
 
       if (agentResult) {
         await logAi(job.id, 'agent', Deno.env.get('POLZA_AGENT_MODEL') ?? 'gpt-4o-mini', agentResult.durationMs, true, {
@@ -90,7 +94,10 @@ Deno.serve(async (req) => {
         });
         console.log(`agent[${job.id}] model=${agentResult.model} notes="${agentResult.notes}"`);
       } else {
-        await logAi(job.id, 'agent', 'fallback', 0, false, undefined, 'agent returned null, using default prompt');
+        await logAi(
+          job.id, 'agent', 'fallback', 0, false, undefined,
+          `откат на стандартный промт: ${agentFailure.reason ?? 'причина не записана'}`,
+        );
       }
     }
 
@@ -168,6 +175,22 @@ Deno.serve(async (req) => {
       finished_at: new Date().toISOString(),
     }).eq('id', job.id);
     await logAi(job.id, 'pipeline', 'n/a', 0, false, undefined, message);
+
+    // Говорим человеку, что случилось. Без этого он просто ждёт картинку,
+    // которая уже не придёт, и гадает, не сгорела ли генерация.
+    //
+    // Техническую формулировку не показываем: «tcp connect error (os error 110)»
+    // ничего ему не объясняет. Пуш не должен ронять обработку — статус job уже
+    // записан, а самый частый отказ здесь штатный: Telegram запрещает боту
+    // писать первым, если человек не начинал диалог.
+    try {
+      await sendMessage(Number(job.user_id), explainJobFailure(message).text);
+    } catch (pushErr) {
+      const pm = pushErr instanceof Error ? pushErr.message : String(pushErr);
+      console.error('не смогли сообщить о сбое:', pm);
+      await logAi(job.id, 'telegram', 'sendMessage', 0, false, undefined, pm);
+    }
+
     return jsonResponse({ ok: false, jobId: job.id, error: message }, { status: 500 });
   }
 });

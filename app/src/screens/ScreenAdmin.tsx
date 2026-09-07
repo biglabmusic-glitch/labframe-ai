@@ -6,9 +6,9 @@ import { Pill } from '../components/primitives/Pill';
 import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
-import { api, type AdminStats, type AdminUser } from '../api/client';
+import { api, type AdminPayment, type AdminStats, type AdminUser } from '../api/client';
 
-type Tab = 'dashboard' | 'users';
+type Tab = 'dashboard' | 'money' | 'users';
 
 export function ScreenAdmin() {
   const { back } = useRouter();
@@ -27,13 +27,89 @@ export function ScreenAdmin() {
         <Pill size="sm" kind={tab === 'dashboard' ? 'accent' : 'ghost'} onClick={() => setTab('dashboard')}>
           Дашборд
         </Pill>
+        <Pill size="sm" kind={tab === 'money' ? 'accent' : 'ghost'} onClick={() => setTab('money')}>
+          Деньги
+        </Pill>
         <Pill size="sm" kind={tab === 'users' ? 'accent' : 'ghost'} onClick={() => setTab('users')}>
           Юзеры
         </Pill>
       </div>
 
-      {tab === 'dashboard' ? <DashboardTab /> : <UsersTab />}
+      {tab === 'dashboard' ? <DashboardTab /> : tab === 'money' ? <MoneyTab /> : <UsersTab />}
     </Screen>
+  );
+}
+
+// ─── Деньги ────────────────────────────────────────────────────────────────
+// История покупок и выручка. Нужна, чтобы разбирать споры «я платил, ничего
+// не пришло» и видеть, какой пакет реально берут.
+function MoneyTab() {
+  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [items, setItems] = useState<AdminPayment[]>([]);
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.adminStats(), api.adminPayments(100)])
+      .then(([s, p]) => {
+        if (cancelled) return;
+        setStats(s);
+        setItems(p.payments);
+      })
+      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) return <Hint text="Загружаем платежи..." />;
+  if (err) return <Hint text={err} error />;
+  if (!stats) return null;
+
+  return (
+    <div style={{ padding: '0 16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Kpi label="ВЫРУЧКА ВСЕГО" value={money(stats.revenueTotal)} sub={`${stats.paymentsTotal} платежей`} />
+        <Kpi label="ВЫРУЧКА 30Д" value={money(stats.revenue30d)} sub={`${stats.payments30d} платежей`} />
+        <Kpi label="ВЫРУЧКА 7Д" value={money(stats.revenue7d)} />
+        <Kpi label="СРЕДНИЙ ЧЕК" value={money(stats.avgCheck)} sub="за всё время" />
+        <Kpi label="ПРОДАНО ГЕНЕРАЦИЙ" value={stats.creditsSold} />
+      </div>
+
+      <SectionTitle>История покупок</SectionTitle>
+      <Card kind="dark" pad={12} radius={16}>
+        {items.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--c-on-dark-3)' }}>Покупок пока не было</div>
+        ) : (
+          items.map((p, i) => (
+            <div
+              key={p.orderId}
+              style={{
+                padding: '8px 0',
+                borderBottom: i < items.length - 1 ? '1px solid var(--c-line)' : 'none',
+                fontSize: 12,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ fontWeight: 600 }}>
+                  {p.firstName ?? 'без имени'}
+                  {p.username ? ` @${p.username}` : ''}
+                </span>
+                <span style={{ fontWeight: 700 }}>{money(p.amountRub)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 2 }}>
+                <span style={{ color: 'var(--c-on-dark-2)' }}>
+                  {p.credits} генераций · id {p.userId}
+                </span>
+                <span style={{ color: 'var(--c-on-dark-3)', fontSize: 10 }}>
+                  {new Date(p.createdAt).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}
+                </span>
+              </div>
+            </div>
+          ))
+        )}
+      </Card>
+    </div>
   );
 }
 
@@ -68,6 +144,8 @@ function DashboardTab() {
           sub="👍 от всех с фидбэком"
         />
         <Kpi label="ТОКЕНЫ 7Д" value={shortNum(stats.tokens7d)} sub="Polza prompt+completion" />
+        <Kpi label="ВЫРУЧКА ВСЕГО" value={money(stats.revenueTotal)} sub={`${stats.paymentsTotal} платежей`} />
+        <Kpi label="ВЫРУЧКА 30Д" value={money(stats.revenue30d)} sub={`за 7 дней ${money(stats.revenue7d)}`} />
       </div>
 
       <SectionTitle>Jobs по дням (14 дней)</SectionTitle>
@@ -87,7 +165,40 @@ function DashboardTab() {
         )}
       </Card>
 
-      <SectionTitle>Последние ошибки</SectionTitle>
+      <SectionTitle>Упавшие работы (7 дней)</SectionTitle>
+      <Card kind="dark" pad={12} radius={16}>
+        {stats.recentFailures.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--c-on-dark-3)' }}>Ни одна работа не упала</div>
+        ) : (
+          stats.recentFailures.map((f, i) => (
+            <div
+              key={f.id}
+              style={{
+                padding: '6px 0',
+                borderBottom: i < stats.recentFailures.length - 1 ? '1px solid var(--c-line)' : 'none',
+                fontSize: 11.5,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ color: '#F4B19A', fontWeight: 600 }}>id {f.user_id}</span>
+                <span style={{ color: 'var(--c-on-dark-3)', fontSize: 10 }}>
+                  {new Date(f.created_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}
+                </span>
+              </div>
+              <div style={{ color: 'var(--c-on-dark-2)', marginTop: 2, wordBreak: 'break-word' }}>
+                {(f.error_message ?? 'без причины').slice(0, 200)}
+              </div>
+            </div>
+          ))
+        )}
+      </Card>
+
+      <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', padding: '2px 2px 0' }}>
+        Откат агента на стандартный промт за 7 дней: <b>{stats.agentFallback7d}</b>. Это не сбой —
+        работа доходит до конца, теряется только подстройка под бренд.
+      </div>
+
+      <SectionTitle>Последние ошибки сервисов</SectionTitle>
       <Card kind="dark" pad={12} radius={16}>
         {stats.recentErrors.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--c-on-dark-3)' }}>Ошибок нет</div>
@@ -446,6 +557,11 @@ function BarChart({ data }: { data: AdminStats['byDay'] }) {
       </div>
     </Card>
   );
+}
+
+/** Рубли без копеек и с разделителями: 1 500 ₽. */
+function money(n: number): string {
+  return `${Math.round(n).toLocaleString('ru-RU')} ₽`;
 }
 
 function shortNum(n: number): string {
