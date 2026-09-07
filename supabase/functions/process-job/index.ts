@@ -6,8 +6,9 @@ import { jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { processImage } from '../_shared/replicate.ts';
 import { generateText } from '../_shared/polza.ts';
-import { signUrl, uploadFromUrl, publicUrl } from '../_shared/storage.ts';
+import { fetchBytes, publicUrl, signUrl, uploadBytes, uploadFromUrl } from '../_shared/storage.ts';
 import { sendMessage, sendPhoto } from '../_shared/telegram.ts';
+import { applyLogo, type Placement } from '../_shared/branding.ts';
 import { explainJobFailure } from '../_shared/job-error.ts';
 import { buildPersonalizedPrompt } from '../_shared/agent.ts';
 
@@ -115,9 +116,36 @@ Deno.serve(async (req) => {
     });
     await logAi(job.id, 'image-ai', img.provider, img.durationMs, true);
 
-    // 3. Скачать результат и положить в bucket 'results'
+    // 3. Наложить логотип и положить результат в bucket 'results'.
+    //
+    // Брендируем ЗДЕСЬ, на сервере, а не на канвасе мини-аппа. Раньше логотип
+    // рисовался только в браузере, и фотография, которую бот присылает в чат —
+    // а её как раз и сохраняют, чтобы выложить, — уходила голой. Теперь
+    // сохранённая версия одна и она уже брендированная.
     const resultPath = `${job.user_id}/${job.id}.jpg`;
-    await uploadFromUrl('results', resultPath, img.imageUrl);
+    let branded = false;
+
+    if (job.branding === 'logo' && logoUrl) {
+      try {
+        const [baseBytes, logoBytes] = await Promise.all([
+          fetchBytes(img.imageUrl),
+          fetchBytes(logoUrl),
+        ]);
+        const out = await applyLogo(
+          baseBytes,
+          logoBytes,
+          (brand?.logo_placement ?? 'bottom-right') as Placement,
+        );
+        await uploadBytes('results', resultPath, out);
+        branded = true;
+      } catch (e) {
+        // Работу из-за брендирования не валим: картинка без логотипа лучше, чем
+        // её отсутствие. Но логируем громко — это заметная потеря качества.
+        console.error('не удалось наложить логотип:', e instanceof Error ? e.message : e);
+      }
+    }
+
+    if (!branded) await uploadFromUrl('results', resultPath, img.imageUrl);
 
     // 4. Text AI
     const text = await generateText({

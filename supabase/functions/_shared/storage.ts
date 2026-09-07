@@ -24,6 +24,28 @@ export async function uploadFromUrl(
   return path;
 }
 
+/** Тянет файл в память. Нужен, когда картинку надо изменить перед сохранением. */
+export async function fetchBytes(url: string): Promise<Uint8Array> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetchBytes ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+/** Кладёт готовые байты в bucket. Нужен, когда картинку перед сохранением меняем. */
+export async function uploadBytes(
+  bucket: string,
+  path: string,
+  bytes: Uint8Array,
+  contentType = 'image/jpeg',
+): Promise<string> {
+  const { error } = await db.storage.from(bucket).upload(path, bytes, {
+    upsert: true,
+    contentType,
+  });
+  if (error) throw new Error(`uploadBytes: ${error.message}`);
+  return path;
+}
+
 export function publicUrl(bucket: string, path: string): string {
   const { data } = db.storage.from(bucket).getPublicUrl(path);
   return data.publicUrl;
