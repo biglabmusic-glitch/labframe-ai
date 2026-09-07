@@ -67,10 +67,14 @@ function Root() {
  * Пустоты на экране при этом нет — сверху ещё висит сплэш.
  */
 function AppRouter() {
-  const { onboarded, consentAt, balanceLoaded } = useApp();
+  const { onboarded, consentAt, consentKnown, balanceLoaded } = useApp();
   if (!balanceLoaded) return null;
 
-  const initial: RouteId = !consentAt ? 'consent' : onboarded ? 'home' : 'welcome';
+  // Запираем на согласии только когда точно знаем, что его нет. Если /me не
+  // ответил, пускаем как раньше: иначе сетевой сбой запер бы и тех, кто
+  // согласие давно дал, — сохранить его в этот момент всё равно невозможно.
+  const needConsent = consentKnown && !consentAt;
+  const initial: RouteId = needConsent ? 'consent' : onboarded ? 'home' : 'welcome';
   return (
     <RouterProvider initial={initial}>
       <Root />

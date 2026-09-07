@@ -39,6 +39,13 @@ interface AppContextValue extends AppState {
   balanceLoaded: boolean;
   /** Когда принята политика обработки данных. null — не принимал, пускать нельзя. */
   consentAt: string | null;
+  /**
+   * Ответил ли /me. Без этого признака нельзя отличить «согласия нет» от
+   * «сервер не ответил»: и там и там consentAt пустой, но во втором случае
+   * запирать человека на экране согласия нельзя — сохранить он всё равно
+   * не сможет, а согласие мог дать давным-давно.
+   */
+  consentKnown: boolean;
   /** Зафиксировать согласие текущей версии политики на сервере. */
   giveConsent: () => Promise<void>;
 }
@@ -141,6 +148,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [syncing, setSyncing] = useState<boolean>(false);
   const [balanceLoaded, setBalanceLoaded] = useState<boolean>(false);
   const [consentAt, setConsentAt] = useState<string | null>(null);
+  const [consentKnown, setConsentKnown] = useState<boolean>(false);
 
   // Согласие пишем на сервере: localStorage чистится вместе с кэшем и ничего
   // не подтверждает, а дата в базе — подтверждает.
@@ -178,6 +186,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         if (me?.user) {
           // Согласие с политикой: по нему решается, пускать ли дальше входа.
+          setConsentKnown(true);
           setConsentAt(
             me.user.consentAt && me.user.consentVersion === PRIVACY_VERSION
               ? me.user.consentAt
@@ -274,8 +283,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AppContextValue>(
-    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, consentAt, giveConsent }),
-    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, consentAt, giveConsent],
+    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, consentAt, consentKnown, giveConsent }),
+    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, consentAt, consentKnown, giveConsent],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
