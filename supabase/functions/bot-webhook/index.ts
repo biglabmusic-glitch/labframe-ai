@@ -17,12 +17,7 @@ import { db } from '../_shared/db.ts';
 import { PACKAGES, type CreditPackage } from '../_shared/packages.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { applyReferral, parseStartParam } from '../_shared/referral.ts';
-import {
-  answerCallbackQuery,
-  sendMessage,
-  type KeyboardButton,
-  type Markup,
-} from '../_shared/telegram.ts';
+import { answerCallbackQuery, sendMessage, type Markup } from '../_shared/telegram.ts';
 
 // Старые сообщения с inline-кнопками остаются в чатах у тех, кто уже жал их
 // до перехода на постоянную клавиатуру. Обработчик колбэков держим ради них.
@@ -58,24 +53,24 @@ const PICK_TEXT =
   'Выберите пакет — кнопки ниже.\n\n' +
   'Генерации не сгорают. Обычная работа стоит 1, с декором — 3.';
 
-/**
- * Верхняя строка — запуск мини-аппа. Адрес берём из env, а не хардкодим:
- * приложение может переехать, а перекатывать ради этого функцию не хочется.
- * Не задан — строку просто не показываем, кнопка меню чата никуда не делась.
- */
-function appRow(): KeyboardButton[][] {
-  const url = Deno.env.get('WEBAPP_URL') ?? '';
-  return url ? [[{ text: 'Открыть LabFrame AI', webAppUrl: url }]] : [];
-}
+// Кнопки запуска мини-аппа в этой клавиатуре БЫТЬ НЕ ДОЛЖНО.
+//
+// Мини-апп, открытый кнопкой обычной клавиатуры, работает по другому протоколу:
+// он не получает подписанных данных о пользователе и не может доказать, кто его
+// открыл. Авторизация падает, баланс приходит нулём, и человек видит «генерации
+// закончились» при полном счёте.
+//
+// Приложение открывается синей кнопкой меню чата — она рядом с полем ввода,
+// видна всегда и запускается правильным способом. Дублировать её здесь незачем.
 
-/** Обычное состояние: приложение и кнопка оплаты. */
+/** Обычное состояние: одна кнопка оплаты. */
 function baseKeyboard(): Markup {
-  return { keyboard: [...appRow(), [PAY_BUTTON]] };
+  return { keyboard: [[PAY_BUTTON]] };
 }
 
-/** После нажатия «Оплатить» — то же самое плюс строка пакетов. */
+/** После нажатия «Оплатить» — плюс строка пакетов. */
 function buyKeyboard(): Markup {
-  return { keyboard: [...appRow(), [PAY_BUTTON], PACKAGES.map(packageLabel)] };
+  return { keyboard: [[PAY_BUTTON], PACKAGES.map(packageLabel)] };
 }
 
 interface TgFrom {

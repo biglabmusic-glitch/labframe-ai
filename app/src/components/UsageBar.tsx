@@ -12,6 +12,12 @@ interface Props {
    * «Генерации закончились» — включая того, кто только что оплатил пакет.
    */
   loading?: boolean;
+  /**
+   * Запрос закончился, а баланс так и неизвестен — чаще всего сессия мини-аппа
+   * устарела. Показать ноль здесь нельзя: это выглядит как «всё потрачено»,
+   * и особенно скверно для того, кто только что оплатил пакет.
+   */
+  unknown?: boolean;
 }
 
 /**
@@ -19,9 +25,9 @@ interface Props {
  * Полосы прогресса нет намеренно: у баланса нет верхней границы, от которой
  * можно считать процент — пакеты складываются.
  */
-export function UsageBar({ credits, onUpgrade, onOpen, loading }: Props) {
-  const empty = !loading && credits <= 0;
-  const low = !loading && !empty && credits <= 3;
+export function UsageBar({ credits, onUpgrade, onOpen, loading, unknown }: Props) {
+  const empty = !loading && !unknown && credits <= 0;
+  const low = !loading && !unknown && !empty && credits <= 3;
 
   const titleColor = empty ? '#F4B19A' : 'var(--c-on-dark)';
 
@@ -60,6 +66,8 @@ export function UsageBar({ credits, onUpgrade, onOpen, loading }: Props) {
         >
           {loading
             ? 'Загружаем баланс…'
+            : unknown
+            ? 'Баланс недоступен'
             : empty
             ? 'Генерации закончились'
             : `${credits} ${pluralGenerations(credits)}`}
@@ -67,6 +75,8 @@ export function UsageBar({ credits, onUpgrade, onOpen, loading }: Props) {
         <div style={{ marginTop: 2, fontSize: 11.5, color: 'var(--c-on-dark-3)' }}>
           {loading
             ? 'Секунду, уточняем на сервере'
+            : unknown
+            ? 'Закройте и откройте приложение заново'
             : empty
             ? 'Пополните баланс, чтобы продолжить'
             : low
