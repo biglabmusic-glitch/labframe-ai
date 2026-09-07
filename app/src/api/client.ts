@@ -96,6 +96,9 @@ export interface MeResponse {
     refCode?: string | null;
     referralsCount?: number;
     referralsPaid?: number;
+    /** Когда принята политика обработки данных. null — не принимал. */
+    consentAt?: string | null;
+    consentVersion?: number | null;
   } | null;
   brand: Partial<BrandData> | null;
 }
@@ -280,6 +283,13 @@ export const api = {
     return request<AdminStats>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'stats' }),
+    });
+  },
+  /** Зафиксировать согласие с политикой обработки персональных данных. */
+  async giveConsent(version: number): Promise<{ consentAt: string }> {
+    return request<{ consentAt: string }>('/consent', {
+      method: 'POST',
+      body: JSON.stringify({ version }),
     });
   },
   /** История покупок: кто, что и когда купил. */

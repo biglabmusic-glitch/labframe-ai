@@ -94,6 +94,10 @@ Deno.serve(async (req) => {
       photoUrl:   user.photo_url ?? undefined,
       credits:    user.credits ?? 0,
       isAdmin,
+      // Согласие на обработку персональных данных: фронт по нему решает,
+      // показывать ли экран согласия при входе.
+      consentAt:      user.consent_at ?? null,
+      consentVersion: user.consent_version ?? null,
       refCode:        refCode ?? null,
       referralsCount: refStats.referralsCount,
       referralsPaid:  refStats.referralsPaid,

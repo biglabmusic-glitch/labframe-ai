@@ -10,6 +10,7 @@ import {
 import type { BrandData, Draft, Job, User } from './types';
 import { WebApp, getStartParam } from '../telegram/webapp';
 import { api, isBackendReady, type SaveBrandInput } from '../api/client';
+import { PRIVACY_VERSION } from '../lib/privacy';
 
 interface AppState {
   user: User;
@@ -36,6 +37,10 @@ interface AppContextValue extends AppState {
    * закончились» нельзя.
    */
   balanceLoaded: boolean;
+  /** Когда принята политика обработки данных. null — не принимал, пускать нельзя. */
+  consentAt: string | null;
+  /** Зафиксировать согласие текущей версии политики на сервере. */
+  giveConsent: () => Promise<void>;
 }
 
 const STORAGE_KEY = 'labframe.v1';
@@ -135,6 +140,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [onboarded, setOnboarded] = useState<boolean>(persisted.onboarded ?? false);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [balanceLoaded, setBalanceLoaded] = useState<boolean>(false);
+  const [consentAt, setConsentAt] = useState<string | null>(null);
+
+  // Согласие пишем на сервере: localStorage чистится вместе с кэшем и ничего
+  // не подтверждает, а дата в базе — подтверждает.
+  const giveConsent = useCallback(async () => {
+    const { consentAt: at } = await api.giveConsent(PRIVACY_VERSION);
+    setConsentAt(at);
+  }, []);
 
   // Перечитать пользователя, когда WebApp реально прогрузится (initDataUnsafe иногда заполняется позже)
   useEffect(() => {
@@ -164,6 +177,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           api.applyReferral({ startParam: sp }).catch(() => { /* молча */ });
         }
         if (me?.user) {
+          // Согласие с политикой: по нему решается, пускать ли дальше входа.
+          setConsentAt(
+            me.user.consentAt && me.user.consentVersion === PRIVACY_VERSION
+              ? me.user.consentAt
+              : null,
+          );
           setUserState((p) => ({
             ...p,
             telegramId: me.user!.telegramId,
@@ -255,8 +274,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AppContextValue>(
-    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded }),
-    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded],
+    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, consentAt, giveConsent }),
+    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, consentAt, giveConsent],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

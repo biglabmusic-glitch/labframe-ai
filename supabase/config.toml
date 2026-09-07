@@ -16,6 +16,9 @@ verify_jwt = false
 [functions.bot-webhook]
 verify_jwt = false             # зовёт Telegram, защищено X-Telegram-Bot-Api-Secret-Token
 
+[functions.consent]
+verify_jwt = false
+
 [functions.create-job]
 verify_jwt = false             # авторизация через Telegram initData
 

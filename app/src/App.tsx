@@ -23,6 +23,8 @@ import { ScreenMyPlan } from './screens/ScreenMyPlan';
 import { ScreenAdmin } from './screens/ScreenAdmin';
 import { ScreenInvite } from './screens/ScreenInvite';
 import { ScreenPhotoHelp } from './screens/ScreenPhotoHelp';
+import { ScreenConsent } from './screens/ScreenConsent';
+import { ScreenPrivacy } from './screens/ScreenPrivacy';
 
 const REGISTRY: Record<RouteId, () => JSX.Element> = {
   welcome:         ScreenWelcome,
@@ -44,6 +46,8 @@ const REGISTRY: Record<RouteId, () => JSX.Element> = {
   admin:           ScreenAdmin,
   invite:          ScreenInvite,
   help:            ScreenPhotoHelp,
+  consent:         ScreenConsent,
+  privacy:         ScreenPrivacy,
 };
 
 function Root() {
@@ -54,13 +58,21 @@ function Root() {
 
 /**
  * Решает, куда отправить юзера при запуске:
+ *  - согласие не дано  → consent (и дальше никуда, пока не согласится)
  *  - онбординг пройден → home
  *  - первый запуск     → welcome (а welcome дальше уведёт на onboarding)
+ *
+ * До ответа /me не поднимаем роутер вовсе: initial вычисляется один раз, и,
+ * решив раньше времени, мы показали бы экран согласия тому, кто его давно дал.
+ * Пустоты на экране при этом нет — сверху ещё висит сплэш.
  */
 function AppRouter() {
-  const { onboarded } = useApp();
+  const { onboarded, consentAt, balanceLoaded } = useApp();
+  if (!balanceLoaded) return null;
+
+  const initial: RouteId = !consentAt ? 'consent' : onboarded ? 'home' : 'welcome';
   return (
-    <RouterProvider initial={onboarded ? 'home' : 'welcome'}>
+    <RouterProvider initial={initial}>
       <Root />
     </RouterProvider>
   );
