@@ -391,7 +391,7 @@ export function isBackendReady(): boolean {
  * остальное падает в общий fallback с сырым текстом в подсказке (для debug).
  */
 export function friendlyError(raw: string): { title: string; sub: string } {
-  if (raw.includes('bad_signature') || raw.includes('empty_initdata') || raw.includes('no_hash') || raw.includes('no_user')) {
+  if (raw.includes('bad_signature') || raw.includes('empty_initdata') || raw.includes('no_hash') || raw.includes('no_user') || raw.includes('initdata_expired') || raw.includes('no_auth_date')) {
     return {
       title: 'Не удалось проверить личность',
       sub:   'Откройте мини-апп заново через бота — иногда Telegram даёт устаревший ключ.',

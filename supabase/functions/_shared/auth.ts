@@ -15,6 +15,10 @@ export interface TgUser {
   language_code?: string;
 }
 
+// Срок годности initData. Telegram выдаёт свежую строку при каждом запуске
+// мини-аппа, так что сутки — с запасом.
+const MAX_INITDATA_AGE_SEC = 86_400;
+
 export class AuthError extends Error {
   constructor(public code: string) { super(code); }
 }
@@ -88,6 +92,21 @@ export async function verifyInitData(initData: string): Promise<TgUser> {
     console.error('initdata hash mismatch', (err as { debug?: unknown }).debug);
     throw err;
   }
+  // Срок проверяем ОТДЕЛЬНО и для обоих эшелонов.
+  //
+  // Reference-валидатор умеет это сам (expiresIn выше), а ручной HMAC — нет.
+  // Из-за этого просроченный initData не проходил у эталона, но тихо проходил
+  // по запасному пути: подпись-то верная, она не портится со временем. То есть
+  // перехваченная строка работала бы вечно, а initData — это предъявительский
+  // пропуск: кто им владеет, тот и «этот пользователь».
+  const authDate = Number(rawPairs.find(([k]) => k === 'auth_date')?.[1] ?? '');
+  if (!Number.isFinite(authDate) || authDate <= 0) throw new AuthError('no_auth_date');
+  const ageSec = Math.floor(Date.now() / 1000) - authDate;
+  if (ageSec > MAX_INITDATA_AGE_SEC) {
+    console.error(`initdata expired: возраст ${ageSec}s, предел ${MAX_INITDATA_AGE_SEC}s`);
+    throw new AuthError('initdata_expired');
+  }
+
   console.log('initdata validated via', refOk ? 'ref' : ourMatch);
 
   const userRawPair = rawPairs.find(([k]) => k === 'user');
