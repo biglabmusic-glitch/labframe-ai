@@ -8,6 +8,7 @@ import { useRouter } from '../router/Router';
 import { WebApp } from '../telegram/webapp';
 import { BOT_TG, PACKAGES, buyLink, pluralGenerations } from '../lib/plans';
 import { createPaymentLink } from '../api/client';
+import { PromoCodeField } from '../components/PromoCodeField';
 import { useApp } from '../state/AppContext';
 
 /**
@@ -135,6 +136,12 @@ export function ScreenPricing() {
             </div>
           );
         })}
+      </div>
+
+      {/* Промокод здесь же: момент оплаты — когда бонус мотивирует сильнее всего,
+          и при этом первой оплаты ещё не было, значит привязка ещё возможна. */}
+      <div style={{ padding: '0 16px 18px' }}>
+        <PromoCodeField hint="После оплаты вы и пригласивший получите бонусные генерации." />
       </div>
 
       <div

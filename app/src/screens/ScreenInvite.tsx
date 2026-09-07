@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { Screen } from '../components/Screen';
 import { useApp } from '../state/AppContext';
+import { PromoCodeField } from '../components/PromoCodeField';
 import { useRouter } from '../router/Router';
 import { useBackButton } from '../telegram/useBackButton';
 import { api } from '../api/client';
@@ -16,7 +17,6 @@ export function ScreenInvite() {
   const code = user.refCode ?? '';
   const link = code ? `${BOT_APP_URL}?startapp=ref_${code}` : '';
 
-  const [manual, setManual] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
 
   const copy = async (text: string, label: string) => {
@@ -33,13 +33,6 @@ export function ScreenInvite() {
     const text = 'Делаю посты для зубных работ через ИИ — попробуй, дам бонусные генерации 👇';
     const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
     WebApp?.openTelegramLink?.(url);
-  };
-
-  const applyManual = async () => {
-    const res = await api.applyReferral({ code: manual });
-    if (res.ok && res.already) setMsg('Промокод уже применён');
-    else if (res.ok) setMsg('Промокод применён! Бонус — после первой оплаты');
-    else setMsg(reasonText(res.reason));
   };
 
   return (
@@ -78,16 +71,7 @@ export function ScreenInvite() {
         </div>
 
         <div style={{ marginTop: 24 }}>
-          <div style={labelStyle}>Есть промокод друга?</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              value={manual}
-              onChange={(e) => setManual(e.target.value)}
-              placeholder="ZUB-XXXX"
-              style={inputStyle}
-            />
-            <button onClick={applyManual} style={btnStyle} disabled={!manual.trim()}>Применить</button>
-          </div>
+          <PromoCodeField />
         </div>
 
         {msg && <div style={{ marginTop: 16, fontSize: 13, color: 'var(--c-accent)' }}>{msg}</div>}
@@ -105,16 +89,6 @@ function Stat({ label, value }: { label: string; value: number }) {
   );
 }
 
-function reasonText(reason?: string): string {
-  switch (reason) {
-    case 'self':       return 'Нельзя применить собственный код';
-    case 'bad_code':   return 'Код не найден';
-    case 'too_old':      return 'Промокод доступен только новым пользователям';
-    case 'already_paid': return 'Промокод можно применить только до первой оплаты';
-    case 'empty_code': return 'Введите код';
-    default:           return 'Не удалось применить код';
-  }
-}
 
 const labelStyle: CSSProperties = {
   fontSize: 12, color: 'var(--c-on-dark-2)', marginBottom: 6,

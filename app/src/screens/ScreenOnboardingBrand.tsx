@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
+import { PromoCodeField } from '../components/PromoCodeField';
 import { Card } from '../components/primitives/Card';
 import { CircleBtn } from '../components/primitives/CircleBtn';
 import { Pill } from '../components/primitives/Pill';
@@ -321,6 +322,19 @@ export function ScreenOnboardingBrand() {
               </Pill>
             ))}
           </div>
+        </Card>
+      </div>
+
+      {/* Промокод — необязательный шаг.
+          Стоит здесь, потому что это единственный момент, когда человек точно
+          помнит код: он только пришёл, потому что его позвали. На экране
+          приглашений он окажется позже и совсем по другому поводу. */}
+      <div style={{ padding: '0 16px 16px' }}>
+        <Card kind="dark" pad={16} radius={22}>
+          <PromoCodeField
+            title="Вас пригласили?"
+            hint="Введите код друга — после первой оплаты вы оба получите бонусные генерации. Необязательно."
+          />
         </Card>
       </div>
 
