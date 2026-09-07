@@ -19,10 +19,12 @@ export function ScreenInvite() {
 
   const [msg, setMsg] = useState<string | null>(null);
 
-  const copy = async (text: string, label: string) => {
+  // Принимаем готовое сообщение, а не подставляем существительное в шаблон:
+  // «ссылка» женского рода, и `${label} скопирован` давало «Ссылка скопирован».
+  const copy = async (text: string, done: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setMsg(`${label} скопирован`);
+      setMsg(done);
     } catch {
       setMsg('Не удалось скопировать');
     }
@@ -50,7 +52,7 @@ export function ScreenInvite() {
           <div style={labelStyle}>Твоя ссылка</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <input readOnly value={link} style={inputStyle} />
-            <button onClick={() => copy(link, 'Ссылка')} style={btnStyle} disabled={!link}>Копировать</button>
+            <button onClick={() => copy(link, 'Ссылка скопирована')} style={btnStyle} disabled={!link}>Копировать</button>
           </div>
           <button onClick={share} style={{ ...btnStyle, width: '100%', marginTop: 10 }} disabled={!link}>
             Поделиться в Telegram
@@ -61,7 +63,7 @@ export function ScreenInvite() {
           <div style={labelStyle}>Твой промокод</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 1 }}>{code || '—'}</div>
-            {code && <button onClick={() => copy(code, 'Код')} style={btnStyle}>Копировать</button>}
+            {code && <button onClick={() => copy(code, 'Код скопирован')} style={btnStyle}>Копировать</button>}
           </div>
         </div>
 
