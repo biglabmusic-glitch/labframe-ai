@@ -112,7 +112,9 @@ const STYLE_PROMPT: Record<StyleId, string> = {
 
 export interface ProcessImageInput {
   photoUrl: string;
-  logoUrl?: string;                  // если есть — пойдём через multi-image модель
+  /** Есть ли у бренда логотип. Влияет только на промт: просим модель оставить
+   *  чистый угол. Само изображение логотипа в модель не уходит. */
+  logoUrl?: string;
   style: StyleId;
   format: FormatId;
   brandText?: string;
@@ -141,7 +143,15 @@ export async function processImage(input: ProcessImageInput): Promise<ProcessIma
   return generateImage(
     {
       photoUrl: input.photoUrl,
-      logoUrl:  input.logoUrl,
+      // Логотип В МОДЕЛЬ НЕ ОТДАЁМ, хотя он у нас есть.
+      //
+      // Промт прямо запрещает рисовать логотипы и любой текст, а вторым
+      // изображением мы этот же логотип подавали на вход — модель получала
+      // картинку и просьбу её не рисовать. В лучшем случае лишняя работа,
+      // в худшем — запечённая кривая копия, поверх которой ляжет наша.
+      //
+      // Просьбу оставить чистый угол (buildPromptWithLogo) сохраняем: она
+      // как раз полезна, наложение идёт постпроцессингом на канвасе.
       style:    input.style,
       format:   input.format,
       prompt,
