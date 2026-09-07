@@ -14,7 +14,7 @@ import { useRouter } from '../router/Router';
 import type { StyleId } from '../state/types';
 import { api, isBackendReady } from '../api/client';
 import { FONTS, DEFAULT_FONT_ID } from '../lib/fonts';
-import { cropToSquareFile } from '../lib/image-crop';
+import { fitLogoFile } from '../lib/image-crop';
 
 const STYLE_LABELS: { id: StyleId; label: string }[] = [
   { id: 'clean', label: 'Clean White' },
@@ -127,7 +127,7 @@ export function ScreenMyBrand() {
       if (isBackendReady()) {
         setLogoUploading(true);
         try {
-          const squared = await cropToSquareFile(f, 1024);
+          const squared = await fitLogoFile(f, 1024);
           // Обновляем превью на cropped (иначе фронт показывает оригинал, а сервер — квадрат).
           const cropUrl = URL.createObjectURL(squared);
           setLogoUrl(cropUrl);

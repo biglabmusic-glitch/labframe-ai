@@ -22,6 +22,8 @@ const LOGO_OPACITY  = 0.92;    // чуть меньше единицы: не в�
 
 // Пороги вырезания однотонной подложки.
 const CORNER_SPREAD = 12;      // насколько углы могут отличаться, чтобы счесть их фоном
+const LOW_SATURATION = 40;     // разброс каналов, ниже которого логотип считаем монохромным
+const MIN_CONTRAST = 70;       // если яркости логотипа и фона ближе — перекрашиваем
 const NEAR = 26;               // ближе этого к цвету фона — полностью прозрачно
 const FAR  = 64;               // дальше — точно логотип; между ними плавный переход
 
@@ -49,13 +51,13 @@ export async function applyLogo(
     logo.resize(Math.max(1, Math.round(logo.width * scale)), Image.RESIZE_AUTO);
   }
 
-  logo.opacity(LOGO_OPACITY);
-
   const pad = Math.round(minSide * PADDING_RATIO);
-  const x = placement.endsWith('left') ? pad : base.width - pad - logo.width;
-  const y = placement.startsWith('top') ? pad : base.height - pad - logo.height;
+  const x = Math.max(0, Math.round(placement.endsWith('left') ? pad : base.width - pad - logo.width));
+  const y = Math.max(0, Math.round(placement.startsWith('top') ? pad : base.height - pad - logo.height));
 
-  base.composite(logo, Math.max(0, Math.round(x)), Math.max(0, Math.round(y)));
+  adaptToBackground(logo, averageLuminance(base, x, y, logo.width, logo.height));
+  logo.opacity(LOGO_OPACITY);
+  base.composite(logo, x, y);
   return await base.encodeJPEG(92);
 }
 
@@ -97,5 +99,63 @@ function knockOutSolidBackground(logo: Image): void {
     // от JPEG-сжатия.
     const alpha = d <= NEAR ? 0 : Math.round(a * ((d - NEAR) / (FAR - NEAR)));
     logo.setPixelAt(x, y, Image.rgbaToColor(r, g, b, alpha));
+  }
+}
+
+/** Средняя яркость участка кадра, куда ляжет логотип. */
+function averageLuminance(img: Image, x: number, y: number, w: number, h: number): number {
+  let sum = 0;
+  let n = 0;
+  // Шаг по пикселям: считать каждый незачем, а на больших кадрах это заметная работа.
+  const step = Math.max(1, Math.floor(Math.min(w, h) / 24));
+  for (let dy = 0; dy < h; dy += step) {
+    for (let dx = 0; dx < w; dx += step) {
+      const px = x + dx + 1;
+      const py = y + dy + 1;
+      if (px < 1 || py < 1 || px > img.width || py > img.height) continue;
+      const [r, g, b] = Image.colorToRGBA(img.getPixelAt(px, py));
+      sum += 0.299 * r + 0.587 * g + 0.114 * b;
+      n++;
+    }
+  }
+  return n ? sum / n : 128;
+}
+
+/**
+ * Перекрашивает монохромный логотип, если он сливается с фоном.
+ *
+ * После вырезания белой подложки от чёрно-белого логотипа остаются тёмные
+ * штрихи — а «премиальный тёмный» кадр тоже тёмный, и логотип пропадает
+ * совсем. Раньше на его месте был хотя бы белый прямоугольник: некрасиво,
+ * но видно. Поэтому поступаем как с подписью именем — светлый знак на тёмном
+ * фоне, тёмный на светлом.
+ *
+ * Цветные логотипы НЕ трогаем: перекрасить фирменный знак — значит испортить
+ * айдентику, ради которой всё и затевалось. Их оставляем как есть, даже если
+ * контраст неидеален.
+ */
+function adaptToBackground(logo: Image, bgLuminance: number): void {
+  let sum = 0;
+  let n = 0;
+  let colored = false;
+
+  for (const [, , color] of logo.iterateWithColors()) {
+    const [r, g, b, a] = Image.colorToRGBA(color);
+    if (a < 32) continue;  // прозрачное — не часть знака
+    if (Math.max(r, g, b) - Math.min(r, g, b) > LOW_SATURATION) colored = true;
+    sum += 0.299 * r + 0.587 * g + 0.114 * b;
+    n++;
+  }
+  if (!n || colored) return;
+
+  const inkLuminance = sum / n;
+  if (Math.abs(inkLuminance - bgLuminance) >= MIN_CONTRAST) return;
+
+  // Тон выбираем по фону, а не по исходному цвету знака.
+  const [nr, ng, nb] = bgLuminance < 128 ? [245, 245, 248] : [22, 24, 34];
+  for (const [x, y, color] of logo.iterateWithColors()) {
+    const [, , , a] = Image.colorToRGBA(color);
+    if (a < 8) continue;
+    logo.setPixelAt(x, y, Image.rgbaToColor(nr, ng, nb, a));
   }
 }
