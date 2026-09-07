@@ -1,5 +1,6 @@
 // Реферальные хелперы. Чистые функции (без БД) тестируются в referral_test.ts.
 import { db } from './db.ts';
+import { sendMessage } from './telegram.ts';
 
 // Безопасный алфавит без похожих символов (0/O, 1/I/L).
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -67,10 +68,22 @@ export async function applyReferral(refereeId: number, rawCode: string): Promise
   if (!me) return { ok: false, reason: 'no_user' };
   if (me.referred_by) return { ok: true, already: true };
 
-  // Окно «новизны»: привязка только новому юзеру.
-  const windowMin = envInt('REFERRAL_NEW_USER_WINDOW_MIN', 60);
+  // Кого ещё можно привязать.
+  //
+  // Раньше правилом был час с момента регистрации, и это отсекало нормальный
+  // сценарий: человек поставил приложение, потыкал, а про промокод узнал позже.
+  // Настоящее злоупотребление — привязать задним числом того, кто УЖЕ платил:
+  // тогда пригласивший получает награду за клиента, которого не приводил.
+  // Поэтому смотрим на факт оплаты, а срок оставляем широким страховочным.
+  const { count: paidCount } = await db
+    .from('payments')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', refereeId);
+  if ((paidCount ?? 0) > 0) return { ok: false, reason: 'already_paid' };
+
+  const windowDays = envInt('REFERRAL_NEW_USER_WINDOW_DAYS', 30);
   const ageMs = Date.now() - new Date(me.created_at).getTime();
-  if (ageMs > windowMin * 60_000) return { ok: false, reason: 'too_old' };
+  if (ageMs > windowDays * 24 * 60 * 60_000) return { ok: false, reason: 'too_old' };
 
   // Найти пригласившего по коду.
   const { data: referrer } = await db
@@ -126,9 +139,28 @@ export async function grantReferralReward(refereeId: number): Promise<RewardResu
   const referrerBonus = envInt('REFERRER_BONUS', 10);
   const refereeBonus = envInt('REFEREE_BONUS', 5);
 
-  await addCredits(updated.referrer_id, referrerBonus);
-  await addCredits(refereeId, refereeBonus);
+  const referrerBalance = await addCredits(updated.referrer_id, referrerBonus);
+  const refereeBalance = await addCredits(refereeId, refereeBonus);
   await db.from('users').update({ referral_rewarded: true }).eq('id', refereeId);
+
+  // Сообщаем обоим. Без этого вся механика работает вхолостую: пригласивший
+  // не узнаёт, что его труд окупился, и второго друга уже не приведёт.
+  //
+  // Имя приглашённого не называем: пригласивший и так знает, кого звал, а
+  // рассказывать одному пользователю о платежах другого мы не будем.
+  //
+  // Сбой отправки не отменяет начисление — бонусы уже на балансе.
+  await notify(
+    updated.referrer_id,
+    `Приглашённый вами человек оплатил первый пакет.` +
+    ` Вам начислено ${referrerBonus} генераций` +
+    (referrerBalance !== null ? `, теперь на балансе ${referrerBalance}.` : '.'),
+  );
+  await notify(
+    refereeId,
+    `Бонус за приглашение: ${refereeBonus} генераций сверх оплаченного пакета` +
+    (refereeBalance !== null ? `. Теперь на балансе ${refereeBalance}.` : '.'),
+  );
 
   return {
     ok: true,
@@ -138,12 +170,42 @@ export async function grantReferralReward(refereeId: number): Promise<RewardResu
   };
 }
 
-async function addCredits(userId: number, by: number): Promise<void> {
-  const { data } = await db.from('users').select('credits').eq('id', userId).maybeSingle();
-  // В БД колонка NOT NULL с дефолтом 5 (миграция 0016), так что fallback
-  // срабатывает только если юзера успели удалить между чтением и записью.
-  const next = (data?.credits ?? 0) + by;
+/**
+ * Начисляет генерации одним атомарным запросом (миграция 0019).
+ *
+ * Раньше здесь было чтение баланса и запись «прочитанное + N». Если между этими
+ * шагами приходила оплата, её начисление затиралось: второй запрос писал сумму,
+ * посчитанную из устаревшего значения. При выдаче двух бонусов подряд это вполне
+ * достижимо, поэтому сложение отдано СУБД.
+ *
+ * Возвращает новый баланс — он нужен, чтобы написать человеку осмысленное
+ * сообщение, а не «бонус начислен, смотрите сами».
+ */
+/** Пишет в чат и молчит при сбое: сообщение вторично, начисление уже состоялось. */
+async function notify(userId: number, text: string): Promise<void> {
+  try {
+    await sendMessage(userId, text);
+  } catch (e) {
+    console.error(`не смогли сообщить о бонусе юзеру ${userId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
+async function addCredits(userId: number, by: number): Promise<number | null> {
+  const { data, error } = await db.rpc('add_credits', { p_user_id: userId, p_delta: by });
+  if (!error) return typeof data === 'number' ? data : null;
+
+  // Запасной путь на случай, если миграция 0019 ещё не накачена.
+  //
+  // Просто вернуть null здесь нельзя: статус реферала к этому моменту уже
+  // переведён в 'paid' и обратно не откатывается, так что несостоявшееся
+  // начисление означало бы потерянный навсегда бонус. Лучше неатомарно, чем
+  // никак. Гонка тут маловероятна, а сообщение в логах громкое.
+  console.error(`add_credits недоступна (${error.message}) — начисляю запасным путём`);
+  const { data: row } = await db.from('users').select('credits').eq('id', userId).maybeSingle();
+  if (!row) return null;
+  const next = Math.max((row.credits ?? 0) + by, 0);
   await db.from('users').update({ credits: next }).eq('id', userId);
+  return next;
 }
 
 /** Сводка по рефералам юзера — для /me. */

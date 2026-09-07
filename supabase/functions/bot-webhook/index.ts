@@ -16,6 +16,7 @@
 import { db } from '../_shared/db.ts';
 import { PACKAGES, type CreditPackage } from '../_shared/packages.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
+import { applyReferral, parseStartParam } from '../_shared/referral.ts';
 import {
   answerCallbackQuery,
   sendMessage,
@@ -160,6 +161,18 @@ async function onMessage(msg: NonNullable<Update['message']>) {
     return;
   }
 
+  // Переход по пригласительной ссылке t.me/<bot>?start=ref_ZUB-XXXX.
+  //
+  // Мини-апп свои ссылки шлёт через startapp и разбирает сам, но код гуляет и
+  // по чатам обычной ссылкой на бота — раньше её было некому прочитать, и
+  // приглашение просто терялось. Теперь /start наш, и терять больше нечего.
+  if (cmd === '/start' && payload.startsWith('ref_')) {
+    if (await blocked(from, chatId)) return;
+    const res = await applyReferral(from.id, parseStartParam(payload));
+    await sendMessage(chatId, referralReply(res), baseKeyboard());
+    return;
+  }
+
   if (await blocked(from, chatId)) return;
 
   // /start просто знакомит с кнопками. Команду покупки набирают те, кто уже
@@ -181,6 +194,20 @@ async function onCallback(cq: NonNullable<Update['callback_query']>) {
   if (await blocked(from, chatId)) return;
 
   await sendPaymentLink(from, chatId, data.slice(CALLBACK_PREFIX.length));
+}
+
+/** Человеческий ответ на попытку применить приглашение. */
+function referralReply(res: { ok: boolean; already?: boolean; reason?: string }): string {
+  if (res.already) return 'Приглашение уже применено. Бонус придёт после первой оплаты.';
+  if (res.ok) return 'Приглашение принято. После первой оплаты вам и пригласившему начислим бонусные генерации.';
+
+  switch (res.reason) {
+    case 'self':         return 'Нельзя пригласить самого себя.';
+    case 'bad_code':     return 'Такого промокода нет — проверьте ссылку.';
+    case 'already_paid': return 'Приглашение доступно только до первой оплаты.';
+    case 'too_old':      return 'Приглашение доступно только новым пользователям.';
+    default:             return 'Не получилось применить приглашение. Попробуйте позже.';
+  }
 }
 
 /** Собирает ссылку и отправляет её кнопкой «Оплатить». */

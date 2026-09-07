@@ -109,7 +109,8 @@ function reasonText(reason?: string): string {
   switch (reason) {
     case 'self':       return 'Нельзя применить собственный код';
     case 'bad_code':   return 'Код не найден';
-    case 'too_old':    return 'Промокод доступен только новым пользователям';
+    case 'too_old':      return 'Промокод доступен только новым пользователям';
+    case 'already_paid': return 'Промокод можно применить только до первой оплаты';
     case 'empty_code': return 'Введите код';
     default:           return 'Не удалось применить код';
   }
