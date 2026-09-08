@@ -80,7 +80,7 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
   // Текст — вспомогательная часть работы, и ждать его долго незачем: лучше
   // отдать картинку с запасной подписью, чем уронить всю работу по таймауту.
   const res = await fetch(`${env.POLZA_BASE_URL}/chat/completions`, {
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(25_000),
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.POLZA_API_KEY}`,

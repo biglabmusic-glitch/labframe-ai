@@ -18,13 +18,18 @@ import type { StyleId, FormatId } from './replicate.ts';
 //
 // Обрываем раньше, чем нас оборвёт рантайм: так остаётся время записать
 // внятную ошибку и сказать о ней человеку.
-const IMAGE_TIMEOUT_MS = 100_000;
+// Две попытки должны уложиться в лимит выполнения функции, поэтому на каждую
+// отводим меньше, чем можно было бы отвести на единственную.
+const IMAGE_TIMEOUT_MS = 60_000;
+const RETRY_TIMEOUT_MS = 45_000;
 
 /** Запрос с ограничением по времени и понятной ошибкой вместо обрыва. */
+let currentTimeoutMs = IMAGE_TIMEOUT_MS;
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
-  ms = IMAGE_TIMEOUT_MS,
+  ms = currentTimeoutMs,
 ): Promise<Response> {
   try {
     return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
@@ -223,10 +228,66 @@ export async function generateImage(
     input.logoUrl ? 'nano-banana' :
     'flux-kontext';
 
-  switch (decision) {
+  const backup = pickBackup(decision);
+  try {
+    currentTimeoutMs = IMAGE_TIMEOUT_MS;
+    return await run(decision, input);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (!backup || !isTransient(message)) throw e;
+
+    // Провайдер не ответил, но настроен второй — пробуем его, а не роняем
+    // работу. Обрыв связи и «пятисотка» почти всегда временные, и человеку
+    // всё равно, чья модель нарисовала картинку.
+    console.error(`провайдер ${decision} не ответил (${message}); пробуем ${backup}`);
+    currentTimeoutMs = RETRY_TIMEOUT_MS;
+    return await run(backup, input);
+  } finally {
+    currentTimeoutMs = IMAGE_TIMEOUT_MS;
+  }
+}
+
+function run(provider: ProviderName, input: ImageInput): Promise<ImageOutput> {
+  switch (provider) {
     case 'nano-banana': return generateNanoBanana(input);
     case 'polza':       return generatePolza(input);
     case 'flux-kontext':
     default:            return generateFluxKontext(input);
   }
+}
+
+/**
+ * Запасной провайдер — обязательно на ДРУГОЙ инфраструктуре.
+ *
+ * Смысл запасного в том, чтобы пережить недоступность сервиса, поэтому
+ * подменять одну модель Replicate другой моделью Replicate бессмысленно:
+ * если у них проблемы, не ответит ни та, ни другая.
+ */
+function pickBackup(primary: ProviderName): ProviderName | null {
+  const hasReplicate = Boolean(Deno.env.get('REPLICATE_API_TOKEN'));
+  const hasPolza = Boolean(Deno.env.get('POLZA_API_KEY'));
+
+  if (primary === 'polza') return hasReplicate ? 'flux-kontext' : null;
+  return hasPolza ? 'polza' : null;
+}
+
+/**
+ * Стоит ли пробовать второй раз.
+ *
+ * Повторяем только то, что похоже на временную беду связи или перегрузку.
+ * Отказ по ключу или неверный запрос повторять незачем — второй раз ответят
+ * то же самое, а время работы мы потратим.
+ */
+function isTransient(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('не ответила') ||     // наш таймаут
+    m.includes('timed out') ||
+    m.includes('timeout') ||
+    m.includes('connect') ||
+    m.includes('network') ||
+    m.includes('econnreset') ||
+    / 5\d\d[:\s]/.test(m) ||         // 500, 502, 503…
+    m.includes(' 429')               // перегрузка
+  );
 }
