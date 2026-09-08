@@ -206,6 +206,26 @@ async function getStats() {
         .not('user_id', 'in', `(${payerIds.join(',')})`))
     : doneTotal;
 
+  // ─── Воронка ────────────────────────────────────────────────────────────
+  //
+  // Один счётчик «всего пользователей» ничего не объясняет: важно, где именно
+  // люди останавливаются. Шаги: зарегистрировался → сделал первую работу →
+  // израсходовал баланс → заплатил.
+  const [zeroCredits, referredCount, referralPaidCount, jobUserIds] = await Promise.all([
+    countWhere('users', () => db.from('users')
+      .select('id', { count: 'exact', head: true }).eq('credits', 0)),
+    countWhere('users', () => db.from('users')
+      .select('id', { count: 'exact', head: true }).not('referred_by', 'is', null)),
+    countWhere('referrals', () => db.from('referrals')
+      .select('id', { count: 'exact', head: true }).eq('status', 'paid')),
+    // Кто хоть раз доходил до генерации. Тянем идентификаторы целиком:
+    // отдельного «посчитай уникальных» в этом API нет, а работ пока тысячи.
+    db.from('jobs').select('user_id').then((r) => new Set((r.data ?? []).map((x) => x.user_id))),
+  ]);
+
+  const activated = jobUserIds.size;
+  const payers = payerIds.length;
+
   // Освежаем остаток именно сейчас: между работами он не меняется, но если
   // генераций давно не было, последний замер может быть недельной давности —
   // а смотрят сюда как раз чтобы не прозевать ноль.
@@ -263,6 +283,14 @@ async function getStats() {
     netTotal: fin30.spentTotal !== null
       ? Math.round(revenueTotal - fin30.spentTotal - commissionTotal - taxTotal)
       : null,
+
+    // Воронка: где именно теряются люди.
+    activated,                              // дошли до первой генерации
+    neverGenerated: totalUsers - activated,  // зарегистрировались и пропали
+    zeroCredits,                            // упёрлись в нулевой баланс
+    payers,                                 // заплатили хоть раз
+    referredCount,                          // применили промокод или пришли по ссылке
+    referralPaidCount,                      // из них дошли до оплаты
 
     // Себестоимость одной генерации и доля, сожжённая теми, кто не платил.
     doneTotal,

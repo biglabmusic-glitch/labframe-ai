@@ -186,6 +186,18 @@ export interface AdminStats {
   taxTotal: number;
   /** Чистыми: выручка минус модели, комиссия и налог. */
   netTotal: number | null;
+  /** Дошли до первой генерации. */
+  activated: number;
+  /** Зарегистрировались и ни разу не сгенерировали. */
+  neverGenerated: number;
+  /** Упёрлись в нулевой баланс. */
+  zeroCredits: number;
+  /** Заплатили хоть раз. */
+  payers: number;
+  /** Применили промокод или пришли по приглашению. */
+  referredCount: number;
+  /** Из приглашённых — дошли до оплаты. */
+  referralPaidCount: number;
   /** Сколько работ доведено до результата. */
   doneTotal: number;
   /** Из них — работы тех, кто ни разу не платил. */

@@ -97,6 +97,40 @@ function MoneyTab() {
         <Kpi label="ПОТРАЧЕНО 7Д" value={period(stats.providerSpent7d)} />
         <Kpi label="ПОПОЛНЕНО 30Д" value={period(stats.providerToppedUp30d)} />
       </div>
+      <SectionTitle>Воронка</SectionTitle>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Kpi
+          label="ДОШЛИ ДО ГЕНЕРАЦИИ"
+          value={stats.activated}
+          sub={pct(stats.activated, stats.totalUsers, 'от всех')}
+        />
+        <Kpi
+          label="НИ РАЗУ НЕ ПРОБОВАЛИ"
+          value={stats.neverGenerated}
+          sub={pct(stats.neverGenerated, stats.totalUsers, 'от всех')}
+        />
+        <Kpi
+          label="БАЛАНС КОНЧИЛСЯ"
+          value={stats.zeroCredits}
+          sub="упёрлись в оплату"
+        />
+        <Kpi
+          label="ЗАПЛАТИЛИ"
+          value={stats.payers}
+          sub={pct(stats.payers, stats.activated, 'от попробовавших')}
+        />
+        <Kpi
+          label="ПО ПРИГЛАШЕНИЮ"
+          value={stats.referredCount}
+          sub={`${stats.referralPaidCount} из них заплатили`}
+        />
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', lineHeight: 1.45 }}>
+        Путь человека: зарегистрировался → сделал первую работу → израсходовал
+        баланс → заплатил. Самый важный переход — от «баланс кончился» к
+        «заплатил»: он показывает, готовы ли платить те, кто уже попробовал.
+      </div>
+
       <SectionTitle>Настоящая экономика</SectionTitle>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <Kpi
@@ -684,6 +718,12 @@ function lowBalanceHint(stats: AdminStats): string {
 /** Значение за период: пока нет двух замеров, показывать нечего. */
 function period(v: number | null): string {
   return v === null ? '—' : money(Math.round(v));
+}
+
+/** Доля в процентах — чтобы числа читались без калькулятора. */
+function pct(part: number, whole: number, suffix: string): string {
+  if (!whole) return '—';
+  return `${Math.round((part / whole) * 100)}% ${suffix}`;
 }
 
 function money(n: number): string {
