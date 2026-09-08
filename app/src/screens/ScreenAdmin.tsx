@@ -314,6 +314,7 @@ function UsersTab() {
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [more, setMore] = useState(false);
+  const [total, setTotal] = useState(0);
   const sentinel = useRef<HTMLDivElement | null>(null);
 
   const reload = async (q: string = search) => {
@@ -322,6 +323,7 @@ function UsersTab() {
       const r = await api.adminUsers(q.trim() || undefined);
       setItems(r.items);
       setHasMore(r.hasMore);
+      setTotal(r.total);
     } catch { /* ignore */ }
     finally { setLoading(false); }
   };
@@ -334,6 +336,7 @@ function UsersTab() {
       const r = await api.adminUsers(search.trim() || undefined, items.length);
       setItems((prev) => [...prev, ...r.items]);
       setHasMore(r.hasMore);
+      setTotal(r.total);
     } catch { /* ignore */ }
     finally { setMore(false); }
   };
@@ -436,7 +439,7 @@ function UsersTab() {
             fontSize: 12.5, color: 'var(--c-on-dark-3)',
           }}
         >
-          {more ? 'Загружаем…' : 'Прокрутите, чтобы показать ещё'}
+          {more ? 'Загружаем…' : `Показано ${items.length} из ${total}`}
         </div>
       ) : null}
 

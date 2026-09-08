@@ -330,8 +330,8 @@ export const api = {
       body: JSON.stringify({ action: 'payments', limit }),
     });
   },
-  async adminUsers(search?: string, offset = 0): Promise<{ items: AdminUser[]; hasMore: boolean }> {
-    return request<{ items: AdminUser[]; hasMore: boolean }>('/admin', {
+  async adminUsers(search?: string, offset = 0): Promise<{ items: AdminUser[]; hasMore: boolean; total: number }> {
+    return request<{ items: AdminUser[]; hasMore: boolean; total: number }>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'users', search, offset }),
     });

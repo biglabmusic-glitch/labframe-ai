@@ -374,11 +374,12 @@ async function listUsers(search: string, limit: number, offset = 0) {
   const run = (cols: string) => {
     let q = db
       .from('users')
-      .select(cols)
+      // Просим точное число подходящих строк: по нему и понятно, есть ли ещё.
+      // Приём «взять на одну строку больше» тут не сработал, а заодно точный
+      // счётчик отвечает на вопрос «а сколько их всего» — раньше его не было.
+      .select(cols, { count: 'exact' })
       .order('last_seen_at', { ascending: false, nullsFirst: false })
-      // Берём на одну строку больше запрошенного: если она пришла, значит есть
-      // что показывать дальше. Отдельный count ради этого гонять незачем.
-      .range(offset, offset + size);
+      .range(offset, offset + size - 1);
 
     if (search) {
       const num = Number(search);
@@ -404,10 +405,10 @@ async function listUsers(search: string, limit: number, offset = 0) {
   };
 
   // Приводим к общей форме: select() со строкой колонок не даёт статического типа строки.
-  let { data, error } = await run(COLS_WITH_ADMIN) as unknown as UsersQueryResult;
+  let { data, error, count } = await run(COLS_WITH_ADMIN) as unknown as UsersQueryResult & { count: number | null };
   if (error) {
     // Скорее всего нет колонки is_admin — пробуем без неё, чтобы список жил.
-    ({ data, error } = await run(COLS_NO_ADMIN) as unknown as UsersQueryResult);
+    ({ data, error, count } = await run(COLS_NO_ADMIN) as unknown as UsersQueryResult & { count: number | null });
   }
   if (error) return { items: [], error: error.message };
 
@@ -420,10 +421,11 @@ async function listUsers(search: string, limit: number, offset = 0) {
   }
 
   const rows = data ?? [];
-  const hasMore = rows.length > size;
+  const total = count ?? offset + rows.length;
   return {
-    hasMore,
-    items: rows.slice(0, size).map((u) => ({
+    total,
+    hasMore: offset + rows.length < total,
+    items: rows.map((u) => ({
       id:           u.id,
       username:     u.username ?? null,
       firstName:    u.first_name ?? null,
