@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
 import { Card } from '../components/primitives/Card';
@@ -314,6 +314,7 @@ function UsersTab() {
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [more, setMore] = useState(false);
+  const sentinel = useRef<HTMLDivElement | null>(null);
 
   const reload = async (q: string = search) => {
     setLoading(true);
@@ -338,6 +339,22 @@ function UsersTab() {
   };
 
   useEffect(() => { reload(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // Следим за маячком в конце списка: попал в поле зрения — грузим дальше.
+  // Пересоздаём наблюдателя при каждом изменении списка, потому что после
+  // подгрузки маячок уезжает вниз и прежняя подписка становится бесполезной.
+  useEffect(() => {
+    const node = sentinel.current;
+    if (!node || !hasMore || more || loading) return;
+    if (typeof IntersectionObserver === 'undefined') return;
+
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore();
+    }, { rootMargin: '200px' });  // начинаем заранее, чтобы не дёргалось
+    io.observe(node);
+    return () => io.disconnect();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [items.length, hasMore, more, loading]);
 
   return (
     <div style={{ padding: '0 16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -407,20 +424,20 @@ function UsersTab() {
           </div>
         </button>
       ))}
-      {/* Пятьсот человек в один экран не влезают, а найти нужного хочется не
-          только поиском — иногда просто листаешь. При активном поиске кнопку
-          не показываем: там результат и так узкий. */}
+      {/* Подгрузка при прокрутке: долистал до низа — подтянулись следующие.
+          Кнопку не ставим, она была бы лишним шагом там, где человек и так
+          уже крутит вниз. Маячок оставлен видимым: пока грузится, видно что.
+          При активном поиске не подгружаем — там выборка узкая и полная. */}
       {hasMore && !search.trim() ? (
-        <button
-          type="button"
-          onClick={loadMore}
-          disabled={more}
+        <div
+          ref={sentinel}
           style={{
-            padding: '10px 14px', borderRadius: 12, border: '1px solid var(--c-line)',
-            background: 'rgba(239,243,255,0.04)', color: 'var(--c-on-dark)',
-            fontSize: 13, fontFamily: 'inherit', cursor: 'pointer',
+            padding: '14px 0', textAlign: 'center',
+            fontSize: 12.5, color: 'var(--c-on-dark-3)',
           }}
-        >{more ? 'Загружаем…' : 'Показать ещё'}</button>
+        >
+          {more ? 'Загружаем…' : 'Прокрутите, чтобы показать ещё'}
+        </div>
       ) : null}
 
 
