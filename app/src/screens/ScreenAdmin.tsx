@@ -83,7 +83,11 @@ function MoneyTab() {
           value={stats.providerBalance === null ? '—' : money(Math.round(stats.providerBalance))}
           sub={stats.providerBalance === null ? 'нет замеров' : lowBalanceHint(stats)}
         />
-        <Kpi label="МАРЖА 30Д" value={money(Math.round(stats.margin30d))} sub="выручка минус модели" />
+        <Kpi
+          label="МАРЖА 30Д"
+          value={stats.margin30d === null ? '—' : money(Math.round(stats.margin30d))}
+          sub={stats.margin30d === null ? 'нужны замеры расхода' : 'выручка минус модели'}
+        />
         <Kpi label="ПОТРАЧЕНО 30Д" value={money(Math.round(stats.providerSpent30d))} />
         <Kpi label="ПОТРАЧЕНО 7Д" value={money(Math.round(stats.providerSpent7d))} />
         <Kpi label="ПОПОЛНЕНО 30Д" value={money(Math.round(stats.providerToppedUp30d))} />

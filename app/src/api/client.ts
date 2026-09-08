@@ -173,8 +173,8 @@ export interface AdminStats {
   providerSpent7d: number;
   providerSpent30d: number;
   providerToppedUp30d: number;
-  /** Выручка минус расход на модели. Без хостинга, комиссии и налога. */
-  margin30d: number;
+  /** Выручка минус расход на модели. null, пока расход неизвестен. */
+  margin30d: number | null;
   /** Сколько замеров легло в расчёт расхода. */
   financePoints: number;
 }
