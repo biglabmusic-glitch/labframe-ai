@@ -8,6 +8,36 @@
 import { env } from './env.ts';
 import type { StyleId, FormatId } from './replicate.ts';
 
+// Сколько ждём ответа от модели.
+//
+// Раньше ограничения не было вовсе: запрос мог висеть бесконечно, функция
+// Supabase убивалась по собственному лимиту, работа оставалась в статусе
+// «обрабатывается», и через пять минут сторож помечал её словом «timeout».
+// Настоящая причина при этом терялась — ни в логах, ни в админке не оставалось
+// следа, из-за чего сбой провайдера выглядел так же, как сбой у нас.
+//
+// Обрываем раньше, чем нас оборвёт рантайм: так остаётся время записать
+// внятную ошибку и сказать о ней человеку.
+const IMAGE_TIMEOUT_MS = 100_000;
+
+/** Запрос с ограничением по времени и понятной ошибкой вместо обрыва. */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  ms = IMAGE_TIMEOUT_MS,
+): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
+  } catch (e) {
+    const name = e instanceof Error ? e.name : '';
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new Error(`модель не ответила за ${Math.round(ms / 1000)} c`);
+    }
+    throw e;
+  }
+}
+
+
 export interface ImageInput {
   photoUrl: string;                // основное фото (работа)
   logoUrl?: string;                // опц. логотип для multi-image
@@ -31,7 +61,7 @@ const FORMAT_ASPECT: Record<FormatId, string> = {
 // ─── Provider 1: Replicate Flux Kontext Pro (single-image) ──────────────────
 async function generateFluxKontext(input: ImageInput): Promise<ImageOutput> {
   const t0 = Date.now();
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     'https://api.replicate.com/v1/models/black-forest-labs/flux-kontext-pro/predictions',
     {
       method: 'POST',
@@ -64,7 +94,7 @@ async function generateFluxKontext(input: ImageInput): Promise<ImageOutput> {
 async function generateNanoBanana(input: ImageInput): Promise<ImageOutput> {
   const t0 = Date.now();
   const imageInputs = [input.photoUrl, ...(input.logoUrl ? [input.logoUrl] : [])];
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     'https://api.replicate.com/v1/models/google/nano-banana/predictions',
     {
       method: 'POST',
@@ -148,7 +178,7 @@ async function generatePolza(input: ImageInput): Promise<ImageOutput> {
     },
   };
 
-  const res = await fetch(`${mediaBase}/media`, {
+  const res = await fetchWithTimeout(`${mediaBase}/media`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.POLZA_API_KEY}`,

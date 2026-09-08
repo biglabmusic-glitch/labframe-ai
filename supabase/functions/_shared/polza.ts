@@ -77,7 +77,10 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
     `hashtags — массив из 5–8 русских и английских хэштегов для этой ниши.`,
   ].filter(Boolean).join('\n');
 
+  // Текст — вспомогательная часть работы, и ждать его долго незачем: лучше
+  // отдать картинку с запасной подписью, чем уронить всю работу по таймауту.
   const res = await fetch(`${env.POLZA_BASE_URL}/chat/completions`, {
+    signal: AbortSignal.timeout(45_000),
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.POLZA_API_KEY}`,
@@ -154,6 +157,9 @@ export async function fetchBalance(): Promise<BalanceResult> {
   try {
     const res = await fetch(`${base}/balance`, {
       headers: { Authorization: `Bearer ${Deno.env.get('POLZA_API_KEY') ?? ''}` },
+      // Баланс — справочная величина: висеть из-за неё нельзя, иначе она
+      // задержит работу, ради которой функцию и вызвали.
+      signal: AbortSignal.timeout(10_000),
     });
     const body = await res.text();
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}: ${body.slice(0, 160)}` };
