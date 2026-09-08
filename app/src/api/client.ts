@@ -170,11 +170,16 @@ export interface AdminStats {
   /** Остаток у провайдера моделей. null — замеров ещё нет. */
   providerBalance: number | null;
   providerCurrency: string;
-  providerSpent7d: number;
-  providerSpent30d: number;
-  providerToppedUp30d: number;
+  /** null, пока нет двух замеров. */
+  providerSpent7d: number | null;
+  providerSpent30d: number | null;
+  providerToppedUp30d: number | null;
+  /** Потрачено за всё время — отдаёт сам провайдер. */
+  providerSpentTotal: number | null;
   /** Выручка минус расход на модели. null, пока расход неизвестен. */
   margin30d: number | null;
+  /** То же за всё время. Доступна сразу. */
+  marginTotal: number | null;
   /** Сколько замеров легло в расчёт расхода. */
   financePoints: number;
   /** Почему не удалось снять остаток. null — всё в порядке. */

@@ -132,18 +132,21 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
 }
 
 /**
- * Остаток на счёте polza.ai.
+ * Остаток и накопленный расход на счёте polza.ai.
  *
- * Возвращает либо значение, либо причину отказа: причина уходит в админку и
- * видна на экране. Молчаливый null заставлял бы лезть в логи функции ради
- * ответа на вопрос «почему пусто», а смотрят сюда как раз тогда, когда деньги
- * кончаются и разбираться некогда.
+ * Ответ выглядит так:
+ *   {"amount":"1373.37","available":"1373.37","reservedAmount":"0.00",
+ *    "spentAmount":"3626.62","updatedAt":"..."}
  *
- * Формат ответа в документации не зафиксирован (она переехала), поэтому
- * разбираем несколько правдоподобных вариантов, а незнакомый показываем как есть.
+ * Числа приходят СТРОКАМИ — на этом первая версия и споткнулась. Берём
+ * available (свободные деньги, без зарезервированных) и spentAmount, который
+ * избавляет от необходимости выводить расход из разностей остатка.
+ *
+ * Причину отказа возвращаем наружу: она видна в админке, а смотрят туда как
+ * раз тогда, когда деньги кончаются и лезть в логи некогда.
  */
 export type BalanceResult =
-  | { ok: true; balance: number; currency: string }
+  | { ok: true; balance: number; spentTotal: number | null; currency: string }
   | { ok: false; error: string };
 
 export async function fetchBalance(): Promise<BalanceResult> {
@@ -153,44 +156,38 @@ export async function fetchBalance(): Promise<BalanceResult> {
       headers: { Authorization: `Bearer ${Deno.env.get('POLZA_API_KEY') ?? ''}` },
     });
     const body = await res.text();
-    if (!res.ok) {
-      return { ok: false, error: `HTTP ${res.status}: ${body.slice(0, 160)}` };
-    }
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}: ${body.slice(0, 160)}` };
 
     let raw: unknown;
     try { raw = JSON.parse(body); }
     catch { return { ok: false, error: `не JSON: ${body.slice(0, 160)}` }; }
 
-    const parsed = pickBalance(raw);
-    if (!parsed) return { ok: false, error: `незнакомый формат: ${body.slice(0, 200)}` };
-    return { ok: true, ...parsed };
+    const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const nested = (obj.data ?? obj.result ?? obj) as Record<string, unknown>;
+
+    // available — свободные деньги; amount включает зарезервированное.
+    const balance = num(nested.available) ?? num(nested.amount) ?? num(nested.balance);
+    if (balance === null) {
+      return { ok: false, error: `незнакомый формат: ${body.slice(0, 200)}` };
+    }
+
+    return {
+      ok: true,
+      balance,
+      spentTotal: num(nested.spentAmount) ?? num(nested.spent),
+      currency: typeof nested.currency === 'string' ? nested.currency : 'RUB',
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-function pickBalance(raw: unknown): { balance: number; currency: string } | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const obj = raw as Record<string, unknown>;
-  const nested = (obj.data ?? obj.result ?? obj) as Record<string, unknown>;
-
-  for (const key of ['balance', 'credits', 'amount', 'value']) {
-    const v = nested[key];
-    if (typeof v === 'number') {
-      const cur = nested.currency ?? obj.currency;
-      return { balance: v, currency: typeof cur === 'string' ? cur : 'RUB' };
-    }
-    // Встречается и вложенный объект вида { balance: { amount, currency } }.
-    if (typeof v === 'object' && v !== null) {
-      const inner = v as Record<string, unknown>;
-      const amount = inner.amount ?? inner.value;
-      if (typeof amount === 'number') {
-        return {
-          balance: amount,
-          currency: typeof inner.currency === 'string' ? inner.currency : 'RUB',
-        };
-      }
-    }
+/** Числа у них строками, поэтому принимаем оба вида. */
+function num(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
   }
   return null;
 }

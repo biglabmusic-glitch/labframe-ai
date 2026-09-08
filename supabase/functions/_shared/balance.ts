@@ -12,6 +12,7 @@ export async function snapshotProviderBalance(): Promise<string | null> {
   const { error } = await db.from('provider_balance').insert({
     provider: PROVIDER,
     balance: current.balance,
+    spent_total: current.spentTotal,
     currency: current.currency,
   });
   return error ? `запись в базу: ${error.message}` : null;
@@ -20,48 +21,57 @@ export async function snapshotProviderBalance(): Promise<string | null> {
 export interface ProviderFinance {
   balance: number | null;
   currency: string;
-  /** Сколько ушло на генерации за период — сумма падений остатка. */
-  spent: number;
-  /** Сколько внесено за период — сумма подъёмов остатка. */
-  toppedUp: number;
-  /** Сколько замеров легло в расчёт: по одному-двум выводы делать рано. */
+  /** Потрачено за всё время — приходит от провайдера, история не нужна. */
+  spentTotal: number | null;
+  /** Потрачено за период. null, пока нет двух замеров. */
+  spent: number | null;
+  /** Внесено за период. null, пока нет двух замеров. */
+  toppedUp: number | null;
+  /** Сколько замеров легло в расчёт: по одному выводы делать рано. */
   points: number;
 }
 
 /**
- * Считает расход и пополнения из истории замеров.
+ * Расход и пополнения за период.
  *
- * Провайдер отдаёт только «сколько сейчас», поэтому историю ведём сами. Между
- * двумя соседними замерами остаток либо упал — и это потраченное на генерации,
- * либо вырос — и это пополнение счёта. Ничего другого с ним произойти не может,
- * так что двух рядов достаточно, чтобы восстановить обе величины.
+ * Накопленный расход провайдер отдаёт сам, поэтому за период он считается
+ * разностью двух замеров — надёжнее, чем прежний подсчёт по падениям остатка:
+ * пополнения в неё больше не вмешиваются.
+ *
+ * Пополнения выводим из того же ряда: остаток изменился на (пополнено − ушло),
+ * значит пополнено = изменение остатка + расход.
  */
 export async function providerFinance(days: number): Promise<ProviderFinance> {
   const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const { data } = await db
     .from('provider_balance')
-    .select('balance, currency, at')
+    .select('balance, spent_total, currency, at')
     .eq('provider', PROVIDER)
     .gte('at', from)
     .order('at', { ascending: true });
 
   const rows = data ?? [];
-  let spent = 0;
-  let toppedUp = 0;
-  for (let i = 1; i < rows.length; i++) {
-    const delta = Number(rows[i].balance) - Number(rows[i - 1].balance);
-    if (delta < 0) spent += -delta;
-    else toppedUp += delta;
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+
+  let spent: number | null = null;
+  let toppedUp: number | null = null;
+  if (first && last && first !== last &&
+      first.spent_total !== null && last.spent_total !== null) {
+    spent = Math.max(0, Number(last.spent_total) - Number(first.spent_total));
+    const balanceDelta = Number(last.balance) - Number(first.balance);
+    toppedUp = Math.max(0, Math.round((balanceDelta + spent) * 100) / 100);
+    spent = Math.round(spent * 100) / 100;
   }
 
-  // Текущий остаток берём из последнего замера, а не запрашиваем заново:
-  // админку открывают часто, а лишний запрос к провайдеру ничего не уточнит.
-  const last = rows[rows.length - 1];
   return {
     balance: last ? Number(last.balance) : null,
     currency: last?.currency ?? 'RUB',
-    spent: Math.round(spent * 100) / 100,
-    toppedUp: Math.round(toppedUp * 100) / 100,
+    spentTotal: last?.spent_total !== null && last?.spent_total !== undefined
+      ? Number(last.spent_total)
+      : null,
+    spent,
+    toppedUp,
     points: rows.length,
   };
 }

@@ -84,13 +84,18 @@ function MoneyTab() {
           sub={stats.providerBalance === null ? 'нет замеров' : lowBalanceHint(stats)}
         />
         <Kpi
-          label="МАРЖА 30Д"
-          value={stats.margin30d === null ? '—' : money(Math.round(stats.margin30d))}
-          sub={stats.margin30d === null ? 'нужны замеры расхода' : 'выручка минус модели'}
+          label="МАРЖА ВСЕГО"
+          value={stats.marginTotal === null ? '—' : money(Math.round(stats.marginTotal))}
+          sub="выручка минус модели"
         />
-        <Kpi label="ПОТРАЧЕНО 30Д" value={money(Math.round(stats.providerSpent30d))} />
-        <Kpi label="ПОТРАЧЕНО 7Д" value={money(Math.round(stats.providerSpent7d))} />
-        <Kpi label="ПОПОЛНЕНО 30Д" value={money(Math.round(stats.providerToppedUp30d))} />
+        <Kpi
+          label="ПОТРАЧЕНО ВСЕГО"
+          value={stats.providerSpentTotal === null ? '—' : money(Math.round(stats.providerSpentTotal))}
+          sub="за всё время"
+        />
+        <Kpi label="ПОТРАЧЕНО 30Д" value={period(stats.providerSpent30d)} />
+        <Kpi label="ПОТРАЧЕНО 7Д" value={period(stats.providerSpent7d)} />
+        <Kpi label="ПОПОЛНЕНО 30Д" value={period(stats.providerToppedUp30d)} />
       </div>
       {stats.providerError ? (
         <div style={{ fontSize: 11.5, color: '#F4B19A', lineHeight: 1.45, wordBreak: 'break-word' }}>
@@ -98,8 +103,8 @@ function MoneyTab() {
         </div>
       ) : null}
       <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', lineHeight: 1.45 }}>
-        {stats.financePoints < 3
-          ? 'Расход считается по истории остатка — замеров пока мало, цифры станут точными через несколько генераций.'
+        {stats.providerSpent30d === null
+          ? 'Потрачено и маржа за всё время приходят от провайдера сразу. Разбивка по неделям появится, когда накопится второй замер.'
           : 'Маржа считается только по расходу на модели. Хостинг, комиссия Продамуса и налог сюда не входят.'}
       </div>
 
@@ -591,11 +596,17 @@ function BarChart({ data }: { data: AdminStats['byDay'] }) {
 function lowBalanceHint(stats: AdminStats): string {
   const weekly = stats.providerSpent7d;
   const left = stats.providerBalance ?? 0;
-  if (weekly <= 0) return 'хватает';
+  // Недельного расхода ещё не знаем — обещать «на сколько хватит» нечестно.
+  if (weekly === null || weekly <= 0) return 'темп расхода пока неизвестен';
   const weeks = left / weekly;
   if (weeks < 1) return 'меньше недели — пополните';
   if (weeks < 3) return `хватит примерно на ${Math.floor(weeks)} нед.`;
   return 'запас есть';
+}
+
+/** Значение за период: пока нет двух замеров, показывать нечего. */
+function period(v: number | null): string {
+  return v === null ? '—' : money(Math.round(v));
 }
 
 function money(n: number): string {
