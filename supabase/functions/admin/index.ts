@@ -31,6 +31,7 @@ interface AdminBody {
   packageId?: string;
   search?: string;
   limit?: number;
+  offset?: number;
 }
 
 function envAdminIds(): number[] {
@@ -63,7 +64,7 @@ Deno.serve(async (req) => {
 
   switch (body.action) {
     case 'stats':         return jsonResponse(await getStats());
-    case 'users':         return jsonResponse(await listUsers(body.search ?? '', body.limit ?? 50));
+    case 'users':         return jsonResponse(await listUsers(body.search ?? '', body.limit ?? 50, body.offset ?? 0));
     case 'grant-credits': return handleGrantCredits(body);
     case 'send-message':  return handleSendMessage(body);
     case 'ban':           return handleBan(body);
@@ -368,18 +369,21 @@ interface AdminUserRow {
 
 type UsersQueryResult = { data: AdminUserRow[] | null; error: { message: string } | null };
 
-async function listUsers(search: string, limit: number) {
+async function listUsers(search: string, limit: number, offset = 0) {
+  const size = Math.min(limit, 200);
   const run = (cols: string) => {
     let q = db
       .from('users')
       .select(cols)
       .order('last_seen_at', { ascending: false, nullsFirst: false })
-      .limit(Math.min(limit, 200));
+      // Берём на одну строку больше запрошенного: если она пришла, значит есть
+      // что показывать дальше. Отдельный count ради этого гонять незачем.
+      .range(offset, offset + size);
 
     if (search) {
       const num = Number(search);
-      if (Number.isFinite(num)) {
-        q = q.or(`id.eq.${num}`);
+      if (Number.isFinite(num) && /^\d+$/.test(search.trim())) {
+        q = q.eq('id', num);
       } else {
         // Сначала вырезаем символы, имеющие смысл в синтаксисе фильтров PostgREST
         // (',' разделяет условия, '()' группируют, '*' — wildcard, '\' — escape) —
@@ -388,7 +392,12 @@ async function listUsers(search: string, limit: number) {
         const esc = search
           .replace(/[,()*\\]/g, ' ')
           .replace(/[%_]/g, (m) => '\\' + m);
-        q = q.or(`username.ilike.%${esc}%,first_name.ilike.%${esc}%,last_name.ilike.%${esc}%`);
+        // Значения В КАВЫЧКАХ: без них PostgREST разбирает фильтр по запятым и
+        // скобкам внутри самого значения, и поиск по имени с кириллицей или
+        // пробелом молча не находил ничего.
+        q = q.or(
+          `username.ilike."%${esc}%",first_name.ilike."%${esc}%",last_name.ilike."%${esc}%"`,
+        );
       }
     }
     return q;
@@ -410,8 +419,11 @@ async function listUsers(search: string, limit: number) {
     for (const j of jobs ?? []) counts[j.user_id] = (counts[j.user_id] ?? 0) + 1;
   }
 
+  const rows = data ?? [];
+  const hasMore = rows.length > size;
   return {
-    items: (data ?? []).map((u) => ({
+    hasMore,
+    items: rows.slice(0, size).map((u) => ({
       id:           u.id,
       username:     u.username ?? null,
       firstName:    u.first_name ?? null,

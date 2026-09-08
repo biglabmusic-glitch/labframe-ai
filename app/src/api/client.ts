@@ -330,10 +330,10 @@ export const api = {
       body: JSON.stringify({ action: 'payments', limit }),
     });
   },
-  async adminUsers(search?: string): Promise<{ items: AdminUser[] }> {
-    return request<{ items: AdminUser[] }>('/admin', {
+  async adminUsers(search?: string, offset = 0): Promise<{ items: AdminUser[]; hasMore: boolean }> {
+    return request<{ items: AdminUser[]; hasMore: boolean }>('/admin', {
       method: 'POST',
-      body: JSON.stringify({ action: 'users', search }),
+      body: JSON.stringify({ action: 'users', search, offset }),
     });
   },
   async adminGrantCredits(userId: number, credits: number): Promise<{ ok: true; credits: number }> {

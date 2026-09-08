@@ -312,14 +312,29 @@ function UsersTab() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<AdminUser | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [more, setMore] = useState(false);
 
   const reload = async (q: string = search) => {
     setLoading(true);
     try {
       const r = await api.adminUsers(q.trim() || undefined);
       setItems(r.items);
+      setHasMore(r.hasMore);
     } catch { /* ignore */ }
     finally { setLoading(false); }
+  };
+
+  // Подгрузка следующей страницы. Пятьсот человек в один список не влезают,
+  // а найти конкретного нужно не только поиском: иногда просто листаешь.
+  const loadMore = async () => {
+    setMore(true);
+    try {
+      const r = await api.adminUsers(search.trim() || undefined, items.length);
+      setItems((prev) => [...prev, ...r.items]);
+      setHasMore(r.hasMore);
+    } catch { /* ignore */ }
+    finally { setMore(false); }
   };
 
   useEffect(() => { reload(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
@@ -392,6 +407,22 @@ function UsersTab() {
           </div>
         </button>
       ))}
+      {/* Пятьсот человек в один экран не влезают, а найти нужного хочется не
+          только поиском — иногда просто листаешь. При активном поиске кнопку
+          не показываем: там результат и так узкий. */}
+      {hasMore && !search.trim() ? (
+        <button
+          type="button"
+          onClick={loadMore}
+          disabled={more}
+          style={{
+            padding: '10px 14px', borderRadius: 12, border: '1px solid var(--c-line)',
+            background: 'rgba(239,243,255,0.04)', color: 'var(--c-on-dark)',
+            fontSize: 13, fontFamily: 'inherit', cursor: 'pointer',
+          }}
+        >{more ? 'Загружаем…' : 'Показать ещё'}</button>
+      ) : null}
+
 
       {selected && (
         <UserActions
