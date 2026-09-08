@@ -4,15 +4,17 @@ import { fetchBalance } from './polza.ts';
 
 const PROVIDER = 'polza';
 
-/** Записывает текущий остаток. Тихо ничего не делает, если провайдер не ответил. */
-export async function snapshotProviderBalance(): Promise<void> {
+/** Записывает текущий остаток. Возвращает причину, если записать не вышло. */
+export async function snapshotProviderBalance(): Promise<string | null> {
   const current = await fetchBalance();
-  if (!current) return;
-  await db.from('provider_balance').insert({
+  if (!current.ok) return current.error;
+
+  const { error } = await db.from('provider_balance').insert({
     provider: PROVIDER,
     balance: current.balance,
     currency: current.currency,
   });
+  return error ? `запись в базу: ${error.message}` : null;
 }
 
 export interface ProviderFinance {

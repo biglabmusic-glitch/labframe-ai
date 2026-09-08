@@ -161,7 +161,7 @@ async function getStats() {
   // Освежаем остаток именно сейчас: между работами он не меняется, но если
   // генераций давно не было, последний замер может быть недельной давности —
   // а смотрят сюда как раз чтобы не прозевать ноль.
-  await snapshotProviderBalance().catch(() => {});
+  const providerError = await snapshotProviderBalance().catch((e) => String(e));
   const [fin7, fin30] = await Promise.all([providerFinance(7), providerFinance(30)]);
 
   return {
@@ -203,6 +203,9 @@ async function getStats() {
     margin30d: fin30.points >= 2 ? revenue30d - fin30.spent : null,
     // По одному-двум замерам расход считать рано: показываем, на чём основано.
     financePoints: fin30.points,
+    // Почему остаток не удалось снять. Видно прямо на экране: искать это
+    // в логах функции ровно тогда, когда кончаются деньги, — плохая идея.
+    providerError,
   };
 }
 

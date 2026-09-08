@@ -177,6 +177,8 @@ export interface AdminStats {
   margin30d: number | null;
   /** Сколько замеров легло в расчёт расхода. */
   financePoints: number;
+  /** Почему не удалось снять остаток. null — всё в порядке. */
+  providerError: string | null;
 }
 
 export interface AdminPayment {

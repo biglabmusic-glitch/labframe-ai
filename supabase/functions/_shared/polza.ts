@@ -134,28 +134,38 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
 /**
  * Остаток на счёте polza.ai.
  *
+ * Возвращает либо значение, либо причину отказа: причина уходит в админку и
+ * видна на экране. Молчаливый null заставлял бы лезть в логи функции ради
+ * ответа на вопрос «почему пусто», а смотрят сюда как раз тогда, когда деньги
+ * кончаются и разбираться некогда.
+ *
  * Формат ответа в документации не зафиксирован (она переехала), поэтому
- * разбираем несколько правдоподобных вариантов и громко логируем незнакомый —
- * лучше один раз увидеть форму в логах, чем молча показывать ноль там, где
- * человек ждёт предупреждения о кончающихся деньгах.
+ * разбираем несколько правдоподобных вариантов, а незнакомый показываем как есть.
  */
-export async function fetchBalance(): Promise<{ balance: number; currency: string } | null> {
+export type BalanceResult =
+  | { ok: true; balance: number; currency: string }
+  | { ok: false; error: string };
+
+export async function fetchBalance(): Promise<BalanceResult> {
   const base = (Deno.env.get('POLZA_BASE_URL') ?? 'https://api.polza.ai/api/v1').replace(/\/+$/, '');
   try {
     const res = await fetch(`${base}/balance`, {
       headers: { Authorization: `Bearer ${Deno.env.get('POLZA_API_KEY') ?? ''}` },
     });
+    const body = await res.text();
     if (!res.ok) {
-      console.error(`polza balance ${res.status}`);
-      return null;
+      return { ok: false, error: `HTTP ${res.status}: ${body.slice(0, 160)}` };
     }
-    const raw = await res.json();
+
+    let raw: unknown;
+    try { raw = JSON.parse(body); }
+    catch { return { ok: false, error: `не JSON: ${body.slice(0, 160)}` }; }
+
     const parsed = pickBalance(raw);
-    if (!parsed) console.error('polza balance: незнакомый формат ответа:', JSON.stringify(raw).slice(0, 300));
-    return parsed;
+    if (!parsed) return { ok: false, error: `незнакомый формат: ${body.slice(0, 200)}` };
+    return { ok: true, ...parsed };
   } catch (e) {
-    console.error('polza balance упал:', e instanceof Error ? e.message : e);
-    return null;
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

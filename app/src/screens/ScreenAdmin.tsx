@@ -92,6 +92,11 @@ function MoneyTab() {
         <Kpi label="ПОТРАЧЕНО 7Д" value={money(Math.round(stats.providerSpent7d))} />
         <Kpi label="ПОПОЛНЕНО 30Д" value={money(Math.round(stats.providerToppedUp30d))} />
       </div>
+      {stats.providerError ? (
+        <div style={{ fontSize: 11.5, color: '#F4B19A', lineHeight: 1.45, wordBreak: 'break-word' }}>
+          Остаток не снимается: {stats.providerError}
+        </div>
+      ) : null}
       <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', lineHeight: 1.45 }}>
         {stats.financePoints < 3
           ? 'Расход считается по истории остатка — замеров пока мало, цифры станут точными через несколько генераций.'
