@@ -75,6 +75,24 @@ Deno.serve(async (req) => {
   }
 });
 
+// Ставка налога на профессиональный доход при расчётах с физлицами.
+const NPD_RATE = 0.04;
+
+/**
+ * Комиссия из уведомления Продамуса. Числа приходят строками, поле называется
+ * по-разному в разных версиях — берём первое подходящее.
+ */
+function commissionOf(raw: unknown): number {
+  if (!raw || typeof raw !== 'object') return 0;
+  const obj = raw as Record<string, unknown>;
+  for (const key of ['commission_sum', 'commission', 'commissionSum']) {
+    const v = obj[key];
+    const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
+}
+
 // ─── stats ────────────────────────────────────────────────────────────────
 async function getStats() {
   // Параллельно для скорости.
@@ -130,7 +148,7 @@ async function getStats() {
     // Все платежи разом: их пока сотни, агрегировать в SQL смысла нет.
     // Понадобится — заменим на представление с суммами по периодам.
     db.from('payments')
-      .select('amount_rub, credits, created_at')
+      .select('amount_rub, credits, created_at, user_id, raw')
       .then((r) => r.data ?? []),
     db.from('jobs')
       .select('user_id')
@@ -157,6 +175,35 @@ async function getStats() {
   const revenueTotal = sumRub(allPayments);
   const payments30d = since(30);
   const revenue30d = sumRub(payments30d);
+
+  // ─── Себестоимость и настоящая маржа ────────────────────────────────────
+  //
+  // Считаем арифметикой, а не моделью: в деньгах нужна определённость, а
+  // пересказ тех же чисел своими словами её не добавляет.
+  //
+  // Комиссию Продамус кладёт в уведомление, оно целиком сохранено в payments.raw.
+  // Налог — НПД 4%, ставка задана явно: у самозанятого она зависит от того, кто
+  // платит, и угадывать её нельзя.
+  const commissionTotal = allPayments.reduce(
+    (acc, p) => acc + commissionOf(p.raw), 0,
+  );
+  const taxTotal = revenueTotal * NPD_RATE;
+
+  // Сколько работ довели до результата — по ним и делим расход, чтобы получить
+  // себестоимость одной генерации.
+  const [doneTotal, payerIds] = await Promise.all([
+    countWhere('jobs', () => db.from('jobs').select('id', { count: 'exact', head: true }).eq('status', 'done')),
+    db.from('payments').select('user_id').then((r) => [...new Set((r.data ?? []).map((x) => x.user_id))]),
+  ]);
+
+  // Работы тех, кто НИ РАЗУ не платил. Их расход — прямой убыток, ради этой
+  // цифры и урезался бесплатный старт.
+  const freeDone = payerIds.length > 0
+    ? await countWhere('jobs', () => db.from('jobs')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'done')
+        .not('user_id', 'in', `(${payerIds.join(',')})`))
+    : doneTotal;
 
   // Освежаем остаток именно сейчас: между работами он не меняется, но если
   // генераций давно не было, последний замер может быть недельной давности —
@@ -206,6 +253,25 @@ async function getStats() {
     // Маржа за всё время. Считается сразу: и выручка, и накопленный расход
     // известны без всякой истории замеров.
     marginTotal: fin30.spentTotal !== null ? revenueTotal - fin30.spentTotal : null,
+
+    // Комиссия Продамуса и налог — реальные вычеты, без них «маржа» завышена.
+    commissionTotal: Math.round(commissionTotal),
+    taxTotal: Math.round(taxTotal),
+    // Чистыми: выручка минус модели, комиссия и налог. Хостинг пока бесплатный,
+    // появится платный — добавим сюда же.
+    netTotal: fin30.spentTotal !== null
+      ? Math.round(revenueTotal - fin30.spentTotal - commissionTotal - taxTotal)
+      : null,
+
+    // Себестоимость одной генерации и доля, сожжённая теми, кто не платил.
+    doneTotal,
+    freeDone,
+    costPerGeneration: fin30.spentTotal !== null && doneTotal > 0
+      ? Math.round((fin30.spentTotal / doneTotal) * 100) / 100
+      : null,
+    freeSpend: fin30.spentTotal !== null && doneTotal > 0
+      ? Math.round((fin30.spentTotal / doneTotal) * freeDone)
+      : null,
     // По одному-двум замерам расход считать рано: показываем, на чём основано.
     financePoints: fin30.points,
     // Почему остаток не удалось снять. Видно прямо на экране: искать это

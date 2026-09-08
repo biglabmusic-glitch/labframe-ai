@@ -180,6 +180,20 @@ export interface AdminStats {
   margin30d: number | null;
   /** То же за всё время. Доступна сразу. */
   marginTotal: number | null;
+  /** Комиссия Продамуса за всё время — из уведомлений. */
+  commissionTotal: number;
+  /** Налог НПД 4% с выручки. */
+  taxTotal: number;
+  /** Чистыми: выручка минус модели, комиссия и налог. */
+  netTotal: number | null;
+  /** Сколько работ доведено до результата. */
+  doneTotal: number;
+  /** Из них — работы тех, кто ни разу не платил. */
+  freeDone: number;
+  /** Средняя себестоимость одной генерации. */
+  costPerGeneration: number | null;
+  /** Во сколько обошлись работы неплатящих. */
+  freeSpend: number | null;
   /** Сколько замеров легло в расчёт расхода. */
   financePoints: number;
   /** Почему не удалось снять остаток. null — всё в порядке. */

@@ -97,6 +97,32 @@ function MoneyTab() {
         <Kpi label="ПОТРАЧЕНО 7Д" value={period(stats.providerSpent7d)} />
         <Kpi label="ПОПОЛНЕНО 30Д" value={period(stats.providerToppedUp30d)} />
       </div>
+      <SectionTitle>Настоящая экономика</SectionTitle>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Kpi
+          label="ЧИСТЫМИ"
+          value={stats.netTotal === null ? '—' : money(stats.netTotal)}
+          sub="минус модели, комиссия, налог"
+        />
+        <Kpi
+          label="СЕБЕСТОИМОСТЬ ГЕНЕРАЦИИ"
+          value={stats.costPerGeneration === null ? '—' : `${stats.costPerGeneration} ₽`}
+          sub={`${stats.doneTotal} работ всего`}
+        />
+        <Kpi label="КОМИССИЯ ПРОДАМУСА" value={money(stats.commissionTotal)} />
+        <Kpi label="НАЛОГ НПД 4%" value={money(stats.taxTotal)} />
+        <Kpi
+          label="СЪЕЛИ БЕСПЛАТНЫЕ"
+          value={stats.freeSpend === null ? '—' : money(stats.freeSpend)}
+          sub={`${stats.freeDone} работ у неплатящих`}
+        />
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', lineHeight: 1.45 }}>
+        Себестоимость — расход на модели, делённый на число готовых работ. «Съели
+        бесплатные» посчитано по этой средней: точной цены каждой работы провайдер
+        не отдаёт. Хостинг пока бесплатный и в расчёт не входит.
+      </div>
+
       {stats.providerError ? (
         <div style={{ fontSize: 11.5, color: '#F4B19A', lineHeight: 1.45, wordBreak: 'break-word' }}>
           Остаток не снимается: {stats.providerError}
