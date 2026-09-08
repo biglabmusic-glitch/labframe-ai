@@ -8,6 +8,7 @@ import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { sendMessage } from '../_shared/telegram.ts';
 import { grantReferralReward } from '../_shared/referral.ts';
+import { providerFinance, snapshotProviderBalance } from '../_shared/balance.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 
 interface AdminBody {
@@ -155,6 +156,13 @@ async function getStats() {
 
   const revenueTotal = sumRub(allPayments);
   const payments30d = since(30);
+  const revenue30d = sumRub(payments30d);
+
+  // Освежаем остаток именно сейчас: между работами он не меняется, но если
+  // генераций давно не было, последний замер может быть недельной давности —
+  // а смотрят сюда как раз чтобы не прозевать ноль.
+  await snapshotProviderBalance().catch(() => {});
+  const [fin7, fin30] = await Promise.all([providerFinance(7), providerFinance(30)]);
 
   return {
     totalUsers,
@@ -171,13 +179,27 @@ async function getStats() {
 
     revenueTotal,
     revenue7d:  sumRub(since(7)),
-    revenue30d: sumRub(payments30d),
+    revenue30d,
     paymentsTotal: allPayments.length,
     payments30d: payments30d.length,
     // Средний чек — по всем платежам за всё время: на малых числах помесячный
     // прыгает так, что смотреть на него бесполезно.
     avgCheck: allPayments.length > 0 ? Math.round(revenueTotal / allPayments.length) : 0,
     creditsSold: allPayments.reduce((acc, p) => acc + Number(p.credits ?? 0), 0),
+
+    // Экономика по провайдеру моделей. Расход и пополнения выведены из истории
+    // замеров остатка: провайдер отдаёт только «сколько сейчас».
+    providerBalance:  fin30.balance,
+    providerCurrency: fin30.currency,
+    providerSpent7d:  fin7.spent,
+    providerSpent30d: fin30.spent,
+    providerToppedUp30d: fin30.toppedUp,
+    // Маржа за 30 дней. Расход берём только по моделям — хостинг, комиссия
+    // Продамуса и налог сюда не входят, так что это верхняя граница, а не
+    // чистая прибыль.
+    margin30d: revenue30d - fin30.spent,
+    // По одному-двум замерам расход считать рано: показываем, на чём основано.
+    financePoints: fin30.points,
   };
 }
 

@@ -9,6 +9,7 @@ import { generateText } from '../_shared/polza.ts';
 import { fetchBytes, publicUrl, signUrl, uploadBytes, uploadFromUrl } from '../_shared/storage.ts';
 import { sendMessage, sendPhoto } from '../_shared/telegram.ts';
 import { applyLogo, type Placement } from '../_shared/branding.ts';
+import { snapshotProviderBalance } from '../_shared/balance.ts';
 import { explainJobFailure } from '../_shared/job-error.ts';
 import { buildPersonalizedPrompt } from '../_shared/agent.ts';
 
@@ -174,7 +175,17 @@ Deno.serve(async (req) => {
       agent_notes: agentResult?.notes ?? null,
     }).eq('id', job.id);
 
-    // 6. Пуш в чат
+    // 6. Замер остатка у провайдера моделей.
+    //
+    // Делаем после работы, а не по расписанию: работа — это единственный момент,
+    // когда деньги действительно тратятся, и замеры вокруг неё дают точную
+    // картину расхода. Разности соседних замеров превращаются в «сколько ушло»
+    // и «сколько внесено» на экране админки.
+    //
+    // Полностью необязательная операция: не вышло — молчим, работа не при чём.
+    snapshotProviderBalance().catch(() => {});
+
+    // 7. Пуш в чат
     try {
       const captionFull = [
         text.main,

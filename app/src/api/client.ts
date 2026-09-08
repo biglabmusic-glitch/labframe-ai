@@ -167,6 +167,16 @@ export interface AdminStats {
   payments30d: number;
   avgCheck: number;
   creditsSold: number;
+  /** Остаток у провайдера моделей. null — замеров ещё нет. */
+  providerBalance: number | null;
+  providerCurrency: string;
+  providerSpent7d: number;
+  providerSpent30d: number;
+  providerToppedUp30d: number;
+  /** Выручка минус расход на модели. Без хостинга, комиссии и налога. */
+  margin30d: number;
+  /** Сколько замеров легло в расчёт расхода. */
+  financePoints: number;
 }
 
 export interface AdminPayment {

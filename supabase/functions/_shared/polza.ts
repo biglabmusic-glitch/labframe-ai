@@ -130,3 +130,57 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
     durationMs: Date.now() - t0,
   };
 }
+
+/**
+ * Остаток на счёте polza.ai.
+ *
+ * Формат ответа в документации не зафиксирован (она переехала), поэтому
+ * разбираем несколько правдоподобных вариантов и громко логируем незнакомый —
+ * лучше один раз увидеть форму в логах, чем молча показывать ноль там, где
+ * человек ждёт предупреждения о кончающихся деньгах.
+ */
+export async function fetchBalance(): Promise<{ balance: number; currency: string } | null> {
+  const base = (Deno.env.get('POLZA_BASE_URL') ?? 'https://api.polza.ai/api/v1').replace(/\/+$/, '');
+  try {
+    const res = await fetch(`${base}/balance`, {
+      headers: { Authorization: `Bearer ${Deno.env.get('POLZA_API_KEY') ?? ''}` },
+    });
+    if (!res.ok) {
+      console.error(`polza balance ${res.status}`);
+      return null;
+    }
+    const raw = await res.json();
+    const parsed = pickBalance(raw);
+    if (!parsed) console.error('polza balance: незнакомый формат ответа:', JSON.stringify(raw).slice(0, 300));
+    return parsed;
+  } catch (e) {
+    console.error('polza balance упал:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+function pickBalance(raw: unknown): { balance: number; currency: string } | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const obj = raw as Record<string, unknown>;
+  const nested = (obj.data ?? obj.result ?? obj) as Record<string, unknown>;
+
+  for (const key of ['balance', 'credits', 'amount', 'value']) {
+    const v = nested[key];
+    if (typeof v === 'number') {
+      const cur = nested.currency ?? obj.currency;
+      return { balance: v, currency: typeof cur === 'string' ? cur : 'RUB' };
+    }
+    // Встречается и вложенный объект вида { balance: { amount, currency } }.
+    if (typeof v === 'object' && v !== null) {
+      const inner = v as Record<string, unknown>;
+      const amount = inner.amount ?? inner.value;
+      if (typeof amount === 'number') {
+        return {
+          balance: amount,
+          currency: typeof inner.currency === 'string' ? inner.currency : 'RUB',
+        };
+      }
+    }
+  }
+  return null;
+}

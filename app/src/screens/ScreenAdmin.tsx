@@ -76,6 +76,24 @@ function MoneyTab() {
         <Kpi label="ПРОДАНО ГЕНЕРАЦИЙ" value={stats.creditsSold} />
       </div>
 
+      <SectionTitle>Расходы на модели</SectionTitle>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <Kpi
+          label="ОСТАТОК POLZA"
+          value={stats.providerBalance === null ? '—' : money(Math.round(stats.providerBalance))}
+          sub={stats.providerBalance === null ? 'нет замеров' : lowBalanceHint(stats)}
+        />
+        <Kpi label="МАРЖА 30Д" value={money(Math.round(stats.margin30d))} sub="выручка минус модели" />
+        <Kpi label="ПОТРАЧЕНО 30Д" value={money(Math.round(stats.providerSpent30d))} />
+        <Kpi label="ПОТРАЧЕНО 7Д" value={money(Math.round(stats.providerSpent7d))} />
+        <Kpi label="ПОПОЛНЕНО 30Д" value={money(Math.round(stats.providerToppedUp30d))} />
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', lineHeight: 1.45 }}>
+        {stats.financePoints < 3
+          ? 'Расход считается по истории остатка — замеров пока мало, цифры станут точными через несколько генераций.'
+          : 'Маржа считается только по расходу на модели. Хостинг, комиссия Продамуса и налог сюда не входят.'}
+      </div>
+
       <SectionTitle>История покупок</SectionTitle>
       <Card kind="dark" pad={12} radius={16}>
         {items.length === 0 ? (
@@ -560,6 +578,17 @@ function BarChart({ data }: { data: AdminStats['byDay'] }) {
 }
 
 /** Рубли без копеек и с разделителями: 1 500 ₽. */
+/** Предупреждение, если денег у провайдера осталось меньше недельного расхода. */
+function lowBalanceHint(stats: AdminStats): string {
+  const weekly = stats.providerSpent7d;
+  const left = stats.providerBalance ?? 0;
+  if (weekly <= 0) return 'хватает';
+  const weeks = left / weekly;
+  if (weeks < 1) return 'меньше недели — пополните';
+  if (weeks < 3) return `хватит примерно на ${Math.floor(weeks)} нед.`;
+  return 'запас есть';
+}
+
 function money(n: number): string {
   return `${Math.round(n).toLocaleString('ru-RU')} ₽`;
 }
