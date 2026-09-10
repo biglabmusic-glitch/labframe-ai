@@ -1,5 +1,8 @@
 /* LabFrame AI — design tokens (перенесено из design/tokens.css) */
-@import url('https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Шрифты интерфейса Onest и JetBrains Mono — с собственного хостинга:
+   @font-face лежат в public/fonts/fonts.css и подключаются в index.html.
+   Раньше здесь был @import с fonts.googleapis.com, и при каждом открытии
+   приложения IP-адрес пользователя уходил в Google. */
 
 :root {
   /* Palette */

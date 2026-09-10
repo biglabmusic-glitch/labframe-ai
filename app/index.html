@@ -11,15 +11,10 @@
          этот домен часто идёт отдельным маршрутом, приложение не отрисовывалось
          вовсе, хотя сам Telegram работал. -->
 
-    <!-- Брендовые шрифты подписи: см. app/src/lib/fonts.ts. Один запрос за все семьи. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Шрифты нужны подписи на готовой картинке, а не первому экрану, поэтому
-         отрисовку ими не блокируем: media="print" грузит стили в фоне, onload
-         включает. Недоступен Google — подпись возьмёт системный шрифт, а не
-         оставит человека с пустым экраном. -->
-    <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@400;600&family=Cormorant+Garamond:wght@300;500&family=Cinzel:wght@400;600&family=Italiana&family=Bodoni+Moda:wght@400;600&family=Montserrat:wght@400;600&family=Tenor+Sans&display=swap" />
-    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@400;600&family=Cormorant+Garamond:wght@300;500&family=Cinzel:wght@400;600&family=Italiana&family=Bodoni+Moda:wght@400;600&family=Montserrat:wght@400;600&family=Tenor+Sans&display=swap" /></noscript>
+    <!-- Шрифты подписи — с собственного хостинга (public/fonts). Раньше грузились
+         с Google: при каждом открытии IP пользователя уходил в Google, за рубеж,
+         и это была лишняя третья сторона в политике обработки данных. -->
+    <link rel="stylesheet" href="/fonts/fonts.css" />
   </head>
   <body>
     <div id="root"></div>

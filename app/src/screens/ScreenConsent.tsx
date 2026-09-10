@@ -5,31 +5,40 @@ import { Card } from '../components/primitives/Card';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
 import { useApp } from '../state/AppContext';
-import { PRIVACY_SECTIONS } from '../lib/privacy';
+import { CROSSBORDER_CONSENT_CHECKBOX, PD_CONSENT_CHECKBOX } from '../lib/consent';
 
 /**
  * Экран согласия — первое, что видит человек, пока согласие не дано.
  *
- * Показывается и старым пользователям тоже: согласие нужно от всех, а не только
- * от новых. Пока оно не дано, дальше не пускаем — обработка данных без согласия
- * и есть то, чего мы избегаем.
+ * Две ОТДЕЛЬНЫЕ галочки, и это не оформление, а требование закона: с 1 сентября
+ * 2025 года согласие на обработку персональных данных оформляется отдельно от
+ * иных документов и подтверждается отдельным действием. Раньше здесь была одна
+ * галочка «прочитал политику и согласен» — именно такая склейка больше не годится.
+ * Трансграничная передача — отдельное основание, поэтому у неё своя галочка.
  *
- * Галочка не проставлена заранее сознательно: предзаполненное согласие
- * согласием не считается, человек должен нажать сам.
+ * С политикой человек знакомится по ссылке, но галочки «прочитал политику» нет:
+ * ознакомление с политикой — не согласие, и смешивать их нельзя.
+ *
+ * Показывается и старым пользователям: согласие нужно от всех. Галочки не
+ * проставлены заранее — предзаполненное согласие согласием не считается.
+ * Обе обязательны: без обработки и передачи данных сервис работать не может.
  */
 export function ScreenConsent() {
   const { reset, push } = useRouter();
   const { giveConsent } = useApp();
-  const [checked, setChecked] = useState(false);
+  const [pd, setPd] = useState(false);
+  const [crossBorder, setCrossBorder] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
+  const ready = pd && crossBorder;
+
   useMainButton({
     text: busy ? 'Сохраняем…' : 'Продолжить',
-    enabled: checked && !busy,
+    enabled: ready && !busy,
     progress: busy,
     onClick: () => {
-      if (!checked || busy) return;
+      if (!ready || busy) return;
       setBusy(true);
       setErr('');
       giveConsent()
@@ -43,18 +52,25 @@ export function ScreenConsent() {
     <Screen>
       <ScreenIntro
         title="Пара слов о данных"
-        sub="Прежде чем начать — коротко о том, что сервис о вас знает."
+        sub="Сервис обрабатывает ваши данные и фотографии работ. Нужны два согласия — каждое отдельно."
       />
 
       <div style={{ padding: '0 16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {PRIVACY_SECTIONS.slice(0, 3).map((s) => (
-          <Card key={s.title} kind="dark" pad={14} radius={16}>
-            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>{s.title}</div>
-            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--c-on-dark-2)' }}>
-              {s.body[0]}
-            </p>
-          </Card>
-        ))}
+        <ConsentCheck
+          checked={pd}
+          onToggle={() => setPd((v) => !v)}
+          text={PD_CONSENT_CHECKBOX}
+          linkText="Читать согласие полностью"
+          onLink={() => push('consentdoc')}
+        />
+
+        <ConsentCheck
+          checked={crossBorder}
+          onToggle={() => setCrossBorder((v) => !v)}
+          text={CROSSBORDER_CONSENT_CHECKBOX}
+          linkText="Куда и зачем передаются данные"
+          onLink={() => push('consentdoc')}
+        />
 
         <div
           onClick={() => push('privacy')}
@@ -63,39 +79,11 @@ export function ScreenConsent() {
             color: 'var(--c-accent)',
             textDecoration: 'underline',
             cursor: 'pointer',
-            padding: '2px 2px 6px',
+            padding: '4px 2px',
           }}
         >
-          Читать полностью
+          Политика обработки персональных данных
         </div>
-
-        <Card kind="dark" pad={14} radius={16} onClick={() => setChecked((v) => !v)}>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <div
-              style={{
-                width: 22,
-                height: 22,
-                borderRadius: 6,
-                flexShrink: 0,
-                border: '2px solid var(--c-accent)',
-                background: checked ? 'var(--c-accent)' : 'transparent',
-                color: '#0B1220',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 14,
-                fontWeight: 800,
-                lineHeight: 1,
-              }}
-            >
-              {checked ? '✓' : ''}
-            </div>
-            <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-              Я прочитал политику обработки персональных данных и согласен на
-              обработку моих данных на описанных в ней условиях.
-            </div>
-          </div>
-        </Card>
 
         {err ? (
           <div style={{ fontSize: 12.5, color: '#F4B19A' }}>
@@ -104,5 +92,62 @@ export function ScreenConsent() {
         ) : null}
       </div>
     </Screen>
+  );
+}
+
+function ConsentCheck({
+  checked,
+  onToggle,
+  text,
+  linkText,
+  onLink,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  text: string;
+  linkText: string;
+  onLink: () => void;
+}) {
+  return (
+    <Card kind="dark" pad={14} radius={16}>
+      <div
+        onClick={onToggle}
+        style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}
+      >
+        <div
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            flexShrink: 0,
+            border: '2px solid var(--c-accent)',
+            background: checked ? 'var(--c-accent)' : 'transparent',
+            color: '#0B1220',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 14,
+            fontWeight: 800,
+            lineHeight: 1,
+          }}
+        >
+          {checked ? '✓' : ''}
+        </div>
+        <div style={{ fontSize: 13, lineHeight: 1.5 }}>{text}</div>
+      </div>
+      <div
+        onClick={onLink}
+        style={{
+          marginTop: 8,
+          marginLeft: 32,
+          fontSize: 12.5,
+          color: 'var(--c-accent)',
+          textDecoration: 'underline',
+          cursor: 'pointer',
+        }}
+      >
+        {linkText}
+      </div>
+    </Card>
   );
 }

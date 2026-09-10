@@ -25,6 +25,7 @@ import { ScreenInvite } from './screens/ScreenInvite';
 import { ScreenPhotoHelp } from './screens/ScreenPhotoHelp';
 import { ScreenConsent } from './screens/ScreenConsent';
 import { ScreenPrivacy } from './screens/ScreenPrivacy';
+import { ScreenConsentDoc } from './screens/ScreenConsentDoc';
 
 const REGISTRY: Record<RouteId, () => JSX.Element> = {
   welcome:         ScreenWelcome,
@@ -48,6 +49,7 @@ const REGISTRY: Record<RouteId, () => JSX.Element> = {
   help:            ScreenPhotoHelp,
   consent:         ScreenConsent,
   privacy:         ScreenPrivacy,
+  consentdoc:      ScreenConsentDoc,
 };
 
 function Root() {

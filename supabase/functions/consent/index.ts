@@ -14,7 +14,9 @@ interface Body {
   version?: number;
 }
 
-export const CURRENT_CONSENT_VERSION = 1;
+// v2 — согласие на обработку оформлено отдельным документом (156-ФЗ) и добавлено
+// согласие на трансграничную передачу. Должно совпадать с PRIVACY_VERSION на фронте.
+export const CURRENT_CONSENT_VERSION = 2;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();

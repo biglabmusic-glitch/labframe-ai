@@ -11,6 +11,7 @@ import { WebApp } from '../telegram/webapp';
 export type RouteId =
   | 'consent'
   | 'privacy'
+  | 'consentdoc'
   | 'welcome'
   | 'onboarding'
   | 'home'
