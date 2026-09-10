@@ -27,14 +27,27 @@ const JOB_POLL_TIMEOUT_MS = 6 * 60 * 1000;
  * Ретраим ТОЛЬКО сетевые ошибки (fetch reject), НЕ HTTP-ответы (4xx/5xx возвращаем как есть —
  * 401/429/402 повторять смысла нет).
  */
+// Сколько ждём ответа сервера на одну попытку.
+//
+// Предела не было, и через плохую сеть — например VPN, который теряет пакеты,
+// не разрывая соединения, — запрос не падал, а висел минутами. Повтор ниже при
+// этом не срабатывал: он ждёт ошибки, а её не случалось.
+const REQUEST_TIMEOUT_MS = 12_000;
+
 async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // Контроллер с таймером, а не AbortSignal.timeout: последнего нет в части
+    // встроенных браузеров Telegram на старых iOS, а этот способ работает везде.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
     try {
-      return await fetch(url, init);
+      return await fetch(url, { ...init, signal: init.signal ?? ctrl.signal });
     } catch (e) {
       lastErr = e;
       if (attempt < retries) await sleep(600 * (attempt + 1)); // 0.6s, 1.2s
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error('network');

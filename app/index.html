@@ -5,15 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0F1221" />
     <title>LabFrame AI</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Скрипт Telegram отсюда НЕ подключаем: он вшит в @twa-dev/sdk и
+         исполняется при импорте пакета. Внешний тег был синхронным и держал
+         разбор всей страницы, пока не ответит telegram.org, — через VPN, где
+         этот домен часто идёт отдельным маршрутом, приложение не отрисовывалось
+         вовсе, хотя сам Telegram работал. -->
 
     <!-- Брендовые шрифты подписи: см. app/src/lib/fonts.ts. Один запрос за все семьи. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@400;600&family=Cormorant+Garamond:wght@300;500&family=Cinzel:wght@400;600&family=Italiana&family=Bodoni+Moda:wght@400;600&family=Montserrat:wght@400;600&family=Tenor+Sans&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Шрифты нужны подписи на готовой картинке, а не первому экрану, поэтому
+         отрисовку ими не блокируем: media="print" грузит стили в фоне, onload
+         включает. Недоступен Google — подпись возьмёт системный шрифт, а не
+         оставит человека с пустым экраном. -->
+    <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@400;600&family=Cormorant+Garamond:wght@300;500&family=Cinzel:wght@400;600&family=Italiana&family=Bodoni+Moda:wght@400;600&family=Montserrat:wght@400;600&family=Tenor+Sans&display=swap" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@400;600&family=Cormorant+Garamond:wght@300;500&family=Cinzel:wght@400;600&family=Italiana&family=Bodoni+Moda:wght@400;600&family=Montserrat:wght@400;600&family=Tenor+Sans&display=swap" /></noscript>
   </head>
   <body>
     <div id="root"></div>

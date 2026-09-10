@@ -179,6 +179,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Без бэкенда (mock-режим) ждать нечего — сразу показываем то, что есть локально.
     if (!isBackendReady()) { setBalanceLoaded(true); return; }
     let cancelled = false;
+
+    // Страховка на случай молчащего сервера.
+    //
+    // Роутер не монтируется, пока не загружен баланс, и зависший запрос
+    // оставлял после сплэша пустой экран — со стороны это выглядело как
+    // «приложение не грузится». Через несколько секунд пускаем внутрь в любом
+    // случае. Согласие при этом остаётся неизвестным, поэтому экраном согласия
+    // никого не запираем, а ответ, если всё же придёт, обновит баланс и ленту.
+    const failsafe = setTimeout(() => {
+      if (!cancelled) setBalanceLoaded(true);
+    }, 6000);
+
     (async () => {
       setSyncing(true);
       try {
@@ -234,6 +246,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // молча — на iPhone мог быть кратковременный сетевой сбой,
         // в следующий раз подтянется. Локальный кэш остаётся.
       } finally {
+        clearTimeout(failsafe);
         if (!cancelled) {
           setSyncing(false);
           // Ставим и при ошибке: иначе карточка баланса навсегда осталась бы
@@ -242,7 +255,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(failsafe); };
   }, []);
 
   // Сохраняем то, что должно жить между сессиями
