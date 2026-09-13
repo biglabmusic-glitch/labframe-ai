@@ -7,6 +7,7 @@
 
 import { env } from './env.ts';
 import type { StyleId, FormatId } from './replicate.ts';
+import { isAccountProblem, isTransient } from './provider-errors.ts';
 
 // Сколько ждём ответа от модели.
 //
@@ -233,18 +234,48 @@ export async function generateImage(
     currentTimeoutMs = IMAGE_TIMEOUT_MS;
     return await run(decision, input);
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    if (!backup || !isTransient(message)) throw e;
+    const primaryError = errorText(e);
+    if (!backup || !isTransient(primaryError)) throw e;
 
     // Провайдер не ответил, но настроен второй — пробуем его, а не роняем
     // работу. Обрыв связи и «пятисотка» почти всегда временные, и человеку
     // всё равно, чья модель нарисовала картинку.
-    console.error(`провайдер ${decision} не ответил (${message}); пробуем ${backup}`);
+    console.error(`провайдер ${decision} не ответил (${primaryError}); пробуем ${backup}`);
     currentTimeoutMs = RETRY_TIMEOUT_MS;
-    return await run(backup, input);
+    try {
+      return await run(backup, input);
+    } catch (e2) {
+      const backupError = errorText(e2);
+
+      // Запасной отказал из-за своего аккаунта — например, на Replicate
+      // кончились деньги. Раньше на этом работа падала, а в админку попадала
+      // только его ошибка «402 Insufficient credit»: настоящая причина, сбой
+      // основного провайдера, терялась, и казалось, что сломан Replicate.
+      //
+      // Такой отказ приходит мгновенно, так что время второй попытки не
+      // потрачено — отдаём его основному провайдеру: его сбой был временным.
+      if (isAccountProblem(backupError)) {
+        console.error(`запасной ${backup} недоступен (${backupError}); повторяем ${decision}`);
+        try {
+          return await run(decision, input);
+        } catch (e3) {
+          throw new Error(
+            `${errorText(e3)} (повтор; первая попытка: ${primaryError}; ` +
+            `запасной ${backup} недоступен: ${backupError})`,
+          );
+        }
+      }
+
+      // Причину пишем первой: в админке сообщение обрезается.
+      throw new Error(`${primaryError} → запасной ${backup}: ${backupError}`);
+    }
   } finally {
     currentTimeoutMs = IMAGE_TIMEOUT_MS;
   }
+}
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 function run(provider: ProviderName, input: ImageInput): Promise<ImageOutput> {
@@ -269,25 +300,4 @@ function pickBackup(primary: ProviderName): ProviderName | null {
 
   if (primary === 'polza') return hasReplicate ? 'flux-kontext' : null;
   return hasPolza ? 'polza' : null;
-}
-
-/**
- * Стоит ли пробовать второй раз.
- *
- * Повторяем только то, что похоже на временную беду связи или перегрузку.
- * Отказ по ключу или неверный запрос повторять незачем — второй раз ответят
- * то же самое, а время работы мы потратим.
- */
-function isTransient(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes('не ответила') ||     // наш таймаут
-    m.includes('timed out') ||
-    m.includes('timeout') ||
-    m.includes('connect') ||
-    m.includes('network') ||
-    m.includes('econnreset') ||
-    / 5\d\d[:\s]/.test(m) ||         // 500, 502, 503…
-    m.includes(' 429')               // перегрузка
-  );
 }

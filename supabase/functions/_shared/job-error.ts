@@ -24,6 +24,7 @@ export function explainJobFailure(raw: string): JobFailure {
   // Сеть до внешних сервисов: таймауты, отказы соединения, 5xx у подрядчика.
   if (
     s.includes('timed out') || s.includes('timeout') ||
+    s.includes('не ответила') ||   // наш таймаут в image-providers.ts
     s.includes('connect error') || s.includes('econnrefused') ||
     s.includes('network') || s.includes('fetch failed')
   ) {
