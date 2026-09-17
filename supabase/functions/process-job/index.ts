@@ -137,8 +137,13 @@ Deno.serve(async (req) => {
           logoBytes,
           (brand?.logo_placement ?? 'bottom-right') as Placement,
         );
-        await uploadBytes('results', resultPath, out);
-        branded = true;
+        if (out) {
+          await uploadBytes('results', resultPath, out);
+          branded = true;
+        } else {
+          // Вместо логотипа загружено фото или селфи — в угол поста его не ставим.
+          console.warn(`job ${job.id}: вместо логотипа загружено фото, накладывать не стали`);
+        }
       } catch (e) {
         // Работу из-за брендирования не валим: картинка без логотипа лучше, чем
         // её отсутствие. Но логируем громко — это заметная потеря качества.

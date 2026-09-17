@@ -15,6 +15,7 @@ import type { StyleId } from '../state/types';
 import { api, isBackendReady } from '../api/client';
 import { FONTS, DEFAULT_FONT_ID } from '../lib/fonts';
 import { fitLogoFile } from '../lib/image-crop';
+import { PHOTO_LOGO_WARNING, looksLikePhoto } from '../lib/logo-check';
 
 const STYLE_LABELS: { id: StyleId; label: string }[] = [
   { id: 'clean', label: 'Clean White' },
@@ -110,14 +111,12 @@ export function ScreenMyBrand() {
     const objUrl = URL.createObjectURL(f);
     const img = new Image();
     img.onload = async () => {
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      const ratio = w / Math.max(h, 1);
-      const warnings: string[] = [];
-      if (w < 512 || h < 512) warnings.push(`мал (${w}×${h}, нужно ≥512×512)`);
-      if (ratio < 0.8 || ratio > 1.25) warnings.push('не квадратный — AI может обрезать');
-      if (isJpeg) warnings.push('JPEG: фон не прозрачный — лучше PNG');
-      setLogoWarn(warnings.length ? `Логотип ${warnings.join('; ')}.` : null);
+      // Прежние предупреждения («не квадратный», «JPEG — лучше PNG») устарели:
+      // сервер сам вырезает однотонный фон и обрезает поля. Единственное, что
+      // он исправить не может, — когда вместо логотипа выбрали фото.
+      let photo = false;
+      try { photo = looksLikePhoto(img); } catch { /* проверка не главное — грузим как есть */ }
+      setLogoWarn(photo ? PHOTO_LOGO_WARNING : null);
       setLogoUrl(objUrl);
       setLogoFileName(f.name);
 
@@ -133,8 +132,6 @@ export function ScreenMyBrand() {
           setLogoUrl(cropUrl);
           const { logoPath: newPath } = await api.uploadLogo(squared);
           setLogoPath(newPath);
-          // Кроп прошёл успешно → ratio-предупреждение из onload-валидации больше не релевантно.
-          setLogoWarn(null);
         } catch (err) {
           setLogoError(`Не удалось загрузить логотип: ${err instanceof Error ? err.message : 'ошибка сети'}`);
         } finally {
