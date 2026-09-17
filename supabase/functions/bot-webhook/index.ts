@@ -17,7 +17,20 @@ import { db } from '../_shared/db.ts';
 import { PACKAGES, type CreditPackage } from '../_shared/packages.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { applyReferral, parseStartParam } from '../_shared/referral.ts';
-import { answerCallbackQuery, sendMessage, type Markup } from '../_shared/telegram.ts';
+import { CALLBACK_PACKAGES, CALLBACK_STOP } from '../_shared/funnel.ts';
+import { answerCallbackQuery, sendMessage, type InlineButton, type Markup } from '../_shared/telegram.ts';
+
+/** Кнопка под сообщением, открывающая мини-апп с авторизацией. */
+function openAppButton(text = 'Открыть LabFrame'): InlineButton {
+  return { text, web_app: { url: Deno.env.get('WEBAPP_URL') ?? 'https://labframe-ai.vercel.app/' } };
+}
+
+const WELCOME_BODY =
+  'LabFrame превращает фото зубной работы в готовый пост для соцсетей: ' +
+  'чистый фон, логотип лаборатории и подпись с хэштегами. На всё уходит минута.\n\n' +
+  'Первые генерации — бесплатно. Нажмите кнопку ниже и загрузите работу 👇';
+
+const WELCOME_TEXT = `Здравствуйте! ${WELCOME_BODY}`;
 
 // Старые сообщения с inline-кнопками остаются в чатах у тех, кто уже жал их
 // до перехода на постоянную клавиатуру. Обработчик колбэков держим ради них.
@@ -62,13 +75,9 @@ const PICK_TEXT =
 //
 // Приложение открывается синей кнопкой меню чата — она рядом с полем ввода,
 // видна всегда и запускается правильным способом. Дублировать её здесь незачем.
+// Под сообщениями — другое дело: inline-кнопка web_app авторизацию передаёт.
 
-/** Обычное состояние: одна кнопка оплаты. */
-function baseKeyboard(): Markup {
-  return { keyboard: [[PAY_BUTTON]] };
-}
-
-/** После нажатия «Оплатить» — плюс строка пакетов. */
+/** Клавиатура оплаты: кнопка «Оплатить» и строка пакетов. */
 function buyKeyboard(): Markup {
   return { keyboard: [[PAY_BUTTON], PACKAGES.map(packageLabel)] };
 }
@@ -82,8 +91,19 @@ interface TgFrom {
 }
 
 interface Update {
-  message?: { text?: string; chat?: { id: number }; from?: TgFrom };
+  message?: {
+    text?: string;
+    chat?: { id: number; type?: string };
+    from?: TgFrom;
+    photo?: unknown[];
+    document?: unknown;
+  };
   callback_query?: { id: string; data?: string; from?: TgFrom; message?: { chat?: { id: number } } };
+  /** Человек заблокировал бота (kicked) или разблокировал (member). */
+  my_chat_member?: {
+    chat?: { id: number; type?: string };
+    new_chat_member?: { status?: string };
+  };
 }
 
 Deno.serve(async (req) => {
@@ -112,6 +132,7 @@ Deno.serve(async (req) => {
   try {
     if (update.callback_query) await onCallback(update.callback_query);
     else if (update.message) await onMessage(update.message);
+    else if (update.my_chat_member) await onChatMember(update.my_chat_member);
   } catch (e) {
     // Логируем и всё равно подтверждаем: Telegram не должен долбить повторами.
     console.error('bot-webhook упал:', e instanceof Error ? e.message : e);
@@ -124,7 +145,25 @@ async function onMessage(msg: NonNullable<Update['message']>) {
   const text = (msg.text ?? '').trim();
   const from = msg.from;
   const chatId = msg.chat?.id;
-  if (!from || !text || !chatId) return;
+  if (!from || !chatId) return;
+
+  // Отвечаем только в личке: если бота добавят в группу, он не должен
+  // откликаться на каждое сообщение участников.
+  const privateChat = !msg.chat?.type || msg.chat.type === 'private';
+
+  // Прислали фото работы прямо в чат — частая ошибка новичка. Молчание здесь
+  // выглядит как поломка, поэтому показываем, куда его загружать.
+  if (!text) {
+    if (!privateChat || !(msg.photo || msg.document)) return;
+    if (await blocked(from, chatId)) return;
+    await sendMessage(
+      chatId,
+      'Фото работ загружаются в приложении — там же выбирается фон, формат и подпись. ' +
+      'Нажмите кнопку ниже 👇',
+      { inline: [[openAppButton('Загрузить работу')]] },
+    );
+    return;
+  }
 
   // Нажатие кнопки пакета — обычное текстовое сообщение с подписью кнопки.
   const pkg = packageByLabel(text);
@@ -143,7 +182,10 @@ async function onMessage(msg: NonNullable<Update['message']>) {
 
   // /kupit@labframe_bot тоже считается: в группах Telegram дописывает имя бота.
   const cmd = normalize(text).split(/[\s@]/)[0];
-  if (!MENU_COMMANDS.includes(cmd)) return;
+  if (!MENU_COMMANDS.includes(cmd)) {
+    if (privateChat) await replyToFreeText(from, chatId);
+    return;
+  }
 
   // Переход из мини-аппа с уже выбранным пакетом: t.me/<bot>?start=buy_p50.
   // Там кнопка покупки не открывает платёжную страницу сама — Telegram разрешает
@@ -164,19 +206,60 @@ async function onMessage(msg: NonNullable<Update['message']>) {
   if (cmd === '/start' && payload.startsWith('ref_')) {
     if (await blocked(from, chatId)) return;
     const res = await applyReferral(from.id, parseStartParam(payload));
-    await sendMessage(chatId, referralReply(res), baseKeyboard());
+    // По приглашению приходят новички — им нужен не только ответ про бонус,
+    // но и объяснение, что это за бот, и кнопка входа.
+    await sendMessage(chatId, `${referralReply(res)}\n\n${WELCOME_BODY}`, {
+      inline: [[openAppButton()]],
+    });
     return;
   }
 
   if (await blocked(from, chatId)) return;
 
-  // /start просто знакомит с кнопками. Команду покупки набирают те, кто уже
-  // решился, — им сразу раскрываем пакеты.
+  // /start — первое, что видит новичок. Раньше здесь было «можно докупить
+  // генерации»: человеку, который ещё ничего не пробовал, продавали пакеты.
+  // Теперь объясняем, что делает бот, и ведём одной кнопкой в приложение.
+  // Клавиатура оплаты появится, когда он сам пойдёт покупать.
+  if (cmd === '/start') {
+    await sendMessage(chatId, WELCOME_TEXT, { inline: [[openAppButton()]] });
+    return;
+  }
+
+  // Команду покупки набирают те, кто уже решился, — им сразу раскрываем пакеты.
+  await sendMessage(chatId, PICK_TEXT, buyKeyboard());
+}
+
+/**
+ * Ответ на произвольный текст. Сообщения боту никто не читает, и молчание
+ * выглядит как поломка — говорим об этом прямо и показываем, куда идти.
+ */
+async function replyToFreeText(from: TgFrom, chatId: number) {
+  if (await blocked(from, chatId)) return;
+  const chatUrl = Deno.env.get('CHAT_URL');
+  const buttons: InlineButton[] = [openAppButton()];
+  if (chatUrl) buttons.push({ text: 'Чат техников', url: chatUrl });
+
   await sendMessage(
     chatId,
-    cmd === '/start' ? 'Здесь можно докупить генерации — кнопки ниже.' : PICK_TEXT,
-    cmd === '/start' ? baseKeyboard() : buyKeyboard(),
+    'Я бот и сообщения не читаю 🙂\n\n' +
+    (chatUrl
+      ? 'Работы загружаются в приложении, а вопрос можно задать в чате техников — там ответят.'
+      : 'Работы загружаются в приложении — кнопка ниже.'),
+    { inline: [buttons] },
   );
+}
+
+/** Заблокировал бота — не пишем ему. Разблокировал — снова можно. */
+async function onChatMember(m: NonNullable<Update['my_chat_member']>) {
+  const chatId = m.chat?.id;
+  const status = m.new_chat_member?.status;
+  if (!chatId || m.chat?.type !== 'private') return;
+
+  if (status === 'kicked') {
+    await db.from('users').update({ bot_blocked_at: new Date().toISOString() }).eq('id', chatId);
+  } else if (status === 'member') {
+    await db.from('users').update({ bot_blocked_at: null }).eq('id', chatId);
+  }
 }
 
 async function onCallback(cq: NonNullable<Update['callback_query']>) {
@@ -184,8 +267,28 @@ async function onCallback(cq: NonNullable<Update['callback_query']>) {
   const chatId = cq.message?.chat?.id;
   const data = cq.data ?? '';
 
+  // «Не присылать советы» под сообщением воронки. Отвечаем всплывашкой,
+  // а не новым сообщением: человек как раз просил писать ему поменьше.
+  if (data === CALLBACK_STOP) {
+    if (from) {
+      await db.from('users').update({ funnel_opt_out_at: new Date().toISOString() }).eq('id', from.id);
+    }
+    await answerCallbackQuery(cq.id, 'Хорошо, больше не пришлю советы');
+    return;
+  }
+
   await answerCallbackQuery(cq.id);
-  if (!from || !chatId || !data.startsWith(CALLBACK_PREFIX)) return;
+  if (!from || !chatId) return;
+
+  // «Выбрать пакет» под сообщением воронки — показываем пакеты и заодно
+  // ставим клавиатуру оплаты, чтобы в следующий раз она была под рукой.
+  if (data === CALLBACK_PACKAGES) {
+    if (await blocked(from, chatId)) return;
+    await sendMessage(chatId, PICK_TEXT, buyKeyboard());
+    return;
+  }
+
+  if (!data.startsWith(CALLBACK_PREFIX)) return;
   if (await blocked(from, chatId)) return;
 
   await sendPaymentLink(from, chatId, data.slice(CALLBACK_PREFIX.length));
@@ -250,6 +353,8 @@ async function blocked(from: TgFrom, chatId: number): Promise<boolean> {
       last_name:     from.last_name     ?? null,
       language_code: from.language_code ?? 'ru',
       last_seen_at:  new Date().toISOString(),
+      // Написал сам — значит, снова доступен, даже если раньше блокировал.
+      bot_blocked_at: null,
     },
     { onConflict: 'id', ignoreDuplicates: false },
   );

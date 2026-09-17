@@ -230,6 +230,21 @@ export interface AdminStats {
   financePoints: number;
   /** Почему не удалось снять остаток. null — всё в порядке. */
   providerError: string | null;
+  /** Автоворонка бота. null — миграция 0023 ещё не накатана. */
+  funnel: {
+    steps: Array<{
+      step: string;
+      label: string;
+      /** Что считается «сработало»: открыл приложение, сделал работу, заплатил. */
+      goal: 'open' | 'job' | 'payment' | null;
+      sent: number;
+      failed: number;
+      /** null — у шага нет измеримой цели. */
+      converted: number | null;
+    }>;
+    blocked: number;
+    optedOut: number;
+  } | null;
 }
 
 export interface AdminPayment {

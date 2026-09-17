@@ -33,11 +33,26 @@ export async function sendPhoto(
   return res.json();
 }
 
-/** Кнопка inline-клавиатуры: либо callback_data, либо url. */
+/**
+ * Кнопка inline-клавиатуры: callback_data, url или web_app.
+ *
+ * web_app под сообщением открывает мини-апп правильно — с подписанными данными
+ * о пользователе. В отличие от кнопки постоянной клавиатуры (см. bot-webhook),
+ * авторизация через неё работает.
+ */
 export interface InlineButton {
   text: string;
   callback_data?: string;
   url?: string;
+  web_app?: { url: string };
+}
+
+/**
+ * Человек недоступен для бота: заблокировал его, удалил аккаунт или ни разу
+ * не начинал с ним диалог. Писать ему снова бесполезно, пока он сам не напишет.
+ */
+export function isUnreachable(message: string): boolean {
+  return / 403:/.test(message);
 }
 
 /**

@@ -6,6 +6,24 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
 import { useApp } from '../state/AppContext';
 import { CROSSBORDER_CONSENT_CHECKBOX, PD_CONSENT_CHECKBOX } from '../lib/consent';
+import { WebApp } from '../telegram/webapp';
+
+/**
+ * Просим разрешения писать в чат — стандартное окно Telegram.
+ *
+ * Кто открыл приложение из профиля бота, ни разу не нажав «Старт», тому бот
+ * писать не может: ни готовую картинку, ни сообщение о сбое, ни напоминание.
+ * Разрешение даётся один раз; если оно уже есть, окно не показываем.
+ */
+function askToMessage() {
+  try {
+    if (WebApp?.initDataUnsafe?.user?.allows_write_to_pm) return;
+    if (!WebApp?.isVersionAtLeast?.('6.9')) return;
+    WebApp.requestWriteAccess?.();
+  } catch {
+    // Старый клиент или не Telegram — без разрешения приложение работает так же.
+  }
+}
 
 /**
  * Экран согласия — первое, что видит человек, пока согласие не дано.
@@ -42,7 +60,10 @@ export function ScreenConsent() {
       setBusy(true);
       setErr('');
       giveConsent()
-        .then(() => reset('welcome'))
+        .then(() => {
+          askToMessage();
+          reset('welcome');
+        })
         .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
         .finally(() => setBusy(false));
     },

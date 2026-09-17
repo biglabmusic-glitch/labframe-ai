@@ -132,6 +132,8 @@ function MoneyTab() {
         «заплатил»: он показывает, готовы ли платить те, кто уже попробовал.
       </div>
 
+      {stats.funnel && <FunnelMessages funnel={stats.funnel} />}
+
       <SectionTitle>Настоящая экономика</SectionTitle>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <Kpi
@@ -625,6 +627,52 @@ function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: (
 }
 
 // ─── маленькие компоненты ─────────────────────────────────────────────────
+const GOAL_TEXT = { open: 'открыли', job: 'загрузили', payment: 'купили' } as const;
+
+/** Сообщения автоворонки: сколько ушло и сколько человек после них сделали шаг. */
+function FunnelMessages({ funnel }: { funnel: NonNullable<AdminStats['funnel']> }) {
+  const total = funnel.steps.reduce((s, x) => s + x.sent, 0);
+  return (
+    <>
+      <SectionTitle>Сообщения бота</SectionTitle>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <Kpi label="ОТПРАВЛЕНО" value={total} />
+        <Kpi label="ОТПИСАЛИСЬ" value={funnel.optedOut} />
+        <Kpi label="ЗАБЛОКИРОВАЛИ" value={funnel.blocked} />
+      </div>
+      <Card kind="dark" pad={12} radius={16}>
+        {funnel.steps.map((s, i) => (
+          <div
+            key={s.step}
+            style={{
+              display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0',
+              borderBottom: i < funnel.steps.length - 1 ? '1px solid var(--c-line)' : 'none',
+              fontSize: 12, opacity: s.sent === 0 ? 0.5 : 1,
+            }}
+          >
+            <span style={{ color: 'var(--c-on-dark-2)' }}>{s.label}</span>
+            <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+              <b>{s.sent}</b>
+              {s.goal && s.converted !== null && s.sent > 0 && (
+                <span style={{ color: 'var(--c-accent)' }}>
+                  {' · '}{GOAL_TEXT[s.goal]} {Math.round((s.converted / s.sent) * 100)}%
+                </span>
+              )}
+              {s.failed > 0 && <span style={{ color: '#F4B19A' }}> · не дошло {s.failed}</span>}
+            </span>
+          </div>
+        ))}
+      </Card>
+      <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', lineHeight: 1.45 }}>
+        Бот сам пишет новичкам, которые застряли на каком-то шаге. «Открыли»,
+        «загрузили» и «купили» — доля тех, кто сделал это в течение 3 дней после
+        сообщения (покупку ждём 7). Если после какого-то шага растёт число
+        заблокировавших — этот текст раздражает.
+      </div>
+    </>
+  );
+}
+
 function Kpi({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
     <Card kind="dark" pad={12} radius={16}>

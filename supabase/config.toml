@@ -22,6 +22,9 @@ verify_jwt = false
 [functions.create-job]
 verify_jwt = false             # авторизация через Telegram initData
 
+[functions.funnel]
+verify_jwt = false             # зовёт pg_cron, защищено x-internal-secret
+
 [functions.get-job]
 verify_jwt = false
 

@@ -10,6 +10,7 @@ import { sendMessage } from '../_shared/telegram.ts';
 import { grantReferralReward } from '../_shared/referral.ts';
 import { providerFinance, snapshotProviderBalance } from '../_shared/balance.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
+import { STEP_GOALS, STEP_LABELS, type StepId } from '../_shared/funnel.ts';
 
 interface AdminBody {
   action:
@@ -321,7 +322,101 @@ async function getStats() {
     // Почему остаток не удалось снять. Видно прямо на экране: искать это
     // в логах функции ровно тогда, когда кончаются деньги, — плохая идея.
     providerError,
+
+    funnel: await funnelStats(),
   };
+}
+
+// ─── автоворонка ──────────────────────────────────────────────────────────
+// Сколько сообщений ушло на каждом шаге и сколько человек после него сделали
+// то, ради чего оно писалось. Так видно, какой текст работает, а какой только
+// раздражает.
+
+// Сколько ждём действия после сообщения, чтобы засчитать его сообщению.
+const FUNNEL_WINDOW_MS: Record<'open' | 'job' | 'payment', number> = {
+  open:    3 * 86400_000,
+  job:     3 * 86400_000,
+  payment: 7 * 86400_000,
+};
+
+async function funnelStats() {
+  const messages = await allRows((from, to) =>
+    db.from('funnel_messages').select('id, user_id, step, status, sent_at').order('id').range(from, to));
+  // Таблицы ещё нет — миграция 0023 не накатана. Экран админки не роняем.
+  if (messages === null) return null;
+
+  const [blocked, optedOut] = await Promise.all([
+    countWhere('users', () => db.from('users').select('id', { count: 'exact', head: true }).not('bot_blocked_at', 'is', null)),
+    countWhere('users', () => db.from('users').select('id', { count: 'exact', head: true }).not('funnel_opt_out_at', 'is', null)),
+  ]);
+
+  // Всё, что нужно для «сработало»: когда открыл приложение, когда делал
+  // работы и когда платил — только по тем, кому писали.
+  const ids = [...new Set(messages.map((m) => m.user_id))];
+  const opened = new Map<number, number>();
+  const jobTimes = new Map<number, number[]>();
+  const payTimes = new Map<number, number[]>();
+  const push = (map: Map<number, number[]>, id: number, iso: string) => {
+    const list = map.get(id) ?? [];
+    list.push(Date.parse(iso));
+    map.set(id, list);
+  };
+
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const [users, jobs, payments] = await Promise.all([
+      allRows((from, to) => db.from('users').select('id, consent_at').in('id', chunk).order('id').range(from, to)),
+      allRows((from, to) => db.from('jobs').select('id, user_id, created_at').in('user_id', chunk).order('id').range(from, to)),
+      allRows((from, to) => db.from('payments').select('order_id, user_id, created_at').in('user_id', chunk).order('order_id').range(from, to)),
+    ]);
+    for (const u of users ?? []) if (u.consent_at) opened.set(Number(u.id), Date.parse(u.consent_at));
+    for (const j of jobs ?? []) push(jobTimes, Number(j.user_id), j.created_at);
+    for (const p of payments ?? []) push(payTimes, Number(p.user_id), p.created_at);
+  }
+
+  const steps = (Object.keys(STEP_LABELS) as StepId[]).map((step) => {
+    const rows = messages.filter((m) => m.step === step);
+    const delivered = rows.filter((m) => m.status === 'sent');
+    const goal = STEP_GOALS[step];
+
+    let converted: number | null = null;
+    if (goal) {
+      converted = delivered.filter((m) => {
+        const id = Number(m.user_id);
+        const from = Date.parse(m.sent_at);
+        const to = from + FUNNEL_WINDOW_MS[goal];
+        const inWindow = (t: number) => t > from && t <= to;
+        if (goal === 'open') return inWindow(opened.get(id) ?? 0);
+        const times = (goal === 'job' ? jobTimes : payTimes).get(id) ?? [];
+        return times.some(inWindow);
+      }).length;
+    }
+
+    return {
+      step,
+      label: STEP_LABELS[step],
+      goal,
+      sent: delivered.length,
+      failed: rows.length - delivered.length,
+      converted,
+    };
+  });
+
+  return { steps, blocked, optedOut };
+}
+
+/** Выборка целиком: PostgREST отдаёт не больше 1000 строк за раз. null — запрос не удался. */
+// deno-lint-ignore no-explicit-any
+async function allRows<T = any>(
+  query: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+): Promise<T[] | null> {
+  const all: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await query(from, from + 999);
+    if (error) return null;
+    all.push(...(data ?? []));
+    if (!data || data.length < 1000) return all;
+  }
 }
 
 // ─── payments ─────────────────────────────────────────────────────────────
