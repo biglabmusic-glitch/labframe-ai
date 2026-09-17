@@ -21,7 +21,8 @@ interface AdminBody {
     | 'set-admin'
     | 'mark-paid'
     | 'payment-link'
-    | 'payments';
+    | 'payments'
+    | 'profile-link';
   // зависит от action — валидируем внутри switch
   userId?: number;
   credits?: number;
@@ -72,6 +73,7 @@ Deno.serve(async (req) => {
     case 'mark-paid':     return handleMarkPaid(body);
     case 'payment-link':  return handlePaymentLink(body);
     case 'payments':      return listPayments(body.limit ?? 50);
+    case 'profile-link':  return handleProfileLink(body, tg.id);
     default:              return jsonResponse({ error: 'unknown_action' }, { status: 400 });
   }
 });
@@ -161,6 +163,19 @@ async function getStats() {
       .then((r) => bucketByDay(r.data ?? [])),
   ]);
 
+  // Имена к упавшим работам: по голому id человека не узнать, а без username
+  // на странице не зайти к нему в профиль.
+  const failedIds = [...new Set(recentFailures.map((f) => f.user_id))];
+  const { data: failedUsers } = failedIds.length
+    ? await db.from('users').select('id, username, first_name').in('id', failedIds)
+    : { data: [] as Array<{ id: number; username: string | null; first_name: string | null }> };
+  const failedById = new Map((failedUsers ?? []).map((u) => [u.id, u]));
+  const failuresWithNames = recentFailures.map((f) => ({
+    ...f,
+    username:   failedById.get(f.user_id)?.username ?? null,
+    first_name: failedById.get(f.user_id)?.first_name ?? null,
+  }));
+
   const liked    = feedbacks.filter((f) => f.feedback === 'liked').length;
   const disliked = feedbacks.filter((f) => f.feedback === 'disliked').length;
   const total    = liked + disliked;
@@ -241,7 +256,7 @@ async function getStats() {
     tokens7d,
     recentErrors,
     agentFallback7d,
-    recentFailures,
+    recentFailures: failuresWithNames,
     topUsers,
     byDay,
 
@@ -493,6 +508,50 @@ async function handleSendMessage(body: AdminBody) {
     return jsonResponse({ ok: true });
   } catch (e) {
     return jsonResponse({ error: e instanceof Error ? e.message : 'send_failed' }, { status: 500 });
+  }
+}
+
+// Кнопка «Посетить профиль» для человека без username.
+//
+// С username мини-апп открывает t.me/username сам. Без него остаётся только
+// ссылка по id — tg://user?id=… — а её Telegram открывает лишь из кнопки под
+// сообщением бота: мини-апп такую ссылку открыть не может. Поэтому бот
+// присылает админу эту кнопку в чат.
+async function handleProfileLink(body: AdminBody, callerId: number) {
+  if (!body.userId) return jsonResponse({ error: 'bad_input' }, { status: 400 });
+
+  const { data: user } = await db
+    .from('users').select('id, username, first_name, last_name').eq('id', body.userId).maybeSingle();
+  if (!user) return jsonResponse({ error: 'user_not_found' }, { status: 404 });
+
+  const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'без имени';
+  const title = `${name}${user.username ? ` @${user.username}` : ''} · id ${user.id}`;
+
+  try {
+    await sendMessage(callerId, `Профиль: ${title}`, {
+      inline: [[{ text: 'Открыть профиль', url: `tg://user?id=${user.id}` }]],
+    });
+    return jsonResponse({ ok: true, restricted: false });
+  } catch (e) {
+    // Telegram отказывается ставить такую кнопку, если человек запретил
+    // ссылаться на свой аккаунт в настройках приватности. Обойти это нельзя —
+    // говорим прямо, чтобы админ не искал ошибку у нас.
+    const message = e instanceof Error ? e.message : String(e);
+    if (!message.includes(' 400:')) {
+      return jsonResponse({ error: message }, { status: 500 });
+    }
+    console.error('кнопка профиля не прошла:', message);
+    try {
+      await sendMessage(
+        callerId,
+        `Профиль: ${title}\n\nОткрыть его по id Telegram не даёт: человек закрыл это ` +
+        'в настройках приватности, а username у него нет. Написать ему можно из ' +
+        'админки — кнопкой «Отправить сообщение».',
+      );
+    } catch (e2) {
+      return jsonResponse({ error: e2 instanceof Error ? e2.message : 'send_failed' }, { status: 500 });
+    }
+    return jsonResponse({ ok: true, restricted: true });
   }
 }
 

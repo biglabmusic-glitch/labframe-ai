@@ -7,6 +7,7 @@ import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
 import { api, type AdminPayment, type AdminStats, type AdminUser } from '../api/client';
+import { WebApp } from '../telegram/webapp';
 
 type Tab = 'dashboard' | 'money' | 'users';
 
@@ -272,7 +273,10 @@ function DashboardTab() {
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                <span style={{ color: '#F4B19A', fontWeight: 600 }}>id {f.user_id}</span>
+                <span style={{ color: '#F4B19A', fontWeight: 600 }}>
+                  {f.first_name ?? `id ${f.user_id}`}
+                  {f.username ? ` @${f.username}` : ''}
+                </span>
                 <span style={{ color: 'var(--c-on-dark-3)', fontSize: 10 }}>
                   {new Date(f.created_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}
                 </span>
@@ -280,6 +284,7 @@ function DashboardTab() {
               <div style={{ color: 'var(--c-on-dark-2)', marginTop: 2, wordBreak: 'break-word' }}>
                 {(f.error_message ?? 'без причины').slice(0, 200)}
               </div>
+              <ProfileButton userId={f.user_id} username={f.username} compact />
             </div>
           ))
         )}
@@ -545,6 +550,10 @@ function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: (
           </div>
         )}
 
+        <ProfileButton userId={user.id} username={user.username} />
+
+        <Spacer />
+
         <SectionTitle>Начислить генерации</SectionTitle>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
           <input
@@ -647,6 +656,62 @@ function Hint({ text, error }: { text: string; error?: boolean }) {
 
 function Spacer() {
   return <div style={{ height: 1, background: 'var(--c-line)', margin: '14px 0' }} />;
+}
+
+/**
+ * «Посетить профиль» человека в Telegram.
+ *
+ * С username открываем t.me/username прямо отсюда. Без него мини-апп профиль
+ * открыть не может — ссылку по id Telegram принимает только из кнопки под
+ * сообщением бота, — поэтому просим бота прислать такую кнопку в чат.
+ */
+function ProfileButton({ userId, username, compact }: { userId: number; username: string | null; compact?: boolean }) {
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const open = async () => {
+    if (username) {
+      WebApp?.openTelegramLink?.(`https://t.me/${username}`);
+      return;
+    }
+    setBusy(true); setNote(null);
+    try {
+      const { restricted } = await api.adminProfileLink(userId);
+      setNote(restricted
+        ? 'Профиль закрыт настройками приватности — подробности в чате с ботом'
+        : 'Кнопка профиля пришла в чат с ботом');
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : 'Не получилось');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = busy ? '⏳ отправляем…' : 'Посетить профиль';
+
+  if (!compact) {
+    return (
+      <>
+        <ActionBtn label={label} onClick={open} disabled={busy} />
+        {note && <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', marginTop: 6 }}>{note}</div>}
+      </>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+      <button
+        type="button" onClick={open} disabled={busy}
+        style={{
+          padding: '4px 10px', borderRadius: 8,
+          background: 'transparent', border: '1px solid var(--c-line)',
+          color: 'var(--c-accent)', fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+          cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1,
+        }}
+      >{label}</button>
+      {note && <span style={{ fontSize: 10.5, color: 'var(--c-on-dark-3)' }}>{note}</span>}
+    </div>
+  );
 }
 
 function ActionBtn({ label, onClick, disabled, danger }: { label: string; onClick: () => void; disabled?: boolean; danger?: boolean }) {

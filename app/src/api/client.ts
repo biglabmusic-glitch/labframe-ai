@@ -169,7 +169,14 @@ export interface AdminStats {
    */
   agentFallback7d: number;
   /** Работы, упавшие за неделю: с причиной и владельцем, чтобы написать человеку. */
-  recentFailures: Array<{ id: string; user_id: number; error_message: string | null; created_at: string }>;
+  recentFailures: Array<{
+    id: string;
+    user_id: number;
+    username: string | null;
+    first_name: string | null;
+    error_message: string | null;
+    created_at: string;
+  }>;
   topUsers: Array<{ userId: number; jobs: number }>;
   byDay: Array<{ day: string; total: number; done: number }>;
 
@@ -371,6 +378,13 @@ export const api = {
     return request<{ ok: true }>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'send-message', userId, message }),
+    });
+  },
+  /** Бот пришлёт админу в чат кнопку, открывающую профиль человека по id. */
+  async adminProfileLink(userId: number): Promise<{ ok: true; restricted: boolean }> {
+    return request<{ ok: true; restricted: boolean }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'profile-link', userId }),
     });
   },
   async adminBan(userId: number, banned: boolean): Promise<{ ok: true }> {
