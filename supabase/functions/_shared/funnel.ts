@@ -204,6 +204,24 @@ export interface FunnelLinks {
 export const CALLBACK_STOP = 'funnel:stop';
 export const CALLBACK_PACKAGES = 'funnel:packs';
 
+/**
+ * Куда звать людей. Канал с обсуждением под постами — это одна ссылка на
+ * двоих, и две кнопки на один и тот же адрес выглядели бы глупо.
+ */
+export function communityLinks(
+  links: FunnelLinks,
+): Array<{ url: string; label: string; where: string }> {
+  const { channelUrl, chatUrl } = links;
+  if (channelUrl && chatUrl && channelUrl !== chatUrl) {
+    return [
+      { url: channelUrl, label: 'Канал', where: 'в нашем канале' },
+      { url: chatUrl, label: 'Чат техников', where: 'в чате техников' },
+    ];
+  }
+  const single = channelUrl || chatUrl;
+  return single ? [{ url: single, label: 'Канал техников', where: 'в нашем канале' }] : [];
+}
+
 /** 1 генерация, 2 генерации, 5 генераций. */
 export function generations(n: number): string {
   const mod10 = n % 10;
@@ -230,7 +248,9 @@ export function renderStep(
   const open = (text: string): FunnelButton => ({ text, web_app: { url: links.webAppUrl } });
   const packs: FunnelButton = { text: 'Выбрать пакет', callback_data: CALLBACK_PACKAGES };
   const stop: FunnelButton[] = [{ text: 'Не присылать советы', callback_data: CALLBACK_STOP }];
-  const chat: FunnelButton[] = links.chatUrl ? [{ text: 'Чат техников', url: links.chatUrl }] : [];
+  // Куда задавать вопросы: чат, если он отдельный, иначе канал с обсуждением.
+  const ask = communityLinks(links).at(-1);
+  const askButton: FunnelButton[] = ask ? [{ text: ask.label, url: ask.url }] : [];
 
   const reply = (text: string, main: FunnelButton[]) => ({ text, buttons: [main, stop] });
 
@@ -275,19 +295,21 @@ export function renderStep(
       return reply(
         'Последнее напоминание об этом, дальше не побеспокою.\n\n' +
         (u.credits > 0 ? `У вас ${generations(u.credits)} — они ждут первой работы. ` : '') +
-        'Если что-то не получается или непонятно, спросите в чате техников — там подскажут.',
-        [open('Загрузить работу'), ...chat],
+        (ask ? `Если что-то не получается или непонятно, спросите ${ask.where} — там подскажут.` : ''),
+        [open('Загрузить работу'), ...askButton],
       );
 
     case 'community': {
-      const buttons: FunnelButton[] = [];
-      if (links.channelUrl) buttons.push({ text: 'Канал', url: links.channelUrl });
-      if (links.chatUrl) buttons.push({ text: 'Чат техников', url: links.chatUrl });
+      const places = communityLinks(links);
+      const separate = places.length > 1;
       return reply(
         'Первый пост готов 👏\n\n' +
-        'У LabFrame есть канал и чат зубных техников. В канале — примеры и новые стили, ' +
-        'в чате делятся работами и спрашивают совета. Заходите и покажите свою.',
-        buttons,
+        (separate
+          ? 'У LabFrame есть канал и чат зубных техников. В канале — примеры и новые стили, ' +
+            'в чате делятся работами и спрашивают совета. Заходите и покажите свою.'
+          : 'У LabFrame есть канал зубных техников: примеры, новые стили и обсуждение ' +
+            'под постами. Заходите и покажите свою работу.'),
+        places.map((p) => ({ text: p.label, url: p.url })),
       );
     }
 

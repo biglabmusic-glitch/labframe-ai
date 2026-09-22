@@ -17,7 +17,7 @@ import { db } from '../_shared/db.ts';
 import { PACKAGES, type CreditPackage } from '../_shared/packages.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { applyReferral, parseStartParam } from '../_shared/referral.ts';
-import { CALLBACK_PACKAGES, CALLBACK_STOP } from '../_shared/funnel.ts';
+import { CALLBACK_PACKAGES, CALLBACK_STOP, communityLinks } from '../_shared/funnel.ts';
 import { answerCallbackQuery, sendMessage, type InlineButton, type Markup } from '../_shared/telegram.ts';
 
 /** Кнопка под сообщением, открывающая мини-апп с авторизацией. */
@@ -235,15 +235,22 @@ async function onMessage(msg: NonNullable<Update['message']>) {
  */
 async function replyToFreeText(from: TgFrom, chatId: number) {
   if (await blocked(from, chatId)) return;
-  const chatUrl = Deno.env.get('CHAT_URL');
+  // Спрашивать людям лучше там, где им ответят: в чате, если он отдельный,
+  // иначе в канале с обсуждением под постами.
+  const ask = communityLinks({
+    webAppUrl: '',
+    channelUrl: Deno.env.get('CHANNEL_URL') || undefined,
+    chatUrl: Deno.env.get('CHAT_URL') || undefined,
+  }).at(-1);
+
   const buttons: InlineButton[] = [openAppButton()];
-  if (chatUrl) buttons.push({ text: 'Чат техников', url: chatUrl });
+  if (ask) buttons.push({ text: ask.label, url: ask.url });
 
   await sendMessage(
     chatId,
     'Я бот и сообщения не читаю 🙂\n\n' +
-    (chatUrl
-      ? 'Работы загружаются в приложении, а вопрос можно задать в чате техников — там ответят.'
+    (ask
+      ? `Работы загружаются в приложении, а вопрос можно задать ${ask.where} — там ответят.`
       : 'Работы загружаются в приложении — кнопка ниже.'),
     { inline: [buttons] },
   );

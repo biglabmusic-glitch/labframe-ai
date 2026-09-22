@@ -127,6 +127,15 @@ Deno.test('склонение генераций', () => {
   assertEquals(generations(22), '22 генерации');
 });
 
+Deno.test('одна ссылка на канал с чатом — одна кнопка, а не две одинаковых', () => {
+  const one = renderStep('community', user(), { webAppUrl: 'https://app/', channelUrl: 'https://t.me/+abc', chatUrl: 'https://t.me/+abc' });
+  assertEquals(one.buttons[0].length, 1);
+  assertEquals(one.buttons[0][0].url, 'https://t.me/+abc');
+
+  const two = renderStep('community', user(), { webAppUrl: 'https://app/', channelUrl: 'https://t.me/c', chatUrl: 'https://t.me/g' });
+  assertEquals(two.buttons[0].map((b) => b.url), ['https://t.me/c', 'https://t.me/g']);
+});
+
 Deno.test('у каждого сообщения есть кнопка отписки', () => {
   const links = { webAppUrl: 'https://app/', channelUrl: 'https://t.me/c', chatUrl: 'https://t.me/g' };
   const ids = ['open_1', 'open_2', 'first_1', 'first_2', 'first_3', 'community', 'more_1',
