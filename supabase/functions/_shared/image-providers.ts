@@ -19,10 +19,19 @@ import { isAccountProblem, isTransient } from './provider-errors.ts';
 //
 // Обрываем раньше, чем нас оборвёт рантайм: так остаётся время записать
 // внятную ошибку и сказать о ней человеку.
-// Две попытки должны уложиться в лимит выполнения функции, поэтому на каждую
-// отводим меньше, чем можно было бы отвести на единственную.
-const IMAGE_TIMEOUT_MS = 60_000;
-const RETRY_TIMEOUT_MS = 45_000;
+//
+// Минуты не хватало: в сентябре 2026 пошли отказы «модель не ответила за 60 c»
+// — картинка у провайдера под нагрузкой иногда рисуется дольше. Ждём больше,
+// а вторую попытку делаем только тогда, когда она реально может помочь
+// (см. generateImage), чтобы две попытки по-прежнему укладывались в лимит
+// выполнения функции.
+const IMAGE_TIMEOUT_MS = 100_000;
+const RETRY_TIMEOUT_MS = 40_000;
+
+// Быстрый отказ — это «сервис ответил ошибкой», и повтор осмыслен: время
+// первой попытки почти не потрачено. Медленный — это перегрузка, и повторять
+// нечем: на вторую попытку в лимите функции уже не остаётся места.
+const FAST_FAIL_MS = 20_000;
 
 /** Запрос с ограничением по времени и понятной ошибкой вместо обрыва. */
 let currentTimeoutMs = IMAGE_TIMEOUT_MS;
@@ -230,12 +239,24 @@ export async function generateImage(
     'flux-kontext';
 
   const backup = pickBackup(decision);
+  const startedAt = Date.now();
   try {
     currentTimeoutMs = IMAGE_TIMEOUT_MS;
     return await run(decision, input);
   } catch (e) {
     const primaryError = errorText(e);
-    if (!backup || !isTransient(primaryError)) throw e;
+    const primaryMs = Date.now() - startedAt;
+    if (!isTransient(primaryError)) throw e;
+
+    // Основной не ответил, а запасного нет. Повторять его же имеет смысл
+    // только после быстрого отказа: если он молчал полторы минуты, вторая
+    // попытка не уложится в лимит выполнения функции и оборвётся зря.
+    if (!backup) {
+      if (primaryMs > FAST_FAIL_MS) throw e;
+      console.error(`провайдер ${decision} отказал (${primaryError}); повторяем его же`);
+      currentTimeoutMs = RETRY_TIMEOUT_MS;
+      return await run(decision, input);
+    }
 
     // Провайдер не ответил, но настроен второй — пробуем его, а не роняем
     // работу. Обрыв связи и «пятисотка» почти всегда временные, и человеку
@@ -253,8 +274,10 @@ export async function generateImage(
       // основного провайдера, терялась, и казалось, что сломан Replicate.
       //
       // Такой отказ приходит мгновенно, так что время второй попытки не
-      // потрачено — отдаём его основному провайдеру: его сбой был временным.
-      if (isAccountProblem(backupError)) {
+      // потрачено — отдаём его основному провайдеру, если он сам отказал
+      // быстро. После его долгого молчания повторять нечем: лимит выполнения
+      // функции уже почти выбран.
+      if (isAccountProblem(backupError) && primaryMs <= FAST_FAIL_MS) {
         console.error(`запасной ${backup} недоступен (${backupError}); повторяем ${decision}`);
         try {
           return await run(decision, input);

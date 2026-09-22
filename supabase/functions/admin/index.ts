@@ -11,6 +11,7 @@ import { grantReferralReward } from '../_shared/referral.ts';
 import { providerFinance, snapshotProviderBalance } from '../_shared/balance.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { STEP_GOALS, STEP_LABELS, type StepId } from '../_shared/funnel.ts';
+import { envAdminIds } from '../_shared/admins.ts';
 
 interface AdminBody {
   action:
@@ -36,10 +37,6 @@ interface AdminBody {
   offset?: number;
 }
 
-function envAdminIds(): number[] {
-  return (Deno.env.get('ADMIN_IDS') ?? '')
-    .split(',').map((s) => Number(s.trim())).filter(Boolean);
-}
 
 // Админ = в env ADMIN_IDS (bootstrap) ИЛИ флаг is_admin в БД (назначенные).
 async function isAdmin(telegramId: number): Promise<boolean> {
@@ -275,6 +272,11 @@ async function getStats() {
     // замеров остатка: провайдер отдаёт только «сколько сейчас».
     providerBalance:  fin30.balance,
     providerCurrency: fin30.currency,
+    // Вся сумма на счёте и зарезервированное — чтобы понимать, почему остаток
+    // расходится с личным кабинетом провайдера, и когда его сняли.
+    providerTotal:    fin30.total,
+    providerReserved: fin30.reserved,
+    providerMeasuredAt: fin30.measuredAt,
     providerSpent7d:  fin7.spent,
     providerSpent30d: fin30.spent,
     providerToppedUp30d: fin30.toppedUp,

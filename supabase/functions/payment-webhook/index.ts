@@ -14,6 +14,7 @@ import { amountMatches, parseOrderId } from '../_shared/packages.ts';
 import { parsePhpFormBody, verifySignature, type PhpValue } from '../_shared/prodamus.ts';
 import { grantReferralReward } from '../_shared/referral.ts';
 import { sendMessage } from '../_shared/telegram.ts';
+import { notifyAdmins } from '../_shared/admins.ts';
 
 // Где искать НАШ номер заказа.
 //
@@ -135,8 +136,18 @@ Deno.serve(async (req) => {
   // баланс не удвоит (apply_payment идемпотентен), но и сообщение не починит.
   try {
     const { data: u } = await db
-      .from('users').select('credits').eq('id', order.tgId).maybeSingle();
+      .from('users').select('credits, username, first_name').eq('id', order.tgId).maybeSingle();
     const balance = u?.credits;
+
+    // Админам — короткая сводка о продаже. Раньше об оплате узнавали, только
+    // заглянув в админку, а знать о выручке хочется сразу.
+    const who = [u?.first_name, u?.username ? `@${u.username}` : null].filter(Boolean).join(' ')
+      || `id ${order.tgId}`;
+    notifyAdmins(
+      `💰 Оплата: ${order.pkg.priceRub} ₽\n\n` +
+      `${who} купил ${order.pkg.credits} генераций.` +
+      (typeof balance === 'number' ? ` Теперь у него на балансе ${balance}.` : ''),
+    ).catch(() => { /* уведомление не должно мешать оплате */ });
 
     await sendMessage(
       order.tgId,

@@ -149,7 +149,16 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
  * раз тогда, когда деньги кончаются и лезть в логи некогда.
  */
 export type BalanceResult =
-  | { ok: true; balance: number; spentTotal: number | null; currency: string }
+  | {
+      ok: true;
+      /** Свободные деньги (available) — ими и считаем остаток. */
+      balance: number;
+      /** Вся сумма на счёте (amount), включая зарезервированное. */
+      total: number | null;
+      reserved: number | null;
+      spentTotal: number | null;
+      currency: string;
+    }
   | { ok: false; error: string };
 
 export async function fetchBalance(): Promise<BalanceResult> {
@@ -180,6 +189,8 @@ export async function fetchBalance(): Promise<BalanceResult> {
     return {
       ok: true,
       balance,
+      total: num(nested.amount),
+      reserved: num(nested.reservedAmount) ?? num(nested.reserved),
       spentTotal: num(nested.spentAmount) ?? num(nested.spent),
       currency: typeof nested.currency === 'string' ? nested.currency : 'RUB',
     };

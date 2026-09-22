@@ -82,7 +82,7 @@ function MoneyTab() {
         <Kpi
           label="ОСТАТОК POLZA"
           value={stats.providerBalance === null ? '—' : money(Math.round(stats.providerBalance))}
-          sub={stats.providerBalance === null ? 'нет замеров' : lowBalanceHint(stats)}
+          sub={stats.providerBalance === null ? 'нет замеров' : balanceSub(stats)}
         />
         <Kpi
           label="МАРЖА ВСЕГО"
@@ -817,6 +817,30 @@ function BarChart({ data }: { data: AdminStats['byDay'] }) {
 
 /** Рубли без копеек и с разделителями: 1 500 ₽. */
 /** Предупреждение, если денег у провайдера осталось меньше недельного расхода. */
+/**
+ * Подпись под остатком: когда его сняли и сколько зарезервировано.
+ *
+ * Время замера здесь потому, что цифра однажды разошлась с личным кабинетом
+ * провайдера, и понять, устарела она или нет, было нечем. Остаток снимается
+ * при каждом открытии админки и после каждой работы.
+ */
+function balanceSub(stats: AdminStats): string {
+  const parts = [lowBalanceHint(stats)];
+  if (stats.providerReserved !== null && stats.providerReserved > 0) {
+    parts.push(`${money(Math.round(stats.providerReserved))} в резерве`);
+  }
+  if (stats.providerMeasuredAt) {
+    const at = new Date(stats.providerMeasuredAt);
+    const mins = Math.round((Date.now() - at.getTime()) / 60000);
+    parts.push(mins < 2
+      ? 'замер только что'
+      : mins < 60
+        ? `замер ${mins} мин назад`
+        : `замер ${at.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}`);
+  }
+  return parts.join(' · ');
+}
+
 function lowBalanceHint(stats: AdminStats): string {
   const weekly = stats.providerSpent7d;
   const left = stats.providerBalance ?? 0;

@@ -190,6 +190,11 @@ export interface AdminStats {
   /** Остаток у провайдера моделей. null — замеров ещё нет. */
   providerBalance: number | null;
   providerCurrency: string;
+  /** Вся сумма на счёте провайдера, включая зарезервированное. */
+  providerTotal: number | null;
+  providerReserved: number | null;
+  /** Когда остаток снимали в последний раз. */
+  providerMeasuredAt: string | null;
   /** null, пока нет двух замеров. */
   providerSpent7d: number | null;
   providerSpent30d: number | null;
