@@ -18,6 +18,7 @@ import { PACKAGES, type CreditPackage } from '../_shared/packages.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { applyReferral, parseStartParam } from '../_shared/referral.ts';
 import { CALLBACK_PACKAGES, CALLBACK_STOP, communityLinks } from '../_shared/funnel.ts';
+import { supportButton, supportUrl } from '../_shared/support.ts';
 import { answerCallbackQuery, sendMessage, type InlineButton, type Markup } from '../_shared/telegram.ts';
 
 /** Кнопка под сообщением, открывающая мини-апп с авторизацией. */
@@ -40,6 +41,9 @@ const CALLBACK_PREFIX = 'buy:';
 // основная — /kupit, с описанием «Купить генерации» по-русски.
 const MENU_COMMANDS = ['/start', '/kupit', '/купить', '/buy'];
 
+// Команды поддержки — на случай, если человек ищет её не кнопкой, а набором.
+const SUPPORT_COMMANDS = ['/support', '/помощь', '/help'];
+
 /**
  * Подпись кнопки пакета. Одна функция и для сборки клавиатуры, и для разбора
  * нажатия — иначе подпись и разбор разъедутся при первой же правке текста.
@@ -61,6 +65,7 @@ function packageByLabel(text: string): CreditPackage | undefined {
 // Кнопка, раскрывающая пакеты. Отдельной строкой над ними: пока человек не
 // собрался покупать, три цены в клавиатуре только занимают экран.
 const PAY_BUTTON = '💳 Оплатить генерации';
+const SUPPORT_BUTTON = '🆘 Поддержка';
 
 const PICK_TEXT =
   'Выберите пакет — кнопки ниже.\n\n' +
@@ -79,7 +84,7 @@ const PICK_TEXT =
 
 /** Клавиатура оплаты: кнопка «Оплатить» и строка пакетов. */
 function buyKeyboard(): Markup {
-  return { keyboard: [[PAY_BUTTON], PACKAGES.map(packageLabel)] };
+  return { keyboard: [[PAY_BUTTON, ...(supportUrl() ? [SUPPORT_BUTTON] : [])], PACKAGES.map(packageLabel)] };
 }
 
 interface TgFrom {
@@ -182,6 +187,14 @@ async function onMessage(msg: NonNullable<Update['message']>) {
 
   // /kupit@labframe_bot тоже считается: в группах Telegram дописывает имя бота.
   const cmd = normalize(text).split(/[\s@]/)[0];
+
+  // Поддержка: кнопка клавиатуры или команда.
+  if (normalize(text) === normalize(SUPPORT_BUTTON) || SUPPORT_COMMANDS.includes(cmd)) {
+    if (await blocked(from, chatId)) return;
+    await sendSupport(chatId);
+    return;
+  }
+
   if (!MENU_COMMANDS.includes(cmd)) {
     if (privateChat) await replyToFreeText(from, chatId);
     return;
@@ -221,12 +234,47 @@ async function onMessage(msg: NonNullable<Update['message']>) {
   // Теперь объясняем, что делает бот, и ведём одной кнопкой в приложение.
   // Клавиатура оплаты появится, когда он сам пойдёт покупать.
   if (cmd === '/start') {
-    await sendMessage(chatId, WELCOME_TEXT, { inline: [[openAppButton()]] });
+    const support = supportButton('Поддержка');
+    await sendMessage(chatId, WELCOME_TEXT, {
+      inline: support.length ? [[openAppButton()], support] : [[openAppButton()]],
+    });
     return;
   }
 
   // Команду покупки набирают те, кто уже решился, — им сразу раскрываем пакеты.
   await sendMessage(chatId, PICK_TEXT, buyKeyboard());
+}
+
+/** Связь с живым человеком. */
+async function sendSupport(chatId: number) {
+  const support = supportButton('Написать в поддержку');
+  if (support.length) {
+    await sendMessage(
+      chatId,
+      'Поддержка LabFrame — живой человек, не бот.\n\n' +
+      'Напишите, что случилось: не пришла картинка, не начислились генерации, ' +
+      'вопрос по оплате. Ответим и разберёмся.',
+      { inline: [support] },
+    );
+    return;
+  }
+
+  // Адрес поддержки не задан — не отправляем человека в пустоту.
+  await sendMessage(
+    chatId,
+    'Поддержка временно недоступна. Опишите вопрос в нашем канале — ответим там.',
+    { inline: [communityButtons()] },
+  );
+}
+
+/** Кнопка сообщества — там же, куда зовём задавать вопросы. */
+function communityButtons(): InlineButton[] {
+  const ask = communityLinks({
+    webAppUrl: '',
+    channelUrl: Deno.env.get('CHANNEL_URL') || undefined,
+    chatUrl: Deno.env.get('CHAT_URL') || undefined,
+  }).at(-1);
+  return ask ? [{ text: ask.label, url: ask.url }] : [];
 }
 
 /**
@@ -243,16 +291,21 @@ async function replyToFreeText(from: TgFrom, chatId: number) {
     chatUrl: Deno.env.get('CHAT_URL') || undefined,
   }).at(-1);
 
+  const support = supportButton();
   const buttons: InlineButton[] = [openAppButton()];
   if (ask) buttons.push({ text: ask.label, url: ask.url });
+
+  const where = support.length
+    ? 'а с вопросом пишите в поддержку — там живой человек.'
+    : ask
+      ? `а вопрос можно задать ${ask.where} — там ответят.`
+      : '';
 
   await sendMessage(
     chatId,
     'Я бот и сообщения не читаю 🙂\n\n' +
-    (ask
-      ? `Работы загружаются в приложении, а вопрос можно задать ${ask.where} — там ответят.`
-      : 'Работы загружаются в приложении — кнопка ниже.'),
-    { inline: [buttons] },
+    (where ? `Работы загружаются в приложении, ${where}` : 'Работы загружаются в приложении — кнопка ниже.'),
+    { inline: support.length ? [buttons, support] : [buttons] },
   );
 }
 

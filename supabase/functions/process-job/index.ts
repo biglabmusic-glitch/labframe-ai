@@ -11,6 +11,7 @@ import { sendMessage, sendPhoto } from '../_shared/telegram.ts';
 import { applyLogo, type Placement } from '../_shared/branding.ts';
 import { snapshotProviderBalance } from '../_shared/balance.ts';
 import { explainJobFailure } from '../_shared/job-error.ts';
+import { supportButton } from '../_shared/support.ts';
 import { buildPersonalizedPrompt } from '../_shared/agent.ts';
 
 Deno.serve(async (req) => {
@@ -228,7 +229,14 @@ Deno.serve(async (req) => {
     // записан, а самый частый отказ здесь штатный: Telegram запрещает боту
     // писать первым, если человек не начинал диалог.
     try {
-      await sendMessage(Number(job.user_id), explainJobFailure(message).text);
+      // Кнопка поддержки — здесь она нужнее всего: человек остался без
+      // картинки и хочет спросить живого человека, а не гадать.
+      const support = supportButton();
+      await sendMessage(
+        Number(job.user_id),
+        explainJobFailure(message).text,
+        support.length ? { inline: [support] } : undefined,
+      );
     } catch (pushErr) {
       const pm = pushErr instanceof Error ? pushErr.message : String(pushErr);
       console.error('не смогли сообщить о сбое:', pm);
