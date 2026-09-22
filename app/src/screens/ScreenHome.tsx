@@ -13,6 +13,7 @@ import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter, type RouteId } from '../router/Router';
 import { WebApp } from '../telegram/webapp';
+import { SUPPORT_URL } from '../constants';
 
 const STYLE_LABELS: Record<string, string> = {
   dark: 'Premium Dark',
@@ -305,6 +306,32 @@ export function ScreenHome() {
                 <div style={{ fontSize: 14, fontWeight: 600 }}>Пригласить друга</div>
                 <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
                   Бонусные генерации за друзей
+                </div>
+              </div>
+            </div>
+            <IconArrow size={14} color="var(--c-on-dark-3)" />
+          </div>
+        </Card>
+      </div>
+
+      {/* Поддержка — живой человек в Telegram. Открывается его чат, а не
+          переписка с ботом: бот сообщения не читает, и люди об этом не знают. */}
+      <div style={{ padding: '0 16px 12px' }}>
+        <Card
+          kind="dark"
+          pad={14}
+          radius={20}
+          onClick={() => WebApp?.openTelegramLink?.(SUPPORT_URL)}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>
+                🆘
+              </div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Поддержка</div>
+                <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 2 }}>
+                  Ответим на вопросы по работе и оплате
                 </div>
               </div>
             </div>
