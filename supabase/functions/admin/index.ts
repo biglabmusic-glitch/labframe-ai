@@ -242,8 +242,14 @@ async function getStats() {
   // Освежаем остаток именно сейчас: между работами он не меняется, но если
   // генераций давно не было, последний замер может быть недельной давности —
   // а смотрят сюда как раз чтобы не прозевать ноль.
-  const providerError = await snapshotProviderBalance().catch((e) => String(e));
+  // Цифру берём из живого ответа провайдера, а не из последней строки истории:
+  // если запись в базу почему-то не проходит, на экране должен быть остаток на
+  // сейчас, а не позавчерашний замер.
+  const snapshot = await snapshotProviderBalance()
+    .catch((e) => ({ error: String(e), live: null }));
+  const providerError = snapshot.error;
   const [fin7, fin30] = await Promise.all([providerFinance(7), providerFinance(30)]);
+  const live = snapshot.live;
 
   return {
     totalUsers,
@@ -270,18 +276,18 @@ async function getStats() {
 
     // Экономика по провайдеру моделей. Расход и пополнения выведены из истории
     // замеров остатка: провайдер отдаёт только «сколько сейчас».
-    providerBalance:  fin30.balance,
-    providerCurrency: fin30.currency,
+    providerBalance:  live?.balance ?? fin30.balance,
+    providerCurrency: live?.currency ?? fin30.currency,
     // Вся сумма на счёте и зарезервированное — чтобы понимать, почему остаток
     // расходится с личным кабинетом провайдера, и когда его сняли.
-    providerTotal:    fin30.total,
-    providerReserved: fin30.reserved,
-    providerMeasuredAt: fin30.measuredAt,
+    providerTotal:    live?.total ?? fin30.total,
+    providerReserved: live?.reserved ?? fin30.reserved,
+    providerMeasuredAt: live?.at ?? fin30.measuredAt,
     providerSpent7d:  fin7.spent,
     providerSpent30d: fin30.spent,
     providerToppedUp30d: fin30.toppedUp,
     // Потрачено за всё время — приходит от провайдера, замеры не нужны.
-    providerSpentTotal: fin30.spentTotal,
+    providerSpentTotal: live?.spentTotal ?? fin30.spentTotal,
     // Маржа за 30 дней. Пока замеров меньше двух, расход неизвестен, и
     // разность выродилась бы в саму выручку — цифра выглядела бы правдой,
     // не будучи ею. В таком случае честнее не показывать ничего.

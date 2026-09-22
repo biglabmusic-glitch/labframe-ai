@@ -10,10 +10,42 @@ const PROVIDER = 'polza';
 // не напоминаем: замер делается после каждой работы, и бот задолбал бы.
 const ALERT_THRESHOLDS = [500, 200];
 
-/** Записывает текущий остаток. Возвращает причину, если записать не вышло. */
-export async function snapshotProviderBalance(): Promise<string | null> {
+/** Живой остаток, снятый только что. */
+export interface LiveBalance {
+  balance: number;
+  total: number | null;
+  reserved: number | null;
+  spentTotal: number | null;
+  currency: string;
+  at: string;
+}
+
+export interface SnapshotResult {
+  /** Причина, по которой замер не удался. null — всё получилось. */
+  error: string | null;
+  /** Что ответил провайдер. null — не ответил. */
+  live: LiveBalance | null;
+}
+
+/**
+ * Снимает текущий остаток и записывает его в историю.
+ *
+ * Отдаёт и сам ответ провайдера: админке важно показать живую цифру, даже
+ * если записать её в базу не вышло. Иначе на экране остаётся позавчерашний
+ * замер, и понять это можно только по мелкой подписи.
+ */
+export async function snapshotProviderBalance(): Promise<SnapshotResult> {
   const current = await fetchBalance();
-  if (!current.ok) return current.error;
+  if (!current.ok) return { error: current.error, live: null };
+
+  const live: LiveBalance = {
+    balance: current.balance,
+    total: current.total,
+    reserved: current.reserved,
+    spentTotal: current.spentTotal,
+    currency: current.currency,
+    at: new Date().toISOString(),
+  };
 
   const { data: previous } = await db
     .from('provider_balance')
@@ -30,11 +62,11 @@ export async function snapshotProviderBalance(): Promise<string | null> {
     spent_total: current.spentTotal,
     currency: current.currency,
   });
-  if (error) return `запись в базу: ${error.message}`;
+  if (error) return { error: `запись в базу: ${error.message}`, live };
 
   const before = previous?.[0] ? Number(previous[0].balance) : null;
   await alertIfLow(before, current.balance, current.currency);
-  return null;
+  return { error: null, live };
 }
 
 async function alertIfLow(before: number | null, now: number, currency: string): Promise<void> {

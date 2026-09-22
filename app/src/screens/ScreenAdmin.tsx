@@ -825,6 +825,7 @@ function BarChart({ data }: { data: AdminStats['byDay'] }) {
  * при каждом открытии админки и после каждой работы.
  */
 function balanceSub(stats: AdminStats): string {
+  if (stats.providerError) return 'замер не удался — цифра старая, причина ниже';
   const parts = [lowBalanceHint(stats)];
   if (stats.providerReserved !== null && stats.providerReserved > 0) {
     parts.push(`${money(Math.round(stats.providerReserved))} в резерве`);

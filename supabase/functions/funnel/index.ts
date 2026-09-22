@@ -14,6 +14,7 @@ import {
   renderStep,
 } from '../_shared/funnel.ts';
 import { ensureRefCode } from '../_shared/referral.ts';
+import { snapshotProviderBalance } from '../_shared/balance.ts';
 import { isUnreachable, sendMessage } from '../_shared/telegram.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -39,6 +40,12 @@ Deno.serve(async (req) => {
   if (req.headers.get('x-internal-secret') !== Deno.env.get('INTERNAL_SECRET')) {
     return jsonResponse({ error: 'forbidden' }, { status: 403 });
   }
+
+  // Заодно снимаем остаток у провайдера моделей. Раньше он снимался только
+  // после работ и при открытии админки: в тихий день замеров не было вовсе,
+  // и предупреждение «деньги кончаются» могло не прийти до самого нуля.
+  const snapshot = await snapshotProviderBalance().catch((e) => ({ error: String(e), live: null }));
+  if (snapshot.error) console.error('остаток провайдера не снялся:', snapshot.error);
 
   const now = Date.now();
   if (!isDaytimeMoscow(now)) return jsonResponse({ ok: true, skipped: 'night' });
