@@ -51,6 +51,57 @@ export async function fitLogoFile(
   }
 }
 
+/**
+ * Ужимает фото работы перед загрузкой.
+ *
+ * Телефон снимает кадры по 2–8 МБ, а модель всё равно рисует картинку
+ * размером около 1024 пикселей и сама ужимает вход примерно до мегапикселя.
+ * Разница уходила в никуда: в хранилище Supabase (гигабайт бесплатного
+ * тарифа кончился за пару месяцев), в трафик и в ожидание на мобильном.
+ *
+ * Пороги нарочно щадящие: 2000 пикселей по длинной стороне и качество 0,9 —
+ * вдвое больше того, что модель реально читает. Лёгкие кадры не трогаем
+ * совсем, так что подавляющее большинство фотографий уходит как есть.
+ */
+export async function fitPhotoFile(
+  file: File,
+  maxSide = 2000,
+  quality = 0.9,
+): Promise<File> {
+  const objUrl = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(objUrl);
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    // Всё, что и так лёгкое, не трогаем вовсе: пережимать нормальный кадр —
+    // только терять качество ради пары сотен килобайт.
+    if (scale === 1 && file.size <= 1_500_000) return file;
+
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.drawImage(img, 0, 0, w, h);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, 'image/jpeg', quality);
+    });
+    // Не получилось или вышло тяжелее оригинала — отправляем как есть.
+    if (!blob || blob.size >= file.size) return file;
+
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'photo';
+    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+  } catch {
+    // Формат, который браузер не открыл (HEIC со старого телефона) —
+    // пусть уходит оригиналом, сервер с ним разберётся.
+    return file;
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();

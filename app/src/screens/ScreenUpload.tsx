@@ -10,6 +10,7 @@ import {
   IconSpark,
 } from '../components/primitives/icons';
 import { useApp } from '../state/AppContext';
+import { fitPhotoFile } from '../lib/image-crop';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
@@ -59,11 +60,14 @@ export function ScreenUpload() {
 
     try {
       if (isBackendReady()) {
-        const { photoPath } = await api.uploadPhoto(f);
+        // Ужимаем перед отправкой: снимок с телефона весит мегабайты, а модели
+        // хватает полутора тысяч пикселей по длинной стороне.
+        const small = await fitPhotoFile(f);
+        const { photoPath } = await api.uploadPhoto(small);
         setDraft({
           photo: {
             name: f.name,
-            size: `${(f.size / (1024 * 1024)).toFixed(1)} МБ`,
+            size: `${(small.size / (1024 * 1024)).toFixed(1)} МБ`,
             resolution: '—',
             url: previewUrl,
             photoPath,
