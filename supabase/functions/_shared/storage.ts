@@ -2,6 +2,15 @@
 // upload результирующего изображения по HTTP.
 import { db } from './db.ts';
 
+// Сколько браузер и Telegram держат картинку в кеше, не спрашивая снова.
+//
+// Готовая работа лежит по пути <юзер>/<id работы>.jpg и больше не меняется,
+// поэтому её можно кешировать надолго. Раньше стоял час по умолчанию: главная
+// экран с историей из 24 картинок заново скачивал их при каждом открытии
+// приложения — это тот самый исходящий трафик, в который упёрся бесплатный
+// тариф Supabase.
+const IMMUTABLE_CACHE = '31536000';
+
 export async function signUrl(bucket: string, path: string, ttlSec = 60 * 10): Promise<string> {
   const { data, error } = await db.storage.from(bucket).createSignedUrl(path, ttlSec);
   if (error || !data) throw new Error(`signUrl ${bucket}/${path}: ${error?.message}`);

@@ -80,11 +80,21 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'missing_fields', missing }, { status: 400 });
   }
 
+  // Фото должно быть своим. Путь приходит от клиента, а воркер открывает его
+  // служебным ключом — без этой проверки можно было подставить путь к чужому
+  // фото и получить его обработанным в свой аккаунт. Та же защита, что у
+  // логотипа в save-brand.
+  if (!body.photoPath.startsWith(`${tg.id}/`) || body.photoPath.includes('..')) {
+    return jsonResponse({ error: 'forbidden_path' }, { status: 403 });
+  }
+
   // Декор: резолвим выбор в {surface, addition}. null = декора нет.
   const decor = resolveDecor(body.decorPreset, body.decorAddition, body.style);
 
-  // Лимиты — один выключатель на весь бэк: LIMITS_DISABLED != '0' (по умолчанию ВКЛ)
-  // значит демо-период, всё открыто всем.
+  // Лимиты — один выключатель на весь бэк: LIMITS_DISABLED=1 значит демо-период,
+  // всё открыто всем. Только явная единица: раньше выключало всё, что не '0',
+  // и пропавший или опечатанный секрет делал генерации бесплатными для всех.
+  // Отказ должен быть в сторону «платно», а не «даром».
   //
   // Баланс проверяем здесь, а не триггером enforce_usage_limit: тот снят
   // миграцией 0005 и возвращать его не нужно, иначе «включить оплату» означало
@@ -94,7 +104,7 @@ Deno.serve(async (req) => {
   // Здесь только гейт. Само списание — в триггере spend_credits_on_done, по
   // факту done: за упавшую генерацию пользователь платить не должен.
   const cost = creditCost(decor ? body.decorPreset : null);
-  const limitsDisabled = (Deno.env.get('LIMITS_DISABLED') ?? '1') !== '0';
+  const limitsDisabled = Deno.env.get('LIMITS_DISABLED') === '1';
   if (!limitsDisabled) {
     const { data: u } = await db
       .from('users')
