@@ -7,8 +7,11 @@
 | Папка | Что | Куда деплоить |
 |---|---|---|
 | `app/` | React + Vite + TS + @twa-dev/sdk | **Vercel** |
-| `bot/` | grammY бот, принимает `/start`, открывает мини-апп | **Railway** |
-| (позже) Supabase | БД + Storage + Edge Functions (Image AI + Text AI) | **Supabase Cloud** |
+| Supabase | БД + Storage + Edge Functions, в том числе вебхук бота (`bot-webhook`) | **Supabase Cloud** |
+
+> Отдельного процесса бота больше нет: папку `bot/` с ботом для Railway удалили
+> 30.09.2026. Шаг 4 ниже устарел — **не выполняй его**:
+> второй вебхук отключит `bot-webhook`, и продажи в чате перестанут работать.
 
 ---
 
@@ -52,7 +55,7 @@ LabFrame AI
 labframe_ai_bot         ← должен заканчиваться на _bot и быть свободным
 ```
 
-BotFather пришлёт **HTTP API token** — сохрани, нужен для Railway.
+BotFather пришлёт **HTTP API token** — сохрани, он нужен в секретах Supabase (`BOT_TOKEN`).
 
 3. Привязать мини-апп к боту:
 
@@ -80,7 +83,7 @@ AI-студия для зубных техников   ← описание
 
 ---
 
-## Шаг 4. Бот на Railway
+## Шаг 4. ~~Бот на Railway~~ — устарело, НЕ выполнять (см. примечание в начале)
 
 1. Зайди на [railway.app](https://railway.app) → **New Project → Deploy from GitHub repo** → `labframe-ai`.
 2. **Settings → Root Directory** → `bot`.
@@ -107,10 +110,10 @@ AI-студия для зубных техников   ← описание
 
 ## Шаг 5. Что уже работает без тебя
 
-- Любой `git push` в `main` → Vercel пересобирает фронт + Railway пересобирает бота. **Релиз = коммит.**
-- Бот слушает webhook 24/7 на Railway.
+- Любой `git push` в `main` → Vercel пересобирает фронт. Функции Supabase деплоятся отдельно.
+- Бот — Edge Function `bot-webhook`, работает, пока работает Supabase.
 - Vercel раздаёт фронт через CDN.
-- **Стоимость:** Railway ~$5/мес, Vercel $0, BotFather $0. Итого $5/мес фикс.
+- **Стоимость:** Supabase Pro $25/мес, Vercel $0, BotFather $0.
 
 ---
 
@@ -149,7 +152,6 @@ supabase functions deploy me
 supabase functions deploy create-job
 supabase functions deploy get-job
 supabase functions deploy process-job
-supabase functions deploy notify-bot
 ```
 
 ### 6.4. Задать секреты для Edge Functions
@@ -158,14 +160,13 @@ Supabase Dashboard → **Project Settings → Edge Functions → Add new secret*
 
 | Ключ | Откуда |
 |---|---|
-| `BOT_TOKEN` | от BotFather (тот же, что в Railway) |
+| `BOT_TOKEN` | от BotFather |
 | `REPLICATE_API_TOKEN` | [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) |
 | `POLZA_API_KEY` | [polza.ai/docs/glavnoe/quickstart](https://polza.ai/docs/glavnoe/quickstart) |
 | `INTERNAL_SECRET` | та же случайная строка, что в `0002_cron.sql` |
 
 Опционально (если хочешь сменить модели):
 
-| `REPLICATE_MODEL` | по умолчанию `black-forest-labs/flux-kontext-pro` |
 | `POLZA_MODEL`     | по умолчанию `gpt-4o-mini` |
 
 ### 6.5. Подключить фронт
@@ -196,8 +197,8 @@ Supabase Dashboard → **Project Settings → Edge Functions → Add new secret*
 
 ## Шаг 7. Алерты, чтобы знать о проблемах
 
-- **UptimeRobot** (бесплатно): добавь пинг `https://<railway>/health` каждые 5 минут. Если бот упал — придёт письмо.
-- **Sentry** (бесплатно до 5k событий): подключим в `bot/` и `app/` для трейсов ошибок.
+- Об оплатах и низком остатке у провайдера моделей бот сам пишет админам.
+- **Sentry** (бесплатно до 5k событий): можно подключить в `app/` для трейсов ошибок.
 - Сделаем приватный Telegram-канал, куда бот шлёт сообщения о фейлах AI-вызовов.
 
 ---

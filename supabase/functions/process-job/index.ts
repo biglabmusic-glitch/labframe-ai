@@ -6,7 +6,8 @@ import { jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { processImage } from '../_shared/replicate.ts';
 import { generateText } from '../_shared/polza.ts';
-import { fetchBytes, publicUrl, signUrl, uploadBytes, uploadFromUrl } from '../_shared/storage.ts';
+import { fetchBytes, publicUrl, signUrl, uploadBytes } from '../_shared/storage.ts';
+import { backfillThumbs, saveThumb } from '../_shared/thumbs.ts';
 import { sendMessage, sendPhoto } from '../_shared/telegram.ts';
 import { applyLogo, type Placement } from '../_shared/branding.ts';
 import { snapshotProviderBalance } from '../_shared/balance.ts';
@@ -33,7 +34,12 @@ Deno.serve(async (req) => {
   await sweepStale();
 
   const job = await pickJob(preferredId);
-  if (!job) return jsonResponse({ ok: true, picked: 0 });
+  if (!job) {
+    // Очереди нет — пока простаиваем, доделываем миниатюры старым работам.
+    // Воркер всё равно просыпается раз в минуту по расписанию.
+    const thumbs = await backfillThumbs(THUMB_BACKFILL_BATCH).catch(() => 0);
+    return jsonResponse({ ok: true, picked: 0, thumbs });
+  }
 
   try {
     const { data: brand } = await db.from('brand').select('*').eq('user_id', job.user_id).maybeSingle();
@@ -125,22 +131,23 @@ Deno.serve(async (req) => {
     // а её как раз и сохраняют, чтобы выложить, — уходила голой. Теперь
     // сохранённая версия одна и она уже брендированная.
     const resultPath = `${job.user_id}/${job.id}.jpg`;
-    let branded = false;
+    let baseBytes: Uint8Array | null = null;
+    let finalBytes: Uint8Array | null = null;
 
     if (job.branding === 'logo' && logoUrl) {
       try {
-        const [baseBytes, logoBytes] = await Promise.all([
+        const [base, logoBytes] = await Promise.all([
           fetchBytes(img.imageUrl),
           fetchBytes(logoUrl),
         ]);
+        baseBytes = base;
         const out = await applyLogo(
-          baseBytes,
+          base,
           logoBytes,
           (brand?.logo_placement ?? 'bottom-right') as Placement,
         );
         if (out) {
-          await uploadBytes('results', resultPath, out);
-          branded = true;
+          finalBytes = out;
         } else {
           // Вместо логотипа загружено фото или селфи — в угол поста его не ставим.
           console.warn(`job ${job.id}: вместо логотипа загружено фото, накладывать не стали`);
@@ -152,7 +159,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (!branded) await uploadFromUrl('results', resultPath, img.imageUrl);
+    finalBytes ??= baseBytes ?? await fetchBytes(img.imageUrl);
+    await uploadBytes('results', resultPath, finalBytes, imageType(finalBytes));
+    // Миниатюра для истории на главном экране. Не вышла — не страшно:
+    // история покажет полную картинку.
+    await saveThumb(job.id, resultPath, finalBytes);
 
     // 4. Text AI
     const text = await generateText({
@@ -249,6 +260,15 @@ Deno.serve(async (req) => {
 
 // Сколько кандидатов пробуем забрать за один проход и сколько раз перечитываем очередь.
 const PICK_ATTEMPTS = 5;
+
+// Сколько старых работ получают миниатюру за одно пробуждение без очереди.
+// Воркер просыпается раз в минуту: ~900 старых работ догонятся за несколько часов.
+const THUMB_BACKFILL_BATCH = 4;
+
+/** PNG или JPEG — по первым байтам: модель может вернуть любой из них. */
+function imageType(bytes: Uint8Array): string {
+  return bytes[0] === 0x89 && bytes[1] === 0x50 ? 'image/png' : 'image/jpeg';
+}
 
 // Пороги «зависших» job-ов для watchdog-а ниже.
 // processing — воркер умер или Replicate не ответил (нормальная обработка < 2 мин).

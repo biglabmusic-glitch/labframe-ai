@@ -101,30 +101,41 @@ Deno.serve(async (req) => {
   // бы ещё и накатить миграцию на прод в момент запуска продаж.
   // Включение оплаты: supabase secrets set LIMITS_DISABLED=0
   //
-  // Здесь только гейт. Само списание — в триггере spend_credits_on_done, по
-  // факту done: за упавшую генерацию пользователь платить не должен.
+  // Генерации списываем сразу, одним атомарным запросом (reserve_credits), и
+  // запоминаем в credits_reserved. Упадёт работа — триггер вернёт их обратно,
+  // за неудачу человек не платит.
+  //
+  // Раньше здесь была только проверка «хватает ли», а списание — по готовности.
+  // Между ними была щель: с одной генерацией можно было запустить две работы
+  // подряд, обе проходили проверку, и вторая доставалась бесплатно.
   const cost = creditCost(decor ? body.decorPreset : null);
   const limitsDisabled = Deno.env.get('LIMITS_DISABLED') === '1';
+  let reserved = 0;
   if (!limitsDisabled) {
-    const { data: u } = await db
-      .from('users')
-      .select('credits')
-      .eq('id', tg.id)
-      .maybeSingle();
-
-    // needed/have отдаём наружу: фронту нужно показать «нужно 3, у вас 1».
-    if ((u?.credits ?? 0) < cost) {
+    const { data: ok, error: reserveErr } = await db.rpc('reserve_credits', {
+      p_user_id: tg.id,
+      p_cost: cost,
+    });
+    if (reserveErr) {
+      console.error('reserve_credits упал:', reserveErr.message);
+      return jsonResponse({ error: 'reserve_failed' }, { status: 500 });
+    }
+    if (!ok) {
+      const { data: u } = await db.from('users').select('credits').eq('id', tg.id).maybeSingle();
+      // needed/have отдаём наружу: фронту нужно показать «нужно 3, у вас 1».
       return jsonResponse(
         { error: 'insufficient_credits', needed: cost, have: u?.credits ?? 0 },
         { status: 402 },
       );
     }
+    reserved = cost;
   }
 
   const { data: job, error } = await db
     .from('jobs')
     .insert({
       user_id: tg.id,
+      credits_reserved: reserved,
       photo_path: body.photoPath,
       work_type: body.workType ?? null,
       style: body.style,
@@ -140,7 +151,13 @@ Deno.serve(async (req) => {
     .single();
 
   if (error) {
-    return jsonResponse({ error: error.message }, { status: 500 });
+    // Работа не создалась, а генерации уже списаны — возвращаем.
+    if (reserved > 0) {
+      const { error: refundErr } = await db.rpc('add_credits', { p_user_id: tg.id, p_delta: reserved });
+      if (refundErr) console.error(`не вернули ${reserved} генераций юзеру ${tg.id}:`, refundErr.message);
+    }
+    console.error('create-job insert упал:', error.message);
+    return jsonResponse({ error: 'create_failed' }, { status: 500 });
   }
 
   // Триггерим process-job асинхронно — пользователю отдаём id сразу,

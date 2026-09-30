@@ -7,7 +7,6 @@ export const env = {
   SUPABASE_SERVICE_ROLE_KEY: required('SUPABASE_SERVICE_ROLE_KEY'),
 
   REPLICATE_API_TOKEN:       required('REPLICATE_API_TOKEN'),
-  REPLICATE_MODEL:           Deno.env.get('REPLICATE_MODEL') ?? 'black-forest-labs/flux-kontext-pro',
 
   POLZA_API_KEY:             required('POLZA_API_KEY'),
   POLZA_BASE_URL:            Deno.env.get('POLZA_BASE_URL') ?? 'https://api.polza.ai/api/v1',

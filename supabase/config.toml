@@ -37,9 +37,6 @@ verify_jwt = false
 [functions.me]
 verify_jwt = false
 
-[functions.notify-bot]
-verify_jwt = false             # защищено x-internal-secret
-
 [functions.payment-link]
 verify_jwt = false
 

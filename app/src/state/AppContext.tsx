@@ -239,6 +239,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             thumbBg:     'var(--c-card-dd)',
             dark:        j.style === 'dark',
             resultUrl:   j.resultUrl,
+            thumbUrl:    j.thumbUrl,
             captionMain: j.captionMain,
           })));
         }

@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
 
   const { data: jobs, error } = await db
     .from('jobs')
-    .select('id, style, format, work_type, result_path, caption_main, created_at')
+    .select('id, style, format, work_type, result_path, thumb_path, caption_main, created_at')
     .eq('user_id', tg.id)
     .eq('status', 'done')
     .not('result_path', 'is', null)
@@ -33,6 +33,9 @@ Deno.serve(async (req) => {
     format:      j.format,
     workType:    j.work_type ?? undefined,
     resultUrl:   j.result_path ? publicUrl('results', j.result_path) : undefined,
+    // Миниатюра для квадратика истории — в десять раз легче полной картинки.
+    // У старых работ её может ещё не быть: фон доделывает, а пока — полная.
+    thumbUrl:    j.thumb_path ? publicUrl('results', j.thumb_path) : undefined,
     captionMain: j.caption_main ?? undefined,
     createdAt:   new Date(j.created_at).getTime(),
   }));

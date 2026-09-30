@@ -64,6 +64,7 @@ export interface Job {
   createdAt: number;
   thumbBg: string;
   dark?: boolean;
-  resultUrl?: string;     // публичный URL готовой картинки (для миниатюры на Home)
+  resultUrl?: string;     // публичный URL готовой картинки
+  thumbUrl?: string;      // уменьшенная копия для квадратика на Home (нет — берём resultUrl)
   captionMain?: string;   // первая строка подписи (preview под миниатюрой)
 }

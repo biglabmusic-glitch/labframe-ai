@@ -6,7 +6,7 @@ import { Pill } from '../components/primitives/Pill';
 import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
-import { api, type AdminPayment, type AdminStats, type AdminUser } from '../api/client';
+import { api, type AdminGrant, type AdminPayment, type AdminStats, type AdminUser } from '../api/client';
 import { WebApp } from '../telegram/webapp';
 
 type Tab = 'dashboard' | 'money' | 'users';
@@ -498,7 +498,19 @@ function UsersTab() {
 
 function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: () => void; onChanged: () => void }) {
   const [credits, setCredits] = useState('10');
+  const [reason, setReason] = useState('');
+  const [grants, setGrants] = useState<AdminGrant[] | null>(null);
   const [message, setMessage] = useState('');
+
+  // Журнал ручных начислений — чтобы при виде баланса без покупок было
+  // понятно, откуда он: приз, компенсация или что-то не то.
+  useEffect(() => {
+    let cancelled = false;
+    api.adminGrants(user.id)
+      .then(({ grants: g }) => { if (!cancelled) setGrants(g); })
+      .catch(() => { if (!cancelled) setGrants([]); });
+    return () => { cancelled = true; };
+  }, [user.id]);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -569,11 +581,32 @@ function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: (
           />
           <span style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)' }}>прибавится к балансу</span>
         </div>
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="За что: приз конкурса, компенсация…"
+          maxLength={200}
+          style={{
+            width: '100%', padding: '8px 10px', borderRadius: 8, marginBottom: 6,
+            background: 'rgba(239,243,255,0.04)', border: '1px solid var(--c-line)',
+            color: 'var(--c-on-dark)', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box',
+          }}
+        />
         <ActionBtn
           label={busy === 'credits' ? '⏳ выдаём…' : `+${credits || 0} на баланс`}
-          onClick={() => wrap('credits', () => api.adminGrantCredits(user.id, Number(credits) || 0))}
+          onClick={() => wrap('credits', () => api.adminGrantCredits(user.id, Number(credits) || 0, reason))}
           disabled={busy !== null || !credits || Number(credits) < 1}
         />
+        {grants && grants.length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--c-on-dark-3)', lineHeight: 1.5 }}>
+            {grants.map((g, i) => (
+              <div key={i}>
+                +{g.delta} · {new Date(g.createdAt).toLocaleDateString('ru-RU')}
+                {g.reason ? ` · ${g.reason}` : ''}
+              </div>
+            ))}
+          </div>
+        )}
 
         <Spacer />
 

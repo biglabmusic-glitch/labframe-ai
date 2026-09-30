@@ -121,7 +121,7 @@ export interface RewardResult {
 /**
  * Начисляет награду за первую оплату друга. Идемпотентна: бонус выдаётся,
  * только если ряд referrals реально перешёл joined→paid (ровно один ряд).
- * Вызывается из будущего платёжного вебхука (сейчас — из админ-экшна mark-paid).
+ * Вызывается из payment-webhook после каждой успешной оплаты.
  */
 export async function grantReferralReward(refereeId: number): Promise<RewardResult> {
   // Атомарный переход статуса: обновляем ТОЛЬКО строки в 'joined'.

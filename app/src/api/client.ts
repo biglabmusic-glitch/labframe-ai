@@ -127,6 +127,13 @@ export interface SaveBrandInput {
   fontId?: string;       // ID шрифта подписи из app/src/lib/fonts.ts
 }
 
+export interface AdminGrant {
+  delta: number;
+  reason: string | null;
+  adminId: number;
+  createdAt: string;
+}
+
 export interface ListJobsResponse {
   items: Array<{
     id: string;
@@ -134,6 +141,8 @@ export interface ListJobsResponse {
     format: FormatId;
     workType?: WorkType;
     resultUrl?: string;
+    /** Уменьшенная копия для квадратика истории. Нет — показываем resultUrl. */
+    thumbUrl?: string;
     captionMain?: string;
     createdAt: number;
   }>;
@@ -388,10 +397,17 @@ export const api = {
       body: JSON.stringify({ action: 'users', search, offset }),
     });
   },
-  async adminGrantCredits(userId: number, credits: number): Promise<{ ok: true; credits: number }> {
+  async adminGrantCredits(userId: number, credits: number, reason?: string): Promise<{ ok: true; credits: number }> {
     return request<{ ok: true; credits: number }>('/admin', {
       method: 'POST',
-      body: JSON.stringify({ action: 'grant-credits', userId, credits }),
+      body: JSON.stringify({ action: 'grant-credits', userId, credits, reason }),
+    });
+  },
+  /** Журнал ручных начислений человеку. */
+  async adminGrants(userId: number): Promise<{ grants: AdminGrant[] }> {
+    return request<{ grants: AdminGrant[] }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'grants', userId }),
     });
   },
   async adminSendMessage(userId: number, message: string): Promise<{ ok: true }> {
@@ -424,12 +440,6 @@ export const api = {
     return request<{ ok: boolean; already?: boolean; reason?: string }>('/apply-referral', {
       method: 'POST',
       body: JSON.stringify(input),
-    });
-  },
-  async adminMarkPaid(userId: number): Promise<{ ok: boolean; reason?: string }> {
-    return request<{ ok: boolean; reason?: string }>('/admin', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'mark-paid', userId }),
     });
   },
 
@@ -513,6 +523,12 @@ export function friendlyError(raw: string): { title: string; sub: string } {
     return {
       title: 'Генерации закончились',
       sub:   'Пополните баланс в разделе «Пакеты» — купленные генерации не сгорают.',
+    };
+  }
+  if (raw.includes('create_failed') || raw.includes('reserve_failed') || raw.includes('forbidden_path')) {
+    return {
+      title: 'Не получилось запустить обработку',
+      sub:   'Сбой на нашей стороне, генерация не списана. Загрузите фото ещё раз.',
     };
   }
   if (raw.includes('unsupported_type')) {

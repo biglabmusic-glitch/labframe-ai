@@ -6,8 +6,7 @@ Telegram Mini App для зубных техников: фото работы �
 
 ```
 app/        — фронт (React + Vite + TS + @twa-dev/sdk), 14 экранов, на Vercel
-bot/        — Telegram-бот (grammY), готов для Railway, но ещё НЕ задеплоен
-supabase/   — БД + Storage + 6 Edge Functions (Deno)
+supabase/   — БД + Storage + Edge Functions (Deno); бот — функция bot-webhook
 scripts/    — bootstrap-supabase.ps1 (интерактивный setup)
 design/     — HTML+JSX-референс (не код)
 specs/      — ТЗ, MVP, User Journey
@@ -23,7 +22,7 @@ HANDOFF.md  — дизайн-handoff для разработчиков
 | Vercel (фронт) | https://labframe-ai.vercel.app | ✅ env vars: VITE_API_BASE_URL + VITE_SUPABASE_ANON_KEY |
 | Supabase | project ref `mmegdmfmozgaycuyeacl`, region eu-west-1 | ✅ 4 таблицы + 3 buckets + 6 функций |
 | Telegram bot | @labframe_ai_bot, id `8845191717`, mini app: `t.me/labframe_ai_bot/app` | ✅ привязан к Vercel URL |
-| Railway (бот webhook) | — | ❌ ещё не задеплоен (бот пока без long-polling) |
+| Вебхук бота | Edge Function `bot-webhook` | ✅ продажи, воронка, поддержка. Второго вебхука быть не должно: setWebhook с другим адресом отключит этот |
 
 ## Edge Functions
 
@@ -160,17 +159,13 @@ supabase functions deploy admin --no-verify-jwt
 
 ## Известные блокеры
 
-🟡 **Бот: статус спорный, перед действиями проверь.** Запись ниже сделана до 24.08.2026,
-владелец 24.08.2026 сказал, что «всё работает» — но проверки `/start` в чате не было.
-Прежде чем что-то деплоить, просто напиши боту `/start` и посмотри, отвечает ли.
-Если да — удали этот блок, он вводит в заблуждение.
+✅ **Бот работает** (с сентября 2026) — это Edge Function `bot-webhook`, а не отдельный
+процесс. Старый бот на grammY для Railway удалён 30.09.2026: задеплоенный по старой
+инструкции, он перехватил бы вебхук и сломал продажи в чате.
 
-Что было записано раньше: Railway не поднят, `/start`, `/help`, `/app`, `/pricing` не отвечают.
-Мини-апп при этом открывается (menu button) и реф-ссылки `?startapp=ref_CODE` работают — им бот-процесс не нужен.
-Но пока юзер не начал диалог, Telegram запрещает боту писать первым, поэтому пуш результата
-в чат из `process-job` возвращает 403. Такие провалы теперь пишутся в `ai_calls`
-(provider=`telegram`) и видны в админке в «последних ошибках».
-Деплой: `bot/railway.json` уже готов, нужен только сам проект на Railway (DEPLOY.md шаг 4).
+Пока юзер не начал диалог, Telegram запрещает боту писать первым: пуш результата
+из `process-job` получает 403. Такие провалы пишутся в `ai_calls` (provider=`telegram`),
+а мини-апп после согласий просит разрешение писать в чат.
 
 ✅ **`401 bad_signature`** — починено. Причина: Telegram с конца 2024 добавил в initData поле
 `signature`, которое нужно исключать из `data_check_string` (коммит `b2d1731`).
@@ -313,8 +308,7 @@ deno check --allow-import supabase/functions/process-job/index.ts
    **Осталось**: гонять регулярно (руками или планировщиком) — скрипт снимает
    слепок на момент запуска, между запусками данные не защищены.
 
-4. **Бот нигде не запущен** — Railway не поднят, `/start` молчит, пуш результата в чат
-   не доходит. Конфиг `bot/railway.json` готов, DEPLOY.md шаг 4.
+4. ~~Бот нигде не запущен~~ — закрыто: бот живёт в Edge Function `bot-webhook`.
 
 5. Ротировать секреты, которые юзер шарил в чате (в т.ч. токен `sbp_…`).
 

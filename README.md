@@ -7,8 +7,7 @@ AI-студия для зубных техников в формате Telegram 
 ```
 .
 ├── app/         — Telegram Mini App (React + Vite + TypeScript + @twa-dev/sdk)
-├── bot/         — Telegram-бот (grammY, Railway)
-├── supabase/    — БД, Storage, Edge Functions (Image AI + Text AI)
+├── supabase/    — БД, Storage, Edge Functions (обработка, оплата, бот)
 ├── design/      — дизайн-референсы (HTML + JSX)
 ├── specs/       — ТЗ и пользовательские сценарии
 ├── HANDOFF.md   — дизайн-handoff для разработчиков
@@ -20,12 +19,9 @@ AI-студия для зубных техников в формате Telegram 
 ```powershell
 # фронт
 cd app && npm install && npm run dev          # http://localhost:5173
-
-# бот (long-polling)
-cd bot && npm install
-copy .env.example .env                         # подставь BOT_TOKEN
-npm run dev
 ```
+
+Бот — это Edge Function `supabase/functions/bot-webhook`, отдельного процесса нет.
 
 ## Прод
 
@@ -33,10 +29,10 @@ npm run dev
 
 1. GitHub → Vercel (фронт)
 2. @BotFather (бот + мини-апп)
-3. Railway (бот, webhook)
-4. Supabase (БД + Edge Functions + AI)
+3. Supabase (БД + Edge Functions, включая вебхук бота)
 
-Каждый `git push` в `main` пересобирает фронт и бота автоматически.
+Каждый `git push` в `main` пересобирает фронт. Функции Supabase деплоятся
+отдельно: `supabase functions deploy <имя> --no-verify-jwt`.
 
 ## Технический стек
 

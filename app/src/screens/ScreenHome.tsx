@@ -435,7 +435,8 @@ export function ScreenHome() {
               >
                 {p.resultUrl ? (
                   <img
-                    src={p.resultUrl}
+                    src={p.thumbUrl ?? p.resultUrl}
+                    loading="lazy"
                     alt=""
                     style={{
                       position: 'absolute',

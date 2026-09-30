@@ -1,13 +1,12 @@
 // POST /admin — единый роутер для админ-действий.
 // Доступ только юзерам из env ADMIN_IDS (telegram_id через запятую).
 //
-// Body: { action: 'stats' | 'users' | 'grant-credits' | 'send-message' | 'ban', ... }
+// Body: { action: 'stats' | 'users' | 'grant-credits' | 'grants' | 'send-message' | 'ban', ... }
 //
 // Намеренно одна функция вместо 6 — меньше деплоев, проще поддерживать.
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { sendMessage } from '../_shared/telegram.ts';
-import { grantReferralReward } from '../_shared/referral.ts';
 import { providerFinance, snapshotProviderBalance } from '../_shared/balance.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { STEP_GOALS, STEP_LABELS, type StepId } from '../_shared/funnel.ts';
@@ -21,13 +20,15 @@ interface AdminBody {
     | 'send-message'
     | 'ban'
     | 'set-admin'
-    | 'mark-paid'
     | 'payment-link'
     | 'payments'
-    | 'profile-link';
+    | 'profile-link'
+    | 'grants';
   // зависит от action — валидируем внутри switch
   userId?: number;
   credits?: number;
+  /** За что начислили — пишется в журнал. */
+  reason?: string;
   message?: string;
   banned?: boolean;
   isAdmin?: boolean;
@@ -64,11 +65,11 @@ Deno.serve(async (req) => {
   switch (body.action) {
     case 'stats':         return jsonResponse(await getStats());
     case 'users':         return jsonResponse(await listUsers(body.search ?? '', body.limit ?? 50, body.offset ?? 0));
-    case 'grant-credits': return handleGrantCredits(body);
+    case 'grant-credits': return handleGrantCredits(body, tg.id);
+    case 'grants':        return listGrants(body);
     case 'send-message':  return handleSendMessage(body);
     case 'ban':           return handleBan(body);
     case 'set-admin':     return handleSetAdmin(body, tg.id);
-    case 'mark-paid':     return handleMarkPaid(body);
     case 'payment-link':  return handlePaymentLink(body);
     case 'payments':      return listPayments(body.limit ?? 50);
     case 'profile-link':  return handleProfileLink(body, tg.id);
@@ -589,17 +590,54 @@ async function listUsers(search: string, limit: number, offset = 0) {
 
 // ─── actions ───────────────────────────────────────────────────────────────
 
-async function handleGrantCredits(body: AdminBody) {
+/**
+ * Ручное начисление: призы, компенсации, оплата мимо платёжки.
+ *
+ * Атомарно (add_credits), а не «прочитать и записать»: иначе генерация,
+ * списанная между чтением и записью, возвращалась бы человеку даром.
+ * И каждое начисление пишется в журнал — при аудите 30.09.2026 у троих
+ * нашёлся баланс без покупок, и отличить приз конкурса от взлома было нечем.
+ */
+async function handleGrantCredits(body: AdminBody, adminId: number) {
   if (!body.userId || !body.credits || body.credits < 1) {
     return jsonResponse({ error: 'bad_input' }, { status: 400 });
   }
-  // Ключевая кнопка первого этапа продаж: человек оплатил счёт из кабинета
-  // ЮKassa — владелец начисляет генерации отсюда, вручную.
-  const { data: cur } = await db.from('users').select('credits').eq('id', body.userId).maybeSingle();
-  const next = (cur?.credits ?? 0) + body.credits;
-  const { error } = await db.from('users').update({ credits: next }).eq('id', body.userId);
+  const { data: next, error } = await db.rpc('add_credits', {
+    p_user_id: body.userId,
+    p_delta: body.credits,
+  });
   if (error) return jsonResponse({ error: error.message }, { status: 500 });
+  if (next === null) return jsonResponse({ error: 'user_not_found' }, { status: 404 });
+
+  const { error: logErr } = await db.from('credit_grants').insert({
+    user_id: body.userId,
+    admin_id: adminId,
+    delta: body.credits,
+    reason: body.reason?.trim().slice(0, 200) || null,
+  });
+  if (logErr) console.error('журнал начислений не записался:', logErr.message);
+
   return jsonResponse({ ok: true, credits: next });
+}
+
+/** Последние ручные начисления человеку — для карточки в админке. */
+async function listGrants(body: AdminBody) {
+  if (!body.userId) return jsonResponse({ error: 'bad_input' }, { status: 400 });
+  const { data, error } = await db
+    .from('credit_grants')
+    .select('delta, reason, admin_id, created_at')
+    .eq('user_id', body.userId)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) return jsonResponse({ error: error.message }, { status: 500 });
+  return jsonResponse({
+    grants: (data ?? []).map((g) => ({
+      delta: g.delta,
+      reason: g.reason,
+      adminId: g.admin_id,
+      createdAt: g.created_at,
+    })),
+  });
 }
 
 async function handleSendMessage(body: AdminBody) {
@@ -683,15 +721,6 @@ async function handleSetAdmin(body: AdminBody, callerId: number) {
   const { error } = await db.from('users').update({ is_admin: body.isAdmin }).eq('id', body.userId);
   if (error) return jsonResponse({ error: error.message }, { status: 500 });
   return jsonResponse({ ok: true });
-}
-
-// ВРЕМЕННО: имитация первой оплаты друга для теста реферального начисления.
-// Когда подключим платёжный вебхук — он вызовет grantReferralReward напрямую,
-// а этот экшн можно удалить.
-async function handleMarkPaid(body: AdminBody) {
-  if (!body.userId) return jsonResponse({ error: 'bad_input' }, { status: 400 });
-  const result = await grantReferralReward(body.userId);
-  return jsonResponse(result);
 }
 
 // ─── payment-link ─────────────────────────────────────────────────────────
