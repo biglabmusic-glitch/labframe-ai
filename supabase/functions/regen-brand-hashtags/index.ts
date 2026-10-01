@@ -11,6 +11,7 @@
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { env } from '../_shared/env.ts';
+import { allowAction, tooOften } from '../_shared/rate-limit.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
@@ -19,6 +20,10 @@ Deno.serve(async (req) => {
   const auth = await authorize(req);
   if ('response' in auth) return auth.response;
   const tg = auth.user;
+
+  // Запрос к модели за наши деньги: брендовые хэштеги подбирают раз в месяц,
+  // десяти на час хватает с большим запасом.
+  if (!await allowAction(tg.id, 'regen-brand-hashtags', { limit: 10, windowSec: 3600 })) return tooOften();
 
   // Бренд — нужен для имени/лабы/уже введённых тегов.
   const { data: brand } = await db

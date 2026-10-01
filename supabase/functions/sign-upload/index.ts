@@ -6,6 +6,7 @@
 // kind='logo'  → bucket 'brand'  (логотип бренда мастера)
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
+import { allowAction, tooOften } from '../_shared/rate-limit.ts';
 
 // Расширения, которые сохраняем как есть. Всё остальное превращаем в jpg.
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif', 'gif']);
@@ -17,6 +18,10 @@ Deno.serve(async (req) => {
   const auth = await authorize(req);
   if ('response' in auth) return auth.response;
   const tg = auth.user;
+
+  // Каждая подпись — право записать файл в хранилище. Без ограничения один
+  // цикл в приложении мог бы забить место, за которое платим мы.
+  if (!await allowAction(tg.id, 'sign-upload', { limit: 60, windowSec: 3600 })) return tooOften();
 
   let body: { filename?: string; contentType?: string; kind?: 'photo' | 'logo' };
   try { body = await req.json(); }

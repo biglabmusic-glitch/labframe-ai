@@ -513,6 +513,12 @@ export function friendlyError(raw: string): { title: string; sub: string } {
       sub:   'Сервер не успел вернуть результат. Работа могла всё же дойти — загляните в «Ваши работы» или попробуйте ещё раз.',
     };
   }
+  if (raw.includes('rate_limited')) {
+    return {
+      title: 'Слишком часто',
+      sub:   'Подождите пару минут и попробуйте снова.',
+    };
+  }
   if (raw.includes('too_many_in_progress') || raw.includes('429 ')) {
     return {
       title: 'Уже обрабатывается фото',

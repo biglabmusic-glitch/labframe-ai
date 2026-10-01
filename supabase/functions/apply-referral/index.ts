@@ -3,6 +3,7 @@
 // Ставит привязку текущего юзера к пригласившему. Все анти-абьюз правила в applyReferral().
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { applyReferral, parseStartParam, normalizeCode } from '../_shared/referral.ts';
+import { allowAction, tooOften } from '../_shared/rate-limit.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
@@ -11,6 +12,10 @@ Deno.serve(async (req) => {
   const auth = await authorize(req);
   if ('response' in auth) return auth.response;
   const tg = auth.user;
+
+  // Промокод — четыре символа: перебором его можно подобрать. Десять попыток
+  // в час оставляют живому человеку запас, а перебор делают бессмысленным.
+  if (!await allowAction(tg.id, 'apply-referral', { limit: 10, windowSec: 3600 })) return tooOften();
 
   let body: { code?: string; startParam?: string };
   try { body = await req.json(); }

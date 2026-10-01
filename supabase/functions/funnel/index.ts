@@ -15,6 +15,7 @@ import {
 } from '../_shared/funnel.ts';
 import { ensureRefCode } from '../_shared/referral.ts';
 import { snapshotProviderBalance } from '../_shared/balance.ts';
+import { sendDailyDigest } from '../_shared/digest.ts';
 import { isUnreachable, sendMessage } from '../_shared/telegram.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -48,6 +49,10 @@ Deno.serve(async (req) => {
   if (snapshot.error) console.error('остаток провайдера не снялся:', snapshot.error);
 
   const now = Date.now();
+
+  // Утренняя сводка админам. Здесь же, потому что это единственное задание,
+  // которое просыпается каждый час и знает, который час в Москве.
+  await sendDailyDigest(now).catch((e) => console.error('сводка упала:', e));
   if (!isDaytimeMoscow(now)) return jsonResponse({ ok: true, skipped: 'night' });
 
   const users = await loadUsers(now);
