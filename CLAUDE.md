@@ -33,8 +33,24 @@ HANDOFF.md  — дизайн-handoff для разработчиков
 - `create-job` — insert в `jobs`, триггерит `process-job` через `EdgeRuntime.waitUntil` (без pg_cron), передавая `{ jobId }`
 - `get-job` — polling статуса для фронта
 - `process-job` — воркер: Replicate (Flux Kontext) + polza.ai (gpt-4o-mini), пушит результат в TG-чат через бота
-- `notify-bot` — служебная
 - `payment-webhook` — уведомление Продамуса об оплате: проверяет подпись, начисляет `credits`
+- `bot-webhook` — бот: продажи в чате, поддержка, отписка от воронки
+- `funnel` — почасовое задание: автоворонка, замер остатка polza, утренняя сводка админам
+- `admin` — админка: статистика, юзеры, ручные начисления
+
+### Права на новые таблицы и функции
+
+С 30.10.2026 Supabase не раздаёт права на новые таблицы в `public` автоматически.
+Создавая таблицу — в той же миграции пиши:
+
+```sql
+grant select, insert, update, delete on public.<таблица> to service_role;
+```
+
+`anon` и `authenticated` не давать НИКОГДА: наружу ничего не отдаём, всё ходит
+через Edge Functions с проверкой initData (см. 0025 и 0029). Новую функцию в
+`public` закрывать так же явно: `revoke execute … from public, anon, authenticated`
+и `grant execute … to service_role` — иначе она торчит наружу как `/rest/v1/rpc/<имя>`.
 
 ### Как воркер выбирает job
 
