@@ -73,6 +73,17 @@ export function buyLink(pkg: Package): string {
   return `https://t.me/${BOT_TG}?start=buy_${pkg.id}`;
 }
 
+/**
+ * Запасной путь для подарка — та же дорога через бота.
+ *
+ * Префикс именно `giftbuy_`: `gift_` занят ссылкой на активацию подарка,
+ * которую покупатель пересылает другу. Путать их нельзя — за одной стоит
+ * оплата, за другой выдача генераций.
+ */
+export function giftLink(pkg: Package): string {
+  return `https://t.me/${BOT_TG}?start=giftbuy_${pkg.id}`;
+}
+
 /** Склонение «генерация/генерации/генераций» для подписей. */
 export function pluralGenerations(n: number): string {
   const mod10 = n % 10;

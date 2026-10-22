@@ -14,7 +14,7 @@
 // поэтому наружу почти всегда отдаём 200: повтор всё равно не починит ни
 // незаданный секрет, ни отвалившийся sendMessage, а очередь засорит.
 import { db } from '../_shared/db.ts';
-import { PACKAGES, type CreditPackage } from '../_shared/packages.ts';
+import { PACKAGES, normalizeGiftCode, type CreditPackage } from '../_shared/packages.ts';
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { applyReferral, parseStartParam } from '../_shared/referral.ts';
 import { CALLBACK_PACKAGES, CALLBACK_STOP, communityLinks } from '../_shared/funnel.ts';
@@ -65,11 +65,28 @@ function packageByLabel(text: string): CreditPackage | undefined {
 // Кнопка, раскрывающая пакеты. Отдельной строкой над ними: пока человек не
 // собрался покупать, три цены в клавиатуре только занимают экран.
 const PAY_BUTTON = '💳 Оплатить генерации';
+const GIFT_BUTTON = '🎁 Подарить';
 const SUPPORT_BUTTON = '🆘 Поддержка';
 
 const PICK_TEXT =
   'Выберите пакет — кнопки ниже.\n\n' +
   'Генерации не сгорают. Обычная работа стоит 1, с декором — 3.';
+
+const GIFT_PICK_TEXT =
+  'Какой пакет дарим? Кнопки ниже.\n\n' +
+  'После оплаты пришлю ссылку — перешлите её тому, кому дарите. ' +
+  'Он откроет, и генерации окажутся у него на балансе. Подарок бессрочный.';
+
+// Подпись кнопки подарочного пакета: та же цена, но с подарком впереди, чтобы
+// нажатие нельзя было спутать с обычной покупкой.
+function giftLabel(p: CreditPackage): string {
+  return `🎁 ${packageLabel(p)}`;
+}
+
+function giftPackageByLabel(text: string): CreditPackage | undefined {
+  const t = normalize(text);
+  return PACKAGES.find((p) => normalize(giftLabel(p)) === t);
+}
 
 // Кнопки запуска мини-аппа в этой клавиатуре БЫТЬ НЕ ДОЛЖНО.
 //
@@ -84,7 +101,22 @@ const PICK_TEXT =
 
 /** Клавиатура оплаты: кнопка «Оплатить» и строка пакетов. */
 function buyKeyboard(): Markup {
-  return { keyboard: [[PAY_BUTTON, ...(supportUrl() ? [SUPPORT_BUTTON] : [])], PACKAGES.map(packageLabel)] };
+  return {
+    keyboard: [
+      [PAY_BUTTON, GIFT_BUTTON, ...(supportUrl() ? [SUPPORT_BUTTON] : [])],
+      PACKAGES.map(packageLabel),
+    ],
+  };
+}
+
+/** Та же клавиатура, но нижняя строка — подарочные пакеты. */
+function giftKeyboard(): Markup {
+  return {
+    keyboard: [
+      [PAY_BUTTON, GIFT_BUTTON, ...(supportUrl() ? [SUPPORT_BUTTON] : [])],
+      PACKAGES.map(giftLabel),
+    ],
+  };
 }
 
 interface TgFrom {
@@ -171,10 +203,25 @@ async function onMessage(msg: NonNullable<Update['message']>) {
   }
 
   // Нажатие кнопки пакета — обычное текстовое сообщение с подписью кнопки.
+  // Подарочные проверяем первыми: их подпись содержит обычную целиком.
+  const giftPkg = giftPackageByLabel(text);
+  if (giftPkg) {
+    if (await blocked(from, chatId)) return;
+    await sendPaymentLink(from, chatId, giftPkg.id, true);
+    return;
+  }
+
   const pkg = packageByLabel(text);
   if (pkg) {
     if (await blocked(from, chatId)) return;
     await sendPaymentLink(from, chatId, pkg.id);
+    return;
+  }
+
+  // Нажали «Подарить» — раскрываем подарочные пакеты.
+  if (normalize(text) === normalize(GIFT_BUTTON)) {
+    if (await blocked(from, chatId)) return;
+    await sendMessage(chatId, GIFT_PICK_TEXT, giftKeyboard());
     return;
   }
 
@@ -211,11 +258,28 @@ async function onMessage(msg: NonNullable<Update['message']>) {
     return;
   }
 
+  // Покупка подарка из мини-аппа. Префикс свой, а не gift_: тем помечена
+  // ссылка на активацию, и путать оплату с выдачей генераций нельзя.
+  if (cmd === '/start' && payload.startsWith('giftbuy_')) {
+    if (await blocked(from, chatId)) return;
+    await sendPaymentLink(from, chatId, payload.slice('giftbuy_'.length).toLowerCase(), true);
+    return;
+  }
+
   // Переход по пригласительной ссылке t.me/<bot>?start=ref_ZUB-XXXX.
   //
   // Мини-апп свои ссылки шлёт через startapp и разбирает сам, но код гуляет и
   // по чатам обычной ссылкой на бота — раньше её было некому прочитать, и
   // приглашение просто терялось. Теперь /start наш, и терять больше нечего.
+  // Активация подарка: t.me/<bot>?start=gift_DAR-XXXXXX.
+  // Ссылку пересылают в любой чат, поэтому открыть её может кто угодно —
+  // и это задумано: кто открыл, тот и получил генерации.
+  if (cmd === '/start' && payload.startsWith('gift_')) {
+    if (await blocked(from, chatId)) return;
+    await claimGift(from, chatId, payload.slice('gift_'.length));
+    return;
+  }
+
   if (cmd === '/start' && payload.startsWith('ref_')) {
     if (await blocked(from, chatId)) return;
     const res = await applyReferral(from.id, parseStartParam(payload));
@@ -369,16 +433,20 @@ function referralReply(res: { ok: boolean; already?: boolean; reason?: string })
 }
 
 /** Собирает ссылку и отправляет её кнопкой «Оплатить». */
-async function sendPaymentLink(from: TgFrom, chatId: number, packageId: string) {
+async function sendPaymentLink(from: TgFrom, chatId: number, packageId: string, gift = false) {
   try {
-    const link = buildPaymentLink(from.id, packageId, `@${from.username ?? from.id}`);
-    console.log(`ссылка через бота: юзер ${from.id}, ${link.orderId}, ${link.priceRub}₽`);
+    const link = buildPaymentLink(from.id, packageId, `@${from.username ?? from.id}`, gift);
+    console.log(`ссылка через бота: юзер ${from.id}, ${link.orderId}, ${link.priceRub}₽${gift ? ', подарок' : ''}`);
 
     await sendMessage(
       chatId,
-      `Пакет: ${link.credits} генераций за ${link.priceRub} ₽.\n\n` +
-      'Нажмите кнопку ниже — откроется страница оплаты. ' +
-      'Генерации зачислятся автоматически сразу после оплаты.',
+      gift
+        ? `Подарок: ${link.credits} генераций за ${link.priceRub} ₽.\n\n` +
+          'Нажмите кнопку ниже — откроется страница оплаты. Сразу после оплаты ' +
+          'пришлю ссылку, которую останется переслать тому, кому дарите.'
+        : `Пакет: ${link.credits} генераций за ${link.priceRub} ₽.\n\n` +
+          'Нажмите кнопку ниже — откроется страница оплаты. ' +
+          'Генерации зачислятся автоматически сразу после оплаты.',
       { inline: [[{ text: `Оплатить ${link.priceRub} ₽`, url: link.url }]] },
     );
   } catch (e) {
@@ -425,4 +493,63 @@ async function blocked(from: TgFrom, chatId: number): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+/**
+ * Активация подарка по коду из ссылки.
+ *
+ * Весь замок — в claim_gift: обновление строки проходит, только пока подарок
+ * никем не взят. Двое, открывшие ссылку одновременно, не получат генерации
+ * дважды, а второму честно скажем, что подарок уже забрали.
+ */
+async function claimGift(from: TgFrom, chatId: number, rawCode: string) {
+  const code = normalizeGiftCode(rawCode);
+  if (!code) {
+    await sendMessage(chatId, 'Код подарка не разобрал. Откройте ссылку целиком.', {
+      inline: [[openAppButton()]],
+    });
+    return;
+  }
+
+  const { data, error } = await db.rpc('claim_gift', { p_code: code, p_user_id: from.id });
+  if (error) {
+    console.error('claim_gift упал:', error.message);
+    await sendMessage(chatId, 'Не получилось забрать подарок, попробуйте через минуту.');
+    return;
+  }
+
+  const gift = Array.isArray(data) ? data[0] : data;
+  if (!gift) {
+    // Либо кода нет вовсе, либо подарок уже забрали — для человека это одно и
+    // то же: генераций он не получит. Разницу пишем только в лог.
+    console.log(`подарок ${code} не выдан юзеру ${from.id}: нет кода или уже активирован`);
+    await sendMessage(
+      chatId,
+      'Этот подарок уже активирован — генерации забрал тот, кто открыл ссылку раньше.\n\n' +
+      'Если это ошибка, напишите в поддержку.',
+      { inline: [[openAppButton()], ...(supportButton().length ? [supportButton()] : [])] },
+    );
+    return;
+  }
+
+  const { data: me } = await db.from('users').select('credits').eq('id', from.id).maybeSingle();
+
+  await sendMessage(
+    chatId,
+    `Подарок ваш 🎁\n\nНа баланс зачислено ${gift.credits} генераций.` +
+    (typeof me?.credits === 'number' ? ` Всего теперь ${me.credits}.` : '') +
+    `\n\n${WELCOME_BODY}`,
+    { inline: [[openAppButton('Открыть и попробовать')]] },
+  );
+
+  // Дарителю — что подарок дошёл. Без имени получателя: человек мог переслать
+  // ссылку кому угодно, и раскрывать, кто именно её открыл, мы не вправе.
+  try {
+    await sendMessage(
+      Number(gift.buyer_id),
+      `Ваш подарок забрали 🎁\n\n${gift.credits} генераций ушли адресату. Спасибо, что делитесь LabFrame.`,
+    );
+  } catch (e) {
+    console.error('не смогли сообщить дарителю:', e instanceof Error ? e.message : e);
+  }
 }

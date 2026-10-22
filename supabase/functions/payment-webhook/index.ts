@@ -10,7 +10,7 @@
 // 4xx отдаём только там, где повтор бессмысленен (нет подписи, битое тело).
 import { jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
-import { amountMatches, parseOrderId } from '../_shared/packages.ts';
+import { amountMatches, generateGiftCode, parseOrderId } from '../_shared/packages.ts';
 import { parsePhpFormBody, verifySignature, type PhpValue } from '../_shared/prodamus.ts';
 import { grantReferralReward } from '../_shared/referral.ts';
 import { sendMessage } from '../_shared/telegram.ts';
@@ -97,6 +97,10 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, ignored: 'amount_mismatch' });
   }
 
+  // Подарок идёт своей дорогой: деньги записываем как выручку, а генерации
+  // никому не начисляем — они ждут в коде, пока его не откроют по ссылке.
+  if (order.gift) return await handleGift(orderId, order, data);
+
   // Ключ идемпотентности — UUID Продамуса, а НЕ наш order_num, и это важно.
   // Наш номер живёт в ссылке: если человек откроет одну и ту же ссылку дважды
   // и дважды заплатит, order_num у обоих платежей совпадёт, и второй пакет
@@ -172,3 +176,68 @@ Deno.serve(async (req) => {
 
   return jsonResponse({ ok: true, credited: order.pkg.credits });
 });
+
+/**
+ * Оплачен подарок: записываем выручку и заводим подарочный код.
+ *
+ * Генерации не начисляются никому — они ждут в коде. Покупателю шлём ссылку,
+ * которую он перешлёт кому захочет: открывший её и получит пакет, даже если
+ * видит LabFrame впервые.
+ */
+async function handleGift(
+  orderId: string,
+  order: { tgId: number; pkg: { id: string; credits: number; priceRub: number } },
+  raw: unknown,
+): Promise<Response> {
+  const code = generateGiftCode();
+
+  const { data: created, error } = await db.rpc('apply_gift_payment', {
+    p_order_id:   orderId,
+    p_buyer_id:   order.tgId,
+    p_package_id: order.pkg.id,
+    p_credits:    order.pkg.credits,
+    p_amount:     order.pkg.priceRub,
+    p_raw:        raw,
+    p_code:       code,
+  });
+
+  if (error) {
+    console.error('apply_gift_payment упал:', error.message);
+    return jsonResponse({ error: 'apply_failed' }, { status: 500 });
+  }
+  if (!created) {
+    console.log(`повторное уведомление о подарке, уже заводили: ${orderId}`);
+    return jsonResponse({ ok: true, duplicate: true });
+  }
+
+  console.log(`подарок ${code} на ${order.pkg.credits} генераций от юзера ${order.tgId}`);
+
+  const bot = Deno.env.get('BOT_USERNAME') ?? 'labframe_ai_bot';
+  const link = `https://t.me/${bot}?start=gift_${code}`;
+  const share = `https://t.me/share/url?url=${encodeURIComponent(link)}` +
+    `&text=${encodeURIComponent(`Дарю тебе ${order.pkg.credits} генераций в LabFrame AI — фото работы превращается в готовый пост. Забирай 👇`)}`;
+
+  try {
+    await sendMessage(
+      order.tgId,
+      `Подарок готов 🎁\n\n${order.pkg.credits} генераций ждут того, кому вы их отдадите. ` +
+      'Перешлите ему ссылку ниже — он откроет её, и генерации сразу окажутся у него на балансе.\n\n' +
+      `Ссылка: ${link}\nКод: ${code}\n\n` +
+      'Подарок бессрочный, активировать можно когда угодно. Когда его заберут, я вам напишу.',
+      { inline: [[{ text: 'Отправить другу', url: share }]] },
+    );
+  } catch (e) {
+    console.error('не смогли отправить подарок покупателю:', e instanceof Error ? e.message : e);
+  }
+
+  const { data: u } = await db
+    .from('users').select('username, first_name').eq('id', order.tgId).maybeSingle();
+  const who = [u?.first_name, u?.username ? `@${u.username}` : null].filter(Boolean).join(' ')
+    || `id ${order.tgId}`;
+  notifyAdmins(
+    `🎁 Подарок: ${order.pkg.priceRub} ₽\n\n${who} купил ${order.pkg.credits} генераций в подарок. ` +
+    `Код ${code} ждёт активации.`,
+  ).catch(() => { /* уведомление не должно мешать оплате */ });
+
+  return jsonResponse({ ok: true, gift: code });
+}

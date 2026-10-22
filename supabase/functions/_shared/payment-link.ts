@@ -39,6 +39,7 @@ export function buildPaymentLink(
   tgId: number,
   packageId: string,
   customerLabel: string,
+  gift = false,
 ): PaymentLink {
   const pkg = packageById(packageId);
   if (!pkg) {
@@ -50,14 +51,18 @@ export function buildPaymentLink(
   const formUrl = (Deno.env.get('PRODAMUS_FORM_URL') ?? '').replace(/\/+$/, '');
   if (!formUrl) throw new PaymentLinkError('not_configured', 500);
 
-  const orderId = buildOrderId(tgId, pkg.id);
+  const orderId = buildOrderId(tgId, pkg.id, gift);
 
   const q = new URLSearchParams({
     order_id: orderId,
-    customer_extra: `Пакет ${pkg.credits} генераций для ${customerLabel}`,
+    customer_extra: gift
+      ? `Подарок: ${pkg.credits} генераций, оплатил ${customerLabel}`
+      : `Пакет ${pkg.credits} генераций для ${customerLabel}`,
     do: 'pay',
   });
-  q.set('products[0][name]', `${pkg.credits} генераций LabFrame AI`);
+  q.set('products[0][name]', gift
+    ? `${pkg.credits} генераций LabFrame AI в подарок`
+    : `${pkg.credits} генераций LabFrame AI`);
   q.set('products[0][price]', String(pkg.priceRub));
   q.set('products[0][quantity]', '1');
 

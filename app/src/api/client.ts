@@ -483,10 +483,10 @@ export interface PaymentLink {
  * потом начислять — фронт передаёт только id пакета. Подменить сумму, правя
  * запрос, бесполезно: payment-webhook сверяет её с серверным прайсом.
  */
-export function createPaymentLink(packageId: string): Promise<PaymentLink> {
+export function createPaymentLink(packageId: string, gift = false): Promise<PaymentLink> {
   return request<PaymentLink>('/payment-link', {
     method: 'POST',
-    body: JSON.stringify({ packageId }),
+    body: JSON.stringify({ packageId, gift }),
   });
 }
 

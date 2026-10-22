@@ -16,6 +16,8 @@ import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 
 interface Body {
   packageId?: string;
+  /** true — пакет покупается в подарок: после оплаты придёт код, а не генерации. */
+  gift?: boolean;
 }
 
 Deno.serve(async (req) => {
@@ -59,8 +61,8 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const link = buildPaymentLink(tg.id, body.packageId ?? '', `@${tg.username ?? tg.id}`);
-    console.log(`ссылка на оплату: юзер ${tg.id}, ${link.orderId}, ${link.priceRub}₽`);
+    const link = buildPaymentLink(tg.id, body.packageId ?? '', `@${tg.username ?? tg.id}`, body.gift === true);
+    console.log(`ссылка на оплату: юзер ${tg.id}, ${link.orderId}, ${link.priceRub}₽${body.gift ? ', подарок' : ''}`);
     return jsonResponse({ ok: true, ...link });
   } catch (e) {
     if (e instanceof PaymentLinkError) {

@@ -1,5 +1,5 @@
-import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { PACKAGES, amountMatches, buildOrderId, packageById, parseOrderId } from './packages.ts';
+import { assertEquals, assertMatch } from 'https://deno.land/std@0.224.0/assert/mod.ts';
+import { PACKAGES, amountMatches, buildOrderId, generateGiftCode, normalizeGiftCode, packageById, parseOrderId } from './packages.ts';
 
 Deno.test('парсинг order_id: достаёт telegram id и пакет', () => {
   const r = parseOrderId('lf-888181907-p50-a1b2c3d4e5');
@@ -50,4 +50,31 @@ Deno.test('прайс совпадает с фронтом (app/src/lib/plans.ts
 
   assertEquals(front.length, PACKAGES.length, 'разное число пакетов');
   assertEquals(front, PACKAGES);
+});
+
+Deno.test('подарочный заказ отличается префиксом и разбирается как подарок', () => {
+  const gift = parseOrderId(buildOrderId(42, 'p50', true));
+  assertEquals(gift?.gift, true);
+  assertEquals(gift?.tgId, 42);
+  assertEquals(gift?.pkg.credits, 50);
+
+  // Обычная покупка подарком не становится — иначе генерации ушли бы в код
+  // вместо баланса покупателя.
+  assertEquals(parseOrderId(buildOrderId(42, 'p50'))?.gift, false);
+  assertEquals(parseOrderId('lf-888181907-p50-a1b2c3d4e5')?.gift, false);
+  assertEquals(parseOrderId('lfg-888181907-p50-a1b2c3d4e5')?.gift, true);
+});
+
+Deno.test('код подарка: читаемый алфавит и устойчивый разбор', () => {
+  const code = generateGiftCode();
+  assertMatch(code, /^DAR-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/);
+
+  // Человек может прислать код как угодно — приводим к одному виду.
+  assertEquals(normalizeGiftCode(' dar-ab12cd '), 'DAR-AB12CD');
+  assertEquals(normalizeGiftCode('DAR AB12CD'), 'DARAB12CD');
+  assertEquals(normalizeGiftCode(''), '');
+
+  // Коды не повторяются: иначе второй подарок не создался бы (code unique).
+  const many = new Set(Array.from({ length: 200 }, generateGiftCode));
+  assertEquals(many.size, 200);
 });

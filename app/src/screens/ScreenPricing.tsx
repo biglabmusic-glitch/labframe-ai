@@ -6,7 +6,7 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import { WebApp } from '../telegram/webapp';
-import { BOT_TG, PACKAGES, buyLink, pluralGenerations } from '../lib/plans';
+import { BOT_TG, PACKAGES, buyLink, giftLink, pluralGenerations } from '../lib/plans';
 import { createPaymentLink } from '../api/client';
 import { PromoCodeField } from '../components/PromoCodeField';
 import { useApp } from '../state/AppContext';
@@ -29,27 +29,32 @@ export function ScreenPricing() {
   const canBuy = BOT_TG !== '';
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Подарок — тот же пакет и та же оплата, разница только в том, кому достанутся
+  // генерации: себе на баланс или в код, который человек перешлёт другому.
+  const [gift, setGift] = useState(false);
 
   useBackButton(back);
   useMainButton({
     text: busy
       ? 'Готовим оплату…'
-      : canBuy
-        ? `Купить ${sel.count} за ${sel.price.toLocaleString('ru-RU')} ₽`
-        : 'Скоро',
+      : !canBuy
+        ? 'Скоро'
+        : gift
+          ? `Подарить ${sel.count} за ${sel.price.toLocaleString('ru-RU')} ₽`
+          : `Купить ${sel.count} за ${sel.price.toLocaleString('ru-RU')} ₽`,
     progress: busy,
     enabled: canBuy && !busy,
     onClick: () => {
       if (!canBuy || busy) return;
       setBusy(true);
       setFailed(false);
-      createPaymentLink(sel.id)
+      createPaymentLink(sel.id, gift)
         .then(({ url }) => WebApp?.openLink?.(url))
         .catch(() => {
           // Бэкенд не ответил — уводим в бота: там та же покупка живёт
           // независимым путём, человек не остаётся ни с чем.
           setFailed(true);
-          WebApp?.openTelegramLink?.(buyLink(sel));
+          WebApp?.openTelegramLink?.(gift ? giftLink(sel) : buyLink(sel));
         })
         .finally(() => setBusy(false));
     },
@@ -70,6 +75,51 @@ export function ScreenPricing() {
           НА БАЛАНСЕ: {user.credits} {pluralGenerations(user.credits)}
         </div>
       </div>
+
+      {/* Себе или в подарок — переключатель, а не отдельный экран: пакеты и цены
+          те же, меняется только адресат генераций. */}
+      <div style={{ padding: '0 16px 14px', display: 'flex', gap: 6 }}>
+        {([false, true] as const).map((mode) => (
+          <button
+            key={String(mode)}
+            type="button"
+            onClick={() => setGift(mode)}
+            style={{
+              flex: 1,
+              padding: '9px 12px',
+              borderRadius: 999,
+              fontSize: 12.5,
+              fontWeight: 600,
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              border: gift === mode ? 'none' : '1px solid var(--c-line)',
+              background: gift === mode ? 'var(--c-accent)' : 'transparent',
+              color: gift === mode ? 'var(--c-ink)' : 'var(--c-on-dark-2)',
+            }}
+          >
+            {mode ? '🎁 В подарок' : 'Себе'}
+          </button>
+        ))}
+      </div>
+
+      {gift && (
+        <div
+          style={{
+            margin: '0 16px 14px',
+            padding: 12,
+            borderRadius: 14,
+            background: 'rgba(147,213,225,0.08)',
+            border: '1px solid rgba(147,213,225,0.22)',
+            fontSize: 12.5,
+            lineHeight: 1.5,
+            color: 'var(--c-on-dark-2)',
+          }}
+        >
+          После оплаты бот пришлёт ссылку. Перешлите её тому, кому дарите — он откроет,
+          и генерации окажутся у него на балансе. Подарок бессрочный, а вам придёт
+          сообщение, когда его заберут.
+        </div>
+      )}
 
       <div style={{ padding: '0 16px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {PACKAGES.map((p) => {

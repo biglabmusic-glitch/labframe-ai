@@ -34,28 +34,53 @@ export function amountMatches(pkg: CreditPackage, sum: string): boolean {
 }
 
 /**
- * Идентификатор заказа: `lf-<tgId>-<packageId>-<nonce>`.
- * tgId и пакет берём отсюда, а не из отдельных полей уведомления: order_id
- * входит в подписанные данные, значит подделать его нельзя.
+ * Идентификатор заказа: `lf-<tgId>-<packageId>-<nonce>`, а для подарка
+ * `lfg-…`. tgId, пакет и признак подарка берём отсюда, а не из отдельных полей
+ * уведомления: order_id входит в подписанные данные, значит подделать его
+ * нельзя. Будь «это подарок» отдельным полем, покупатель мог бы получить и
+ * генерации себе, и подарочный код в придачу.
  */
 export interface ParsedOrder {
   tgId: number;
   pkg: CreditPackage;
+  /** true — пакет куплен в подарок: генерации ждут в коде, а не на балансе покупателя. */
+  gift: boolean;
 }
 
+const ORDER_RE = /^(lf|lfg)-(\d{1,20})-([a-z0-9]+)-[A-Za-z0-9]+$/;
+
 export function parseOrderId(orderId: string): ParsedOrder | null {
-  const m = /^lf-(\d{1,20})-([a-z0-9]+)-[A-Za-z0-9]+$/.exec(orderId);
+  const m = ORDER_RE.exec(orderId);
   if (!m) return null;
 
-  const tgId = Number(m[1]);
+  const tgId = Number(m[2]);
   if (!Number.isSafeInteger(tgId) || tgId <= 0) return null;
 
-  const pkg = packageById(m[2]);
-  return pkg ? { tgId, pkg } : null;
+  const pkg = packageById(m[3]);
+  return pkg ? { tgId, pkg, gift: m[1] === 'lfg' } : null;
 }
 
 /** Собирает order_id для новой ссылки на оплату. */
-export function buildOrderId(tgId: number, packageId: string): string {
+export function buildOrderId(tgId: number, packageId: string, gift = false): string {
   const nonce = crypto.randomUUID().replace(/-/g, '').slice(0, 10);
-  return `lf-${tgId}-${packageId}-${nonce}`;
+  return `${gift ? 'lfg' : 'lf'}-${tgId}-${packageId}-${nonce}`;
+}
+
+/**
+ * Код подарка для ссылки t.me/<бот>?start=gift_<код>.
+ * Алфавит без похожих символов: код люди читают и диктуют.
+ */
+const GIFT_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function generateGiftCode(): string {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  let s = '';
+  for (const b of bytes) s += GIFT_ALPHABET[b % GIFT_ALPHABET.length];
+  return `DAR-${s}`;
+}
+
+/** Приводит код к каноничному виду: человек может прислать его как угодно. */
+export function normalizeGiftCode(raw: string): string {
+  return (raw ?? '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
 }
