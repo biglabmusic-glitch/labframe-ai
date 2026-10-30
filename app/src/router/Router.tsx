@@ -29,6 +29,7 @@ export type RouteId =
   | 'pricing'
   | 'myplan'
   | 'admin'
+  | 'smile-preview'
   | 'invite'
   | 'help';
 

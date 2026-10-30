@@ -221,6 +221,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             avatarUrl:  me.user!.photoUrl   ?? p.avatarUrl,
             credits:    me.user!.credits ?? 0,
             isAdmin:    me.user!.isAdmin ?? false,
+            canSmilePreview: me.user!.canSmilePreview ?? false,
             refCode:        me.user!.refCode ?? p.refCode,
             referralsCount: me.user!.referralsCount ?? 0,
             referralsPaid:  me.user!.referralsPaid ?? 0,

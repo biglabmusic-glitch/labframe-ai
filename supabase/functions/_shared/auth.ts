@@ -3,7 +3,7 @@
 // Алгоритм: https://core.telegram.org/bots/webapps#validating-data-received-via-the-web-app
 // Reference-валидатор от ядра telegram-apps — используем его как первый эшелон,
 // наш ручной HMAC оставлен как запасной для диагностики.
-import { validate as refValidate } from 'https://esm.sh/@telegram-apps/init-data-node@2.0.5';
+import { validate as refValidate } from 'npm:@telegram-apps/init-data-node@2.0.5';
 import { env } from './env.ts';
 
 export interface TgUser {

@@ -359,9 +359,30 @@ export function ScreenHome() {
         )}
       </div>
 
-      {admin && (
+      {(user.canSmilePreview || admin) && (
         <div style={{ padding: '0 16px 12px' }}>
-          <Card
+          {user.canSmilePreview && <Card
+            kind="dark"
+            pad={16}
+            radius={18}
+            onClick={() => push('smile-preview')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10,
+              background: 'rgba(147,213,225,0.08)',
+              border: '1px solid rgba(147,213,225,0.25)',
+            }}
+          >
+            <IconTooth size={26} color="var(--c-accent)" />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Примерить улыбку</div>
+              <div style={{ fontSize: 11, color: 'var(--c-on-dark-2)', marginTop: 3 }}>
+                Закрытый тест · фото под защитой
+              </div>
+            </div>
+            <Tag kind="dark" style={{ fontSize: 9 }}>ТЕСТ</Tag>
+            <IconArrow size={14} color="var(--c-accent)" />
+          </Card>}
+          {admin && <Card
             kind="dark"
             pad={12}
             radius={16}
@@ -382,7 +403,7 @@ export function ScreenHome() {
               </div>
             </div>
             <IconArrow size={14} color="var(--c-on-dark-3)" />
-          </Card>
+          </Card>}
         </div>
       )}
 

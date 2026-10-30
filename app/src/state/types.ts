@@ -20,6 +20,8 @@ export interface User {
   /** Остаток генераций. Не сгорает, пополняется покупкой пакета. */
   credits: number;
   isAdmin?: boolean;
+  /** Закрытый пилот: отдельное серверное разрешение для приглашённых тестеров. */
+  canSmilePreview?: boolean;
   refCode?: string;
   referralsCount?: number;
   referralsPaid?: number;

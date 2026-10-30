@@ -20,6 +20,7 @@ interface AdminBody {
     | 'send-message'
     | 'ban'
     | 'set-admin'
+    | 'set-smile-tester'
     | 'payment-link'
     | 'payments'
     | 'profile-link'
@@ -32,6 +33,7 @@ interface AdminBody {
   message?: string;
   banned?: boolean;
   isAdmin?: boolean;
+  smileTester?: boolean;
   packageId?: string;
   search?: string;
   limit?: number;
@@ -41,9 +43,9 @@ interface AdminBody {
 
 // Админ = в env ADMIN_IDS (bootstrap) ИЛИ флаг is_admin в БД (назначенные).
 async function isAdmin(telegramId: number): Promise<boolean> {
-  if (envAdminIds().includes(telegramId)) return true;
-  const { data } = await db.from('users').select('is_admin').eq('id', telegramId).maybeSingle();
-  return Boolean(data?.is_admin);
+  const { data, error } = await db.from('users').select('is_admin, banned').eq('id', telegramId).maybeSingle();
+  if (error || data?.banned) return false;
+  return envAdminIds().includes(telegramId) || data?.is_admin === true;
 }
 
 Deno.serve(async (req) => {
@@ -70,6 +72,7 @@ Deno.serve(async (req) => {
     case 'send-message':  return handleSendMessage(body);
     case 'ban':           return handleBan(body);
     case 'set-admin':     return handleSetAdmin(body, tg.id);
+    case 'set-smile-tester': return handleSetSmileTester(body);
     case 'payment-link':  return handlePaymentLink(body);
     case 'payments':      return listPayments(body.limit ?? 50);
     case 'profile-link':  return handleProfileLink(body, tg.id);
@@ -498,6 +501,7 @@ function bucketByDay(rows: { created_at: string; status: string }[]) {
 // Колонки запрашиваем строкой, чтобы при отсутствии is_admin (миграция 0009
 // ещё не применена) откатиться на набор без неё — список не должен пропадать.
 const COLS_WITH_ADMIN = 'id, username, first_name, last_name, credits, banned, is_admin, last_seen_at, created_at';
+const COLS_WITH_SMILE = `${COLS_WITH_ADMIN}, smile_tester`;
 const COLS_NO_ADMIN   = 'id, username, first_name, last_name, credits, banned, last_seen_at, created_at';
 
 // Форма строки одинакова для обоих наборов колонок; is_admin опционален, потому что
@@ -510,6 +514,7 @@ interface AdminUserRow {
   credits: number | null;       // остаток генераций (миграция 0016)
   banned: boolean | null;
   is_admin?: boolean | null;
+  smile_tester?: boolean | null;
   last_seen_at: string | null;
   created_at: string | null;
 }
@@ -552,7 +557,10 @@ async function listUsers(search: string, limit: number, offset = 0) {
   };
 
   // Приводим к общей форме: select() со строкой колонок не даёт статического типа строки.
-  let { data, error, count } = await run(COLS_WITH_ADMIN) as unknown as UsersQueryResult & { count: number | null };
+  let { data, error, count } = await run(COLS_WITH_SMILE) as unknown as UsersQueryResult & { count: number | null };
+  if (error) {
+    ({ data, error, count } = await run(COLS_WITH_ADMIN) as unknown as UsersQueryResult & { count: number | null });
+  }
   if (error) {
     // Скорее всего нет колонки is_admin — пробуем без неё, чтобы список жил.
     ({ data, error, count } = await run(COLS_NO_ADMIN) as unknown as UsersQueryResult & { count: number | null });
@@ -580,6 +588,7 @@ async function listUsers(search: string, limit: number, offset = 0) {
       credits:      u.credits ?? 0,
       banned:       u.banned ?? false,
       isAdmin:      u.is_admin ?? false,
+      smileTester:  u.smile_tester ?? false,
       envAdmin:     envAdminIds().includes(u.id),
       lastSeenAt:   u.last_seen_at,
       createdAt:    u.created_at,
@@ -721,6 +730,25 @@ async function handleSetAdmin(body: AdminBody, callerId: number) {
   const { error } = await db.from('users').update({ is_admin: body.isAdmin }).eq('id', body.userId);
   if (error) return jsonResponse({ error: error.message }, { status: 500 });
   return jsonResponse({ ok: true });
+}
+
+async function handleSetSmileTester(body: AdminBody) {
+  if (typeof body.userId !== 'number' || !Number.isSafeInteger(body.userId) || body.userId <= 0 ||
+      typeof body.smileTester !== 'boolean') {
+    return jsonResponse({ error: 'bad_input' }, { status: 400 });
+  }
+  const { data: user, error: lookupError } = await db.from('users')
+    .select('id, banned').eq('id', body.userId).maybeSingle();
+  if (lookupError) return jsonResponse({ error: 'tester_update_failed' }, { status: 503 });
+  if (!user) return jsonResponse({ error: 'user_not_found' }, { status: 404 });
+  if (body.smileTester && user.banned) {
+    return jsonResponse({ error: 'user_banned' }, { status: 400 });
+  }
+  const { data: updated, error } = await db.from('users')
+    .update({ smile_tester: body.smileTester }).eq('id', body.userId).select('id').maybeSingle();
+  if (error) return jsonResponse({ error: 'tester_update_failed' }, { status: 503 });
+  if (!updated) return jsonResponse({ error: 'user_not_found' }, { status: 404 });
+  return jsonResponse({ ok: true, smileTester: body.smileTester });
 }
 
 // ─── payment-link ─────────────────────────────────────────────────────────

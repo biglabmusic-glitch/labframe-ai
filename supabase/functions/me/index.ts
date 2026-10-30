@@ -94,6 +94,7 @@ Deno.serve(async (req) => {
       photoUrl:   user.photo_url ?? undefined,
       credits:    user.credits ?? 0,
       isAdmin,
+      canSmilePreview: !user.banned && (isAdmin || user.smile_tester === true),
       // Согласие на обработку персональных данных: фронт по нему решает,
       // показывать ли экран согласия при входе.
       consentAt:      user.consent_at ?? null,

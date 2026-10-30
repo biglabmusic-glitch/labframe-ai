@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { AppProvider, useApp } from './state/AppContext';
 import { RouterProvider, useRouter, type RouteId } from './router/Router';
 import { initTelegramWebApp } from './telegram/webapp';
@@ -27,6 +27,14 @@ import { ScreenConsent } from './screens/ScreenConsent';
 import { ScreenPrivacy } from './screens/ScreenPrivacy';
 import { ScreenConsentDoc } from './screens/ScreenConsentDoc';
 
+const SmilePreview = lazy(() => import('./screens/ScreenSmilePreview').then((m) => ({ default: m.ScreenSmilePreview })));
+
+function SmilePreviewEntry() {
+  const { user } = useApp();
+  if (!user.canSmilePreview) return <ScreenHome />;
+  return <Suspense fallback={<Splash />}><SmilePreview /></Suspense>;
+}
+
 const REGISTRY: Record<RouteId, () => JSX.Element> = {
   welcome:         ScreenWelcome,
   onboarding:      ScreenOnboardingBrand,
@@ -45,6 +53,7 @@ const REGISTRY: Record<RouteId, () => JSX.Element> = {
   pricing:         ScreenPricing,
   myplan:          ScreenMyPlan,
   admin:           ScreenAdmin,
+  'smile-preview': SmilePreviewEntry,
   invite:          ScreenInvite,
   help:            ScreenPhotoHelp,
   consent:         ScreenConsent,

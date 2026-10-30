@@ -106,6 +106,7 @@ export interface MeResponse {
     photoUrl?: string;
     credits: number;
     isAdmin?: boolean;
+    canSmilePreview?: boolean;
     refCode?: string | null;
     referralsCount?: number;
     referralsPaid?: number;
@@ -156,6 +157,7 @@ export interface AdminUser {
   credits: number;
   banned: boolean;
   isAdmin: boolean;
+  smileTester: boolean;
   /** true если id в env ADMIN_IDS — такого админа нельзя снять из приложения. */
   envAdmin: boolean;
   lastSeenAt: string | null;
@@ -433,6 +435,12 @@ export const api = {
     return request<{ ok: true }>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'set-admin', userId, isAdmin }),
+    });
+  },
+  async adminSetSmileTester(userId: number, smileTester: boolean): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'set-smile-tester', userId, smileTester }),
     });
   },
   async applyReferral(input: { code?: string; startParam?: string }): Promise<{ ok: boolean; already?: boolean; reason?: string }> {

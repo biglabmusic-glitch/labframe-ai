@@ -456,6 +456,7 @@ function UsersTab() {
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>
               {[u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || `id ${u.id}`}
               {u.isAdmin && <span style={{ color: 'var(--c-accent)', marginLeft: 6, fontSize: 10, fontWeight: 700 }}>ADMIN</span>}
+              {u.smileTester && !u.isAdmin && !u.envAdmin && <span style={{ color: 'var(--c-accent)', marginLeft: 6, fontSize: 10, fontWeight: 700 }}>ТЕСТ УЛЫБКИ</span>}
               {u.banned && <span style={{ color: '#F4B19A', marginLeft: 6, fontSize: 10 }}>BAN</span>}
             </span>
             <span className="mono" style={{ fontSize: 9.5, color: 'var(--c-accent)' }}>
@@ -628,6 +629,24 @@ function UserActions({ user, onClose, onChanged }: { user: AdminUser; onClose: (
           onClick={() => wrap('msg', () => api.adminSendMessage(user.id, message))}
           disabled={busy !== null || !message.trim()}
         />
+
+        <Spacer />
+
+        <SectionTitle>Примерить улыбку · закрытый тест</SectionTitle>
+        <div style={{ fontSize: 11.5, color: 'var(--c-on-dark-3)', lineHeight: 1.5, marginBottom: 8 }}>
+          {user.isAdmin || user.envAdmin
+            ? 'Администратору примерка доступна автоматически.'
+            : 'Доступ к примерке без прав администратора. После изменения нужно заново открыть приложение.'}
+          {user.banned ? ' Заблокированному аккаунту примерка недоступна.' : ''}
+        </div>
+        {!user.isAdmin && !user.envAdmin && (
+          <ActionBtn
+            label={busy === 'smile-tester' ? 'Сохраняем…' : user.smileTester ? 'Закрыть доступ к примерке' : 'Добавить в тест примерки'}
+            danger={user.smileTester}
+            onClick={() => wrap('smile-tester', () => api.adminSetSmileTester(user.id, !user.smileTester))}
+            disabled={busy !== null || (user.banned && !user.smileTester)}
+          />
+        )}
 
         <Spacer />
 
