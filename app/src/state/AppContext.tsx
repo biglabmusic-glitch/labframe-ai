@@ -194,7 +194,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (async () => {
       setSyncing(true);
       try {
-        const [me, jobs] = await Promise.all([api.me(), api.listJobs(24)]);
+        const [me, jobs] = await Promise.all([
+          api.me(),
+          // A history outage must not hide a successfully redeemed invitation.
+          api.listJobs(24).catch(() => ({ items: [] })),
+        ]);
         if (cancelled) return;
 
         // Если зашли по реф-ссылке (start_param='ref_<CODE>') — тихо привязываемся.
@@ -222,10 +226,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
             credits:    me.user!.credits ?? 0,
             isAdmin:    me.user!.isAdmin ?? false,
             canSmilePreview: me.user!.canSmilePreview ?? false,
+            smileInviteStatus: me.user!.smileInviteStatus,
             refCode:        me.user!.refCode ?? p.refCode,
             referralsCount: me.user!.referralsCount ?? 0,
             referralsPaid:  me.user!.referralsPaid ?? 0,
           }));
+          // A dentist coming for the pilot does not need marketing-brand setup.
+          if (sp.startsWith('smile_') && me.user.canSmilePreview) setOnboarded(true);
         }
         if (me?.brand) {
           setBrandState((p) => ({ ...p, ...me.brand! }));

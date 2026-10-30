@@ -51,7 +51,7 @@ function syncTopInset(): void {
   } catch { /* вне Telegram — переменная просто останется незаданной */ }
 }
 
-/** start_param из реф-ссылки (t.me/<bot>/app?startapp=ref_<CODE>). '' если нет. */
+/** Launch routing hint only; every access grant is validated by the server. */
 export function getStartParam(): string {
   try {
     return WebApp?.initDataUnsafe?.start_param ?? '';

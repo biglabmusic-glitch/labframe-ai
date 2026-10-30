@@ -107,6 +107,7 @@ export interface MeResponse {
     credits: number;
     isAdmin?: boolean;
     canSmilePreview?: boolean;
+    smileInviteStatus?: import('../state/types').SmileInviteStatus;
     refCode?: string | null;
     referralsCount?: number;
     referralsPaid?: number;
@@ -163,6 +164,24 @@ export interface AdminUser {
   lastSeenAt: string | null;
   createdAt: string | null;
   jobsTotal: number;
+}
+
+export interface AdminSmileInvite {
+  id: string;
+  label: string | null;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  usedAt: string | null;
+  usedBy: number | null;
+  status: 'active' | 'used' | 'revoked' | 'expired';
+}
+
+export interface CreatedSmileInvite {
+  id: string;
+  url: string;
+  expiresAt: string;
+  label: string | null;
 }
 
 export interface AdminStats {
@@ -441,6 +460,40 @@ export const api = {
     return request<{ ok: true }>('/admin', {
       method: 'POST',
       body: JSON.stringify({ action: 'set-smile-tester', userId, smileTester }),
+    });
+  },
+  /** A create POST is never retried: a lost response must not create several invitation links. */
+  async adminCreateSmileInvite(label?: string): Promise<CreatedSmileInvite> {
+    if (!API_BASE) throw new Error('Сервер приглашений не подключён.');
+    const response = await fetchWithRetry(`${API_BASE}/admin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-telegram-initdata': initData(),
+        ...(SUPABASE_ANON ? { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` } : {}),
+      },
+      body: JSON.stringify({ action: 'create-smile-invite', ...(label?.trim() ? { label: label.trim() } : {}) }),
+      cache: 'no-store',
+    }, 0);
+    if (!response.ok) {
+      if (response.status === 429) throw new Error('Слишком много приглашений. Подождите немного.');
+      if (response.status === 401 || response.status === 403) throw new Error('Не удалось подтвердить права администратора. Откройте приложение заново.');
+      throw new Error('Не удалось создать приглашение. Обновите список перед новой попыткой.');
+    }
+    return response.json() as Promise<CreatedSmileInvite>;
+  },
+  async adminSmileInvites(): Promise<{ items: AdminSmileInvite[] }> {
+    return request<{ items: AdminSmileInvite[] }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'list-smile-invites' }),
+      cache: 'no-store',
+    });
+  },
+  async adminRevokeSmileInvite(inviteId: string): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'revoke-smile-invite', inviteId }),
+      cache: 'no-store',
     });
   },
   async applyReferral(input: { code?: string; startParam?: string }): Promise<{ ok: boolean; already?: boolean; reason?: string }> {

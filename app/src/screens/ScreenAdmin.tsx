@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
 import { Card } from '../components/primitives/Card';
-import { Pill } from '../components/primitives/Pill';
 import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
-import { api, type AdminGrant, type AdminPayment, type AdminStats, type AdminUser } from '../api/client';
+import { api, type AdminGrant, type AdminPayment, type AdminSmileInvite, type AdminStats, type AdminUser, type CreatedSmileInvite } from '../api/client';
 import { WebApp } from '../telegram/webapp';
 
-type Tab = 'dashboard' | 'money' | 'users';
+type Tab = 'dashboard' | 'money' | 'users' | 'smile';
+const ADMIN_TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'smile', label: 'Тест улыбки' }, { id: 'dashboard', label: 'Дашборд' },
+  { id: 'money', label: 'Деньги' }, { id: 'users', label: 'Юзеры' },
+];
 
 export function ScreenAdmin() {
   const { back } = useRouter();
@@ -23,22 +26,232 @@ export function ScreenAdmin() {
 
       <div
         className="no-scrollbar"
-        style={{ padding: '0 22px 14px', display: 'flex', gap: 6 }}
+        role="tablist" aria-label="Разделы админки"
+        style={{ padding: '0 22px 14px', display: 'flex', flexWrap: 'wrap', gap: 6 }}
       >
-        <Pill size="sm" kind={tab === 'dashboard' ? 'accent' : 'ghost'} onClick={() => setTab('dashboard')}>
-          Дашборд
-        </Pill>
-        <Pill size="sm" kind={tab === 'money' ? 'accent' : 'ghost'} onClick={() => setTab('money')}>
-          Деньги
-        </Pill>
-        <Pill size="sm" kind={tab === 'users' ? 'accent' : 'ghost'} onClick={() => setTab('users')}>
-          Юзеры
-        </Pill>
+        {ADMIN_TABS.map((item, index) => <button key={item.id} id={`admin-tab-${item.id}`} type="button"
+          role="tab" aria-selected={tab === item.id} aria-controls="admin-tab-panel"
+          tabIndex={tab === item.id ? 0 : -1}
+          onKeyDown={(event) => {
+            const next = event.key === 'ArrowRight' ? (index + 1) % ADMIN_TABS.length :
+              event.key === 'ArrowLeft' ? (index + ADMIN_TABS.length - 1) % ADMIN_TABS.length :
+              event.key === 'Home' ? 0 : event.key === 'End' ? ADMIN_TABS.length - 1 : -1;
+            if (next < 0) return;
+            event.preventDefault();
+            const id = ADMIN_TABS[next].id;
+            setTab(id);
+            document.getElementById(`admin-tab-${id}`)?.focus();
+          }}
+          onClick={() => setTab(item.id)} style={{ minHeight: 40, padding: '8px 13px', borderRadius: 999,
+            border: `1px solid ${tab === item.id || item.id === 'smile' ? 'var(--c-accent)' : 'var(--c-line)'}`,
+            background: tab === item.id ? 'var(--c-accent)' : 'rgba(239,243,255,0.06)',
+            color: tab === item.id ? 'var(--c-ink)' : item.id === 'smile' ? 'var(--c-accent)' : 'var(--c-on-dark)',
+            fontFamily: 'inherit', fontSize: 12, fontWeight: item.id === 'smile' ? 700 : 500, cursor: 'pointer' }}>
+          {item.label}
+        </button>)}
       </div>
 
-      {tab === 'dashboard' ? <DashboardTab /> : tab === 'money' ? <MoneyTab /> : <UsersTab />}
+      <div id="admin-tab-panel" role="tabpanel" aria-labelledby={`admin-tab-${tab}`} tabIndex={0}>
+        {tab === 'smile' ? <SmileInvitesTab /> : tab === 'dashboard' ? <DashboardTab /> : tab === 'money' ? <MoneyTab /> : <UsersTab />}
+      </div>
     </Screen>
   );
+}
+
+const INVITE_BUTTON: CSSProperties = {
+  minHeight: 44, padding: '10px 13px', borderRadius: 12, border: '1px solid var(--c-line)',
+  background: 'rgba(147,213,225,0.08)', color: 'var(--c-accent)', fontFamily: 'inherit',
+  fontSize: 12, fontWeight: 600, cursor: 'pointer',
+};
+const INVITE_INPUT: CSSProperties = {
+  boxSizing: 'border-box', width: '100%', minHeight: 44, padding: '11px 12px', borderRadius: 10,
+  border: '1px solid var(--c-line)', background: 'var(--c-bg-2)', color: 'var(--c-on-dark)',
+  fontFamily: 'inherit', fontSize: 13,
+};
+const INVITE_STATES: Record<AdminSmileInvite['status'], string> = {
+  active: 'Ожидает активации', used: 'Использовано', revoked: 'Отозвано', expired: 'Срок истёк',
+};
+
+function inviteDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ru-RU', {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow',
+  });
+}
+
+function SmileInvitesTab() {
+  const [items, setItems] = useState<AdminSmileInvite[]>([]);
+  const [label, setLabel] = useState('');
+  const [created, setCreated] = useState<CreatedSmileInvite | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [listError, setListError] = useState('');
+  const [copyNote, setCopyNote] = useState('');
+  const linkInput = useRef<HTMLInputElement>(null);
+  const mounted = useRef(false);
+  const mutation = useRef(false);
+  const listRevision = useRef(0);
+
+  const reload = useCallback(async () => {
+    const revision = ++listRevision.current;
+    setLoading(true); setListError('');
+    try {
+      const response = await api.adminSmileInvites();
+      if (mounted.current && revision === listRevision.current) {
+        setItems(response.items);
+        setCreated((current) => {
+          if (!current) return null;
+          const updated = response.items.find((item) => item.id === current.id);
+          return updated && (updated.status !== 'active' || new Date(updated.expiresAt).getTime() <= Date.now()) ? null : current;
+        });
+      }
+    } catch {
+      if (mounted.current && revision === listRevision.current) {
+        setListError('Не удалось загрузить приглашения. Попробуйте обновить список.');
+      }
+    } finally {
+      if (mounted.current && revision === listRevision.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    void reload();
+    return () => { mounted.current = false; listRevision.current++; };
+  }, [reload]);
+
+  async function createInvite() {
+    if (mutation.current) return;
+    mutation.current = true;
+    setBusy('create'); setError(''); setCopyNote('');
+    try {
+      const invite = await api.adminCreateSmileInvite(label.trim() || undefined);
+      if (!mounted.current) return;
+      setCreated(invite); setLabel('');
+      await reload();
+    } catch (err) {
+      if (mounted.current) setError(err instanceof Error && !/fetch|network|abort|timeout/i.test(err.message)
+        ? err.message : 'Ответ на создание не получен. Обновите список: приглашение могло уже появиться.');
+    } finally {
+      mutation.current = false;
+      if (mounted.current) setBusy(null);
+    }
+  }
+
+  async function revokeInvite(inviteId: string) {
+    if (mutation.current) return;
+    mutation.current = true;
+    setBusy(inviteId); setError('');
+    try {
+      await api.adminRevokeSmileInvite(inviteId);
+      if (!mounted.current) return;
+      if (created?.id === inviteId) { setCreated(null); setCopyNote(''); }
+      await reload();
+    } catch {
+      if (mounted.current) setError('Не удалось отозвать приглашение. Обновите список и попробуйте ещё раз.');
+    } finally {
+      mutation.current = false;
+      if (mounted.current) setBusy(null);
+    }
+  }
+
+  async function copyInvite() {
+    if (!created) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable');
+      await navigator.clipboard.writeText(created.url);
+      if (mounted.current) setCopyNote('Ссылка скопирована. Отправьте её одному стоматологу.');
+    } catch {
+      if (!mounted.current) return;
+      linkInput.current?.focus();
+      linkInput.current?.select();
+      setCopyNote('Ссылка выделена. Скопируйте её через меню устройства.');
+    }
+  }
+
+  function shareInvite() {
+    if (!created) return;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(created.url)}&text=${encodeURIComponent('Приглашаю в бесплатный закрытый тест «Примерить улыбку» в LabFrame. Откройте ссылку в Telegram — доступ появится автоматически. Будем рады вашей обратной связи. Ссылка для одного участника.')}`;
+    if (WebApp?.openTelegramLink) WebApp.openTelegramLink(shareUrl);
+    else window.open(shareUrl, '_blank', 'noopener,noreferrer');
+  }
+
+  return <div style={{ padding: '0 16px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <Card kind="dark" pad={16} radius={16}>
+      <h2 style={{ margin: '0 0 9px', fontSize: 18, fontWeight: 600 }}>Пригласить стоматолога</h2>
+      <p style={{ margin: '0 0 15px', fontSize: 12, lineHeight: 1.6, color: 'var(--c-on-dark-2)' }}>
+        Создайте персональную ссылку и отправьте знакомому. При открытии в Telegram участник получит доступ к «Примерить улыбку» без прав администратора.
+      </p>
+      <label htmlFor="smile-invite-label" style={{ display: 'block', marginBottom: 7, fontSize: 12, color: 'var(--c-on-dark-2)' }}>
+        Метка приглашения <span style={{ color: 'var(--c-on-dark-3)' }}>· необязательно</span>
+      </label>
+      <input id="smile-invite-label" value={label} maxLength={80} disabled={busy !== null}
+        onChange={(event) => setLabel(event.target.value)} placeholder="Например: доктор Алексей"
+        autoComplete="off" style={INVITE_INPUT} />
+      <p style={{ margin: '10px 0 14px', fontSize: 11, lineHeight: 1.6, color: 'var(--c-on-dark-3)' }}>
+        Ссылка одноразовая и действует 7 дней. Доступ получает первый открывший её Telegram-аккаунт — отправляйте лично.
+      </p>
+      <button type="button" disabled={busy !== null} onClick={() => void createInvite()}
+        style={{ ...INVITE_BUTTON, width: '100%', background: 'var(--c-accent)', color: 'var(--c-ink)', opacity: busy !== null ? 0.5 : 1 }}>
+        {busy === 'create' ? 'Создаём приглашение…' : 'Создать приглашение'}
+      </button>
+      {error && <p role="alert" style={{ margin: '12px 0 0', color: '#F4B19A', fontSize: 12, lineHeight: 1.5 }}>{error}</p>}
+    </Card>
+
+    {created && <Card kind="dark" pad={16} radius={16}>
+      <h3 style={{ margin: '0 0 8px', color: 'var(--c-accent)', fontSize: 15 }}>Приглашение готово</h3>
+      <p style={{ margin: '0 0 12px', color: 'var(--c-on-dark-2)', fontSize: 12, lineHeight: 1.5 }}>
+        {created.label ? `${created.label} · ` : ''}Действует до {inviteDate(created.expiresAt)} МСК.
+      </p>
+      <label htmlFor="smile-invite-url" style={{ display: 'block', marginBottom: 7, fontSize: 12 }}>Ссылка для участника</label>
+      <input id="smile-invite-url" ref={linkInput} type="text" readOnly value={created.url}
+        onFocus={(event) => event.currentTarget.select()} autoComplete="off" spellCheck={false}
+        style={{ ...INVITE_INPUT, fontSize: 11 }} />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        <button type="button" onClick={() => void copyInvite()} style={{ ...INVITE_BUTTON, flex: '1 1 130px' }}>Скопировать ссылку</button>
+        <button type="button" onClick={shareInvite} style={{ ...INVITE_BUTTON, flex: '1 1 130px' }}>Поделиться в Telegram</button>
+      </div>
+      <p aria-live="polite" role="status" style={{ margin: '10px 0 0', color: 'var(--c-accent)', fontSize: 11, lineHeight: 1.5 }}>{copyNote}</p>
+      <p style={{ margin: '10px 0 0', color: 'var(--c-on-dark-3)', fontSize: 11, lineHeight: 1.6 }}>
+        Скопируйте ссылку перед уходом с вкладки или созданием следующей. Повторно показать её из списка нельзя.
+      </p>
+    </Card>}
+
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Последние приглашения</h2>
+      <button type="button" disabled={loading || busy !== null} onClick={() => void reload()}
+        style={{ ...INVITE_BUTTON, minHeight: 40, padding: '8px 11px', opacity: loading || busy !== null ? 0.5 : 1 }}>
+        {loading ? 'Загружаем…' : 'Обновить'}
+      </button>
+    </div>
+    {listError && <p role="alert" style={{ margin: 0, color: '#F4B19A', fontSize: 12, lineHeight: 1.5 }}>{listError}</p>}
+    {loading && items.length === 0 ? <Hint text="Загружаем приглашения…" /> : !listError && items.length === 0 ?
+      <Hint text="Приглашений пока нет. Создайте первое выше." /> : items.map((invite) => {
+        const status = invite.status === 'active' && new Date(invite.expiresAt).getTime() <= Date.now() ? 'expired' : invite.status;
+        return <Card key={invite.id} kind="dark" pad={14} radius={14}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+            <strong style={{ minWidth: 0, overflowWrap: 'anywhere', fontSize: 13 }}>{invite.label || 'Без метки'}</strong>
+            <span style={{ flexShrink: 0, fontSize: 10, lineHeight: 1.7, color: status === 'active' ? 'var(--c-accent)' : 'var(--c-on-dark-3)' }}>
+              {INVITE_STATES[status]}
+            </span>
+          </div>
+          <p style={{ margin: '8px 0 0', color: 'var(--c-on-dark-3)', fontSize: 11, lineHeight: 1.7 }}>
+            Создано {inviteDate(invite.createdAt)} МСК<br />
+            {status === 'used' && invite.usedAt ? `Активировано ${inviteDate(invite.usedAt)} МСК${invite.usedBy ? ` · id ${invite.usedBy}` : ''}` :
+              status === 'revoked' && invite.revokedAt ? `Отозвано ${inviteDate(invite.revokedAt)} МСК` : `Действует до ${inviteDate(invite.expiresAt)} МСК`}
+          </p>
+          {status === 'active' && <button type="button" disabled={busy !== null} onClick={() => void revokeInvite(invite.id)}
+            aria-label={`Отозвать приглашение ${invite.label || 'без метки'}`}
+            style={{ ...INVITE_BUTTON, marginTop: 10, color: '#F4B19A', opacity: busy !== null ? 0.5 : 1 }}>
+            {busy === invite.id ? 'Отзываем…' : 'Отозвать приглашение'}
+          </button>}
+        </Card>;
+      })}
+    <p style={{ margin: 0, fontSize: 11, lineHeight: 1.6, color: 'var(--c-on-dark-3)' }}>
+      Отзыв ссылки останавливает новую активацию. Доступ уже приглашённого участника можно закрыть в разделе «Юзеры».
+    </p>
+  </div>;
 }
 
 // ─── Деньги ────────────────────────────────────────────────────────────────

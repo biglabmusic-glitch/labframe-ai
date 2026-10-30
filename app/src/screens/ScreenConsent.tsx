@@ -6,7 +6,7 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
 import { useApp } from '../state/AppContext';
 import { CROSSBORDER_CONSENT_CHECKBOX, PD_CONSENT_CHECKBOX } from '../lib/consent';
-import { WebApp } from '../telegram/webapp';
+import { getStartParam, WebApp } from '../telegram/webapp';
 
 /**
  * Просим разрешения писать в чат — стандартное окно Telegram.
@@ -43,7 +43,7 @@ function askToMessage() {
  */
 export function ScreenConsent() {
   const { reset, push } = useRouter();
-  const { giveConsent } = useApp();
+  const { giveConsent, user } = useApp();
   const [pd, setPd] = useState(false);
   const [crossBorder, setCrossBorder] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -61,6 +61,10 @@ export function ScreenConsent() {
       setErr('');
       giveConsent()
         .then(() => {
+          if (getStartParam().startsWith('smile_') && user.canSmilePreview) {
+            reset('smile-preview');
+            return;
+          }
           askToMessage();
           reset('welcome');
         })

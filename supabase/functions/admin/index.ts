@@ -11,6 +11,7 @@ import { providerFinance, snapshotProviderBalance } from '../_shared/balance.ts'
 import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { STEP_GOALS, STEP_LABELS, type StepId } from '../_shared/funnel.ts';
 import { envAdminIds } from '../_shared/admins.ts';
+import { createSmileInvite, listSmileInvites, revokeSmileInvite, SmileInviteError } from '../_shared/smile-invites.ts';
 
 interface AdminBody {
   action:
@@ -21,6 +22,9 @@ interface AdminBody {
     | 'ban'
     | 'set-admin'
     | 'set-smile-tester'
+    | 'create-smile-invite'
+    | 'list-smile-invites'
+    | 'revoke-smile-invite'
     | 'payment-link'
     | 'payments'
     | 'profile-link'
@@ -34,6 +38,8 @@ interface AdminBody {
   banned?: boolean;
   isAdmin?: boolean;
   smileTester?: boolean;
+  label?: string;
+  inviteId?: string;
   packageId?: string;
   search?: string;
   limit?: number;
@@ -73,12 +79,26 @@ Deno.serve(async (req) => {
     case 'ban':           return handleBan(body);
     case 'set-admin':     return handleSetAdmin(body, tg.id);
     case 'set-smile-tester': return handleSetSmileTester(body);
+    case 'create-smile-invite': return handleSmileInvite(() => createSmileInvite(tg.id, body.label));
+    case 'list-smile-invites': return handleSmileInvite(() => listSmileInvites());
+    case 'revoke-smile-invite': return handleSmileInvite(() => revokeSmileInvite(body.inviteId));
     case 'payment-link':  return handlePaymentLink(body);
     case 'payments':      return listPayments(body.limit ?? 50);
     case 'profile-link':  return handleProfileLink(body, tg.id);
     default:              return jsonResponse({ error: 'unknown_action' }, { status: 400 });
   }
 });
+
+async function handleSmileInvite(action: () => Promise<unknown>): Promise<Response> {
+  try {
+    return jsonResponse(await action(), { headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' } });
+  } catch (error) {
+    return jsonResponse({ error: error instanceof SmileInviteError ? error.code : 'invite_unavailable' }, {
+      status: error instanceof SmileInviteError ? error.status : 503,
+      headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+    });
+  }
+}
 
 // Ставка налога на профессиональный доход при расчётах с физлицами.
 const NPD_RATE = 0.04;

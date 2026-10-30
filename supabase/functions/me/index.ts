@@ -6,6 +6,7 @@ import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { signUrl } from '../_shared/storage.ts';
 import { ensureRefCode, referralStats } from '../_shared/referral.ts';
+import { redeemSmileInvite } from '../_shared/smile-invites.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
@@ -15,7 +16,7 @@ Deno.serve(async (req) => {
   const tg = auth.user;
 
   // upsert user
-  await db.from('users').upsert(
+  const { error: upsertError } = await db.from('users').upsert(
     {
       id: tg.id,
       username:      tg.username      ?? null,
@@ -27,6 +28,16 @@ Deno.serve(async (req) => {
     },
     { onConflict: 'id', ignoreDuplicates: false },
   );
+  if (upsertError) {
+    return jsonResponse({ error: 'user_unavailable' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+  }
+
+  // authorize() has verified the signature over this exact initData string.
+  // Never grant access from initDataUnsafe, a URL query or a client-provided body.
+  const startParam = new URLSearchParams(req.headers.get('x-telegram-initdata') ?? '').get('start_param') ?? '';
+  const smileInviteStatus = startParam.startsWith('smile_')
+    ? (await redeemSmileInvite(startParam, tg.id)).status
+    : undefined;
 
   // ADMIN_IDS — «супер-админ bootstrap»: такие id всегда админы. Синхронизируем
   // флаг в БД, чтобы админы реально отражались в Supabase (а не только в env).
@@ -95,6 +106,7 @@ Deno.serve(async (req) => {
       credits:    user.credits ?? 0,
       isAdmin,
       canSmilePreview: !user.banned && (isAdmin || user.smile_tester === true),
+      smileInviteStatus,
       // Согласие на обработку персональных данных: фронт по нему решает,
       // показывать ли экран согласия при входе.
       consentAt:      user.consent_at ?? null,
@@ -104,5 +116,5 @@ Deno.serve(async (req) => {
       referralsPaid:  refStats.referralsPaid,
     } : null,
     brand: brandOut,
-  });
+  }, { headers: { 'Cache-Control': 'no-store' } });
 });

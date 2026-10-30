@@ -3,6 +3,7 @@ export type StyleId = 'clean' | 'dark' | 'soft';
 export type FormatId = '4x5' | '1x1' | '9x16';
 export type TextType = 'short' | 'sell' | 'tech' | 'none';
 export type BrandingKind = 'logo' | 'name' | 'none';
+export type SmileInviteStatus = 'accepted' | 'already' | 'invalid' | 'expired' | 'used' | 'revoked' | 'unavailable';
 export type JobStatus =
   | 'created'
   | 'photo_uploaded'
@@ -22,6 +23,7 @@ export interface User {
   isAdmin?: boolean;
   /** Закрытый пилот: отдельное серверное разрешение для приглашённых тестеров. */
   canSmilePreview?: boolean;
+  smileInviteStatus?: SmileInviteStatus;
   refCode?: string;
   referralsCount?: number;
   referralsPaid?: number;
