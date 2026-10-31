@@ -16,7 +16,7 @@ import '../styles/smile-preview.css';
 
 type Photo = NormalizedSmilePhoto & { url: string };
 type Phase = 'editing' | 'uploading' | 'processing' | 'pending' | 'prepared' | 'done' | 'failed';
-const POLL_LIMIT_MS = 4 * 60_000;
+const POLL_LIMIT_MS = 12 * 60_000;
 const SHAPES: Array<{ id: SmileShape; label: string }> = [
   { id: 'original', label: 'Исходная' }, { id: 'square', label: 'Квадратная' },
   { id: 'triangular', label: 'Треугольная' }, { id: 'rounded', label: 'Округлая' },
@@ -53,7 +53,7 @@ export function ScreenSmilePreview() {
 
   const [photo, setPhoto] = useState<Photo | null>(null);
   const [normalizing, setNormalizing] = useState(false);
-  const [teeth, setTeeth] = useState<number[]>([13, 12, 11, 21, 22, 23]);
+  const [teeth, setTeeth] = useState<number[]>([...UPPER_TEETH]);
   const [shades, setShades] = useState<Record<string, string>>(() => Object.fromEntries(UPPER_TEETH.map((id) => [id, 'BL1'])));
   const [activeTooth, setActiveTooth] = useState(11);
   const [rangeMode, setRangeMode] = useState(false);
@@ -63,6 +63,11 @@ export function ScreenSmilePreview() {
   const [zenithMode, setZenithMode] = useState<SmileSettings['zenithMode']>('preserve');
   const [zenithInstruction, setZenithInstruction] = useState('');
   const [mask, setMask] = useState<Blob | null>(null);
+  const [autoMask, setAutoMask] = useState<{ mask: Blob; center: { x: number; y: number } } | null>(null);
+  const [autoState, setAutoState] = useState<'idle' | 'loading' | 'ready' | 'manual'>('idle');
+  const [autoNote, setAutoNote] = useState('');
+  const [autoAttempt, setAutoAttempt] = useState(0);
+  const [maskConfirmed, setMaskConfirmed] = useState(false);
   const [consent, setConsent] = useState(false);
   const [jobId, setJobId] = useState<string | null>(readSmileJobId);
   const [phase, setPhase] = useState<Phase>(() => readSmileJobId() ? 'processing' : 'editing');
@@ -74,6 +79,7 @@ export function ScreenSmilePreview() {
   const fileInput = useRef<HTMLInputElement>(null);
   const submitController = useRef<AbortController | null>(null);
   const normalizingRevision = useRef(0);
+  const autoRevision = useRef(0);
   const submitting = useRef(false);
   const allowed = Boolean(user.canSmilePreview) && isSmilePreviewReady();
   const busy = phase === 'uploading' || phase === 'processing';
@@ -81,13 +87,45 @@ export function ScreenSmilePreview() {
   const selected = UPPER_TEETH.filter((id) => teeth.includes(id));
   const chosenShade = (shades[activeTooth] ?? 'BL1') as SmileShade;
   const maskKey = `${photo?.url ?? ''}:${selected.join('-')}:${zenithMode}`;
-  const canGenerate = allowed && editing && !normalizing && !deleting && Boolean(photo && mask && selected.length && consent) &&
+  const autoEligible = selected.length === UPPER_TEETH.length && zenithMode === 'preserve';
+  const canGenerate = allowed && editing && !normalizing && !deleting && autoState !== 'loading' && maskConfirmed && Boolean(photo && mask && selected.length && consent) &&
     (zenithMode === 'preserve' || Boolean(zenithInstruction.trim()));
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
   useEffect(() => () => { if (resultUrl) URL.revokeObjectURL(resultUrl); }, [resultUrl]);
   useEffect(() => () => { normalizingRevision.current++; submitController.current?.abort(); }, []);
-  useEffect(() => { setMask(null); }, [maskKey]);
+  useEffect(() => { setMask(null); setMaskConfirmed(false); }, [maskKey]);
+  const onMaskChange = useCallback((blob: Blob | null) => { setMask(blob); setMaskConfirmed(false); }, []);
+
+  useEffect(() => {
+    if (!photo || !editing) return;
+    if (!autoEligible) {
+      setAutoMask(null); setAutoState('manual');
+      setAutoNote(zenithMode === 'allow' ? 'Для коррекции десны уточните разрешённую область вручную.'
+        : 'Для отдельных номеров зубов выделите область вручную: автоматика не определяет номера FDI.');
+      return;
+    }
+    const controller = new AbortController(), revision = ++autoRevision.current;
+    setAutoMask(null); setMask(null); setMaskConfirmed(false); setAutoState('loading'); setAutoNote('Ищем область зубов на устройстве…');
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => { controller.abort(); reject(new Error('model_timeout')); }, 30_000);
+    });
+    void Promise.race([
+      import('../lib/auto-smile-mask').then((module) => module.proposeSmileMask(photo, controller.signal)), timeout,
+    ]).then((proposal) => {
+      if (controller.signal.aborted || autoRevision.current !== revision) return;
+      setAutoMask(proposal); setAutoState('ready');
+      setAutoNote('Предварительно выделены видимые верхние зубы. Увеличьте фото и проверьте границы перед запуском.');
+    }).catch((err) => {
+      if (autoRevision.current !== revision) return;
+      setAutoState('manual');
+      setAutoNote(err?.code === 'no_face' ? 'Не найдено одно лицо с хорошо видимой улыбкой. Выделите зубы вручную на увеличенном фото.'
+        : err?.code === 'uncertain' ? 'Границы верхних зубов определились неуверенно. Увеличьте фото и выделите область вручную.'
+        : 'Автовыделение недоступно на этом снимке или устройстве. Ручное выделение и увеличение работают.');
+    }).finally(() => clearTimeout(timer));
+    return () => { autoRevision.current++; controller.abort(); clearTimeout(timer); };
+  }, [photo, editing, autoEligible, autoAttempt]);
 
   useEffect(() => {
     if (!allowed || phase !== 'processing' || !jobId) return;
@@ -95,7 +133,7 @@ export function ScreenSmilePreview() {
     const deadline = Date.now() + POLL_LIMIT_MS;
     let wake: ReturnType<typeof setTimeout> | undefined;
     let stopWait: (() => void) | undefined;
-    const wait = () => new Promise<void>((resolve) => { stopWait = resolve; wake = setTimeout(resolve, 2000); });
+    const wait = () => new Promise<void>((resolve) => { stopWait = resolve; wake = setTimeout(resolve, 4000); });
     void (async () => {
       while (!controller.signal.aborted && Date.now() < deadline) {
         try {
@@ -255,7 +293,7 @@ export function ScreenSmilePreview() {
         <div className="smile-status"><h2>Закрытый тест</h2><p>{!isSmilePreviewReady() ? 'Для примерки нужно подключение к серверу. Откройте рабочее мини-приложение в Telegram.' : 'Доступ к примерке выдаёт администратор. После приглашения откройте приложение заново.'}</p><button type="button" className="smile-secondary" onClick={() => reset('home')}>На главную</button></div> : <>
         {error && <div className="smile-error" role="alert">{error}</div>}
 
-        {busy && <div className="smile-status" role="status" aria-live="polite"><span className="smile-spinner" /><h2>{phase === 'uploading' ? 'Шифруем и загружаем фото' : 'Создаём вариант улыбки'}</h2><p>{phase === 'uploading' ? 'Фото и маска шифруются на устройстве перед загрузкой.' : 'Внешний AI обрабатывает только фрагмент улыбки. Можно вернуться позже — проверим ту же задачу.'}</p><p className="smile-hint">{phase === 'processing' ? 'Проверяем готовность каждые 2 секунды, до 4 минут.' : 'Параметры отправляются один раз.'}</p></div>}
+        {busy && <div className="smile-status" role="status" aria-live="polite"><span className="smile-spinner" /><h2>{phase === 'uploading' ? 'Шифруем и загружаем фото' : 'Создаём вариант улыбки'}</h2><p>{phase === 'uploading' ? 'Фото и маска шифруются на устройстве перед загрузкой.' : 'Внешний AI обрабатывает только фрагмент улыбки. Можно вернуться позже — проверим ту же задачу.'}</p><p className="smile-hint">{phase === 'processing' ? 'Проверяем готовность без повторного запуска. Большая примерка может занять несколько минут.' : 'Параметры отправляются один раз.'}</p></div>}
 
         {(phase === 'pending' || phase === 'prepared' || phase === 'failed') && <div className="smile-status"><h2>{phase === 'failed' ? 'Примерка не завершилась' : phase === 'prepared' ? 'Загрузка не завершена' : 'Проверим текущую примерку'}</h2><p>Идентификатор задачи сохранён в этой сессии. Фото и маска не записываются в хранилище браузера.</p><div className="smile-actions">
           {phase === 'pending' && <button type="button" className="smile-primary" disabled={deleting} onClick={() => { setError(''); setPhase('processing'); }}>Проверить статус</button>}
@@ -286,7 +324,7 @@ export function ScreenSmilePreview() {
 
           {photo && <>
             <FormSection step="02" title="Верхние зубы" hint="Нумерация FDI. Нажмите зубы, которые разрешено изменить.">
-              <div className="smile-selection-tools"><button type="button" onClick={() => { changeSelection([...UPPER_TEETH]); setRangeMode(false); setRangeAnchor(null); }}>Выбрать все</button><button type="button" onClick={() => { changeSelection([]); setRangeMode(false); setRangeAnchor(null); }}>Сбросить</button><button type="button" className={rangeMode ? 'is-active' : ''} aria-pressed={rangeMode} onClick={() => { setRangeMode(!rangeMode); setRangeAnchor(null); }}>Диапазон</button></div>
+              <div className="smile-selection-tools"><button type="button" onClick={() => { changeSelection([...UPPER_TEETH]); setRangeMode(false); setRangeAnchor(null); }}>Весь видимый ряд</button><button type="button" onClick={() => { changeSelection([]); setRangeMode(false); setRangeAnchor(null); }}>Сбросить</button><button type="button" className={rangeMode ? 'is-active' : ''} aria-pressed={rangeMode} onClick={() => { setRangeMode(!rangeMode); setRangeAnchor(null); }}>Диапазон</button></div>
               {rangeMode && <p className="smile-range-hint" role="status">{rangeAnchor === null ? 'Нажмите первый зуб диапазона.' : `Начало — ${rangeAnchor}. Нажмите последний зуб.`}</p>}
               <div className="smile-orientation"><span>Правая сторона пациента</span><span>Левая сторона пациента</span></div>
               <div className="smile-teeth-scroll"><div className="smile-teeth" role="group" aria-label="Выбор верхних зубов справа налево у пациента">{UPPER_TEETH.map((id) => <button type="button" key={id} className={`smile-tooth${teeth.includes(id) ? ' is-selected' : ''}${id === rangeAnchor ? ' is-anchor' : ''}${id === 21 ? ' smile-midline' : ''}`} aria-pressed={teeth.includes(id)} aria-label={`Зуб ${id}${teeth.includes(id) ? `, оттенок ${shades[id] ?? 'BL1'}` : ''}`} onClick={() => selectTooth(id)}><span className="mono">{id}</span><span className="smile-tooth-glyph" aria-hidden="true" /><small>{teeth.includes(id) ? shades[id] : '—'}</small></button>)}</div></div>
@@ -307,9 +345,14 @@ export function ScreenSmilePreview() {
               {zenithMode === 'allow' && <label className="smile-instruction">Точное указание для выбранных зубов<textarea maxLength={160} rows={3} value={zenithInstruction} onChange={(event) => setZenithInstruction(event.target.value)} placeholder="Укажите номера зубов и требуемое изменение контура" required /><span className="smile-micro">{zenithInstruction.length} / 160 · Без указания запуск недоступен.</span></label>}
             </FormSection>
 
-            <FormSection step="04" title="Разрешённая область" hint={zenithMode === 'allow' ? 'Вручную закрасьте выбранные верхние зубы и только ту часть края десны, которую разрешили изменить.' : 'Вручную закрасьте только выбранные верхние зубы. Лицо, губы, десну и остальные зубы оставьте вне маски.'}>
-              {selected.length ? <SmileMaskEditor key={maskKey} imageUrl={photo.url} width={photo.width} height={photo.height} onChange={setMask} disabled={busy} allowGumline={zenithMode === 'allow'} /> : <p className="smile-hint">Сначала выберите зубы на шаге 02.</p>}
-              <p className={`smile-mask-note${mask ? ' is-ready' : ''}`}>{mask ? '✓ Маска подготовлена' : 'Маска обязательна для запуска'}</p><p className="smile-micro">После смены зубов или разрешения на коррекцию десны нарисуйте маску заново.</p>
+            <FormSection step="04" title="Область улыбки" hint="Предварительная автообласть строится на устройстве. Проверьте её: губы, нижние зубы и защищённая десна должны остаться вне выделения.">
+              <p role="status" className="smile-hint">{autoState === 'loading' ? 'Определяем границы… При первом запуске загружается модель; фото никуда не отправляется.' : autoNote}</p>
+              {autoEligible && autoState !== 'loading' && <button type="button" className="smile-text-button" disabled={busy} onClick={() => setAutoAttempt((n) => n + 1)}>Определить область заново</button>}
+              {selected.length ? <SmileMaskEditor key={maskKey} imageUrl={photo.url} width={photo.width} height={photo.height}
+                onChange={onMaskChange} initialMask={autoMask?.mask} focusPoint={autoMask?.center}
+                disabled={busy || autoState === 'loading'} allowGumline={zenithMode === 'allow'} /> : <p className="smile-hint">Сначала выберите зубы на шаге 02.</p>}
+              <p className={`smile-mask-note${mask ? ' is-ready' : ''}`}>{mask ? '✓ Маска подготовлена' : 'Маска обязательна для запуска'}</p><p className="smile-micro">После смены зубов или разрешения на коррекцию десны проверьте область заново.</p>
+              <label className="smile-consent"><input type="checkbox" checked={maskConfirmed} disabled={!mask || autoState === 'loading'} onChange={(event) => setMaskConfirmed(event.target.checked)} /><span>Проверил область: выделены только те зубы и участки, которые разрешено менять.</span></label>
             </FormSection>
 
             <FormSection step="05" title="Проверка и запуск">
@@ -318,7 +361,7 @@ export function ScreenSmilePreview() {
               <label className="smile-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>У меня есть разрешение использовать это фото для примерки и передать фрагмент улыбки внешнему AI с указанными условиями хранения.</span></label>
               <p className="smile-cost-note">В закрытом тесте примерки не списываются с вашего баланса генераций.</p>
               <button type="button" className="smile-primary smile-generate" disabled={!canGenerate} onClick={() => void generate()}>Создать примерку <span aria-hidden="true">↗</span></button>
-              {!mask && <p className="smile-micro">Для запуска нужна маска на шаге 04 и подтверждение выше.</p>}
+              {(!mask || !maskConfirmed) && <p className="smile-micro">Проверьте и подтвердите выделенную область на шаге 04.</p>}
             </FormSection>
           </>}
         </>}

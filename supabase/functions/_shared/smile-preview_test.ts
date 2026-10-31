@@ -4,6 +4,7 @@ import {
   compositeSmile, decodeSmileInputs, pngDimensions, recoverSmileManifest, requestSmileEdit,
   safeSmileError, SmileError, smilePaths, smilePilotAllowed, smileProviderInputs, validateSmileSettings,
   SMILE_PREPARED_TTL_MS, SMILE_STALE_MS, type SmileManifest, type SmileSettings,
+  SMILE_TEETH,
 } from './smile-preview.ts';
 
 const JOB = '12121212-1234-4123-8123-123456789abc';
@@ -58,6 +59,21 @@ Deno.test('smile: параметры зубов/оттенков проверя�
   ]) assertThrows(() => validateSmileSettings(settings), SmileError);
 });
 
+Deno.test('smile: весь верхний ряд проходит проверку параметров', () => {
+  const settings = { ...SETTINGS, teeth: [...SMILE_TEETH], shades: Object.fromEntries(SMILE_TEETH.map((id) => [id, 'A1'])) };
+  assertEquals(validateSmileSettings(settings).teeth, [...SMILE_TEETH]);
+});
+
+Deno.test('smile: JPEG ответа провайдера конвертируется в защищённый PNG', async () => {
+  const { sourceBytes, maskBytes, source } = await fixture();
+  const inputs = await decodeSmileInputs(sourceBytes, maskBytes);
+  const jpeg = await new Image(inputs.frame.width * 2, inputs.frame.height * 2).fill(0xeeeeccff).encodeJPEG(90);
+  const png = await compositeSmile(inputs, jpeg);
+  assertEquals([...png.slice(0, 4)], [137, 80, 78, 71]);
+  const result = await Image.decode(png);
+  assertEquals(result.getPixelAt(1, 1), source.getPixelAt(1, 1));
+});
+
 Deno.test('smile: наружу передаётся только crop, а не исходный портрет', async () => {
   const fixtureData = await fixture();
   const inputs = await decodeSmileInputs(fixtureData.sourceBytes, fixtureData.maskBytes);
@@ -95,8 +111,10 @@ Deno.test('smile: даже при изменении всего crop модел�
   const result = await Image.decode(await compositeSmile(inputs, await generated.encode()));
   for (let pixel = 0; pixel < inputs.mask.length; pixel++) {
     const rgba = [...result.bitmap.subarray(pixel * 4, pixel * 4 + 4)];
-    assertEquals(rgba, inputs.mask[pixel] ? [200, 150, 100, 255] : [...source.bitmap.subarray(pixel * 4, pixel * 4 + 4)]);
+    if (!inputs.mask[pixel]) assertEquals(rgba, [...source.bitmap.subarray(pixel * 4, pixel * 4 + 4)]);
   }
+  assertEquals(result.getPixelAt(51, 91), 0xc89664ff); // interior uses the generated pixels
+  assertEquals(result.bitmap[(86 * source.width + 44) * 4], Math.round((44 + 200) / 2)); // only inward edge is softened
 });
 
 Deno.test('smile: изменённые моделью пропорции не вклеиваются в зубы', async () => {

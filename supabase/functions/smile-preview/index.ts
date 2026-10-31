@@ -4,7 +4,7 @@ import { envAdminIds } from '../_shared/admins.ts';
 import { db } from '../_shared/db.ts';
 import { deriveSmileKey, decryptSmileBytes, encryptSmileBytes, smileEncryption } from '../_shared/smile-crypto.ts';
 import {
-  compositeSmile, decodeSmileInputs, readSmileBytes, recoverSmileManifest, requestSmileEdit,
+  compositeSmile, createSmileTask, decodeSmileInputs, pollSmileTask, readSmileBytes, recoverSmileManifest,
   safeSmileError, SmileError, smilePaths, smilePilotAllowed, smileProviderInputs,
   SMILE_MAX_BYTES, SMILE_CIPHER_OVERHEAD, SMILE_TIMEOUT_MS, SMILE_PREPARED_TTL_MS,
   validateSmileSettings, withSmileSignal, type SmileManifest, type SmileSettings,
@@ -56,7 +56,8 @@ async function loadManifest(paths: Paths, userId: number, jobId: string): Promis
       !['prepared', 'processing', 'done', 'failed'].includes(manifest.status) ||
       !Number.isFinite(manifest.createdAt) || !Number.isFinite(manifest.updatedAt) ||
       !Number.isFinite(manifest.consentAt) || manifest.consentAt <= 0 ||
-      (manifest.startedAt !== undefined && !Number.isFinite(manifest.startedAt))) throw new Error('manifest');
+      (manifest.startedAt !== undefined && !Number.isFinite(manifest.startedAt)) ||
+      (manifest.providerId !== undefined && !/^[a-zA-Z0-9_-]{1,128}$/.test(manifest.providerId))) throw new Error('manifest');
     return manifest;
   } catch { throw new SmileError('job_not_found', 404); }
 }
@@ -72,9 +73,10 @@ async function recover(paths: Paths, manifest: SmileManifest): Promise<SmileMani
     if (marker.size > 256) throw new SmileError('storage_error', 503);
     try {
       const value = JSON.parse(await marker.text());
+      if (value.deleted === true) throw new SmileError('job_not_found', 404);
       if (!Number.isFinite(value.startedAt) || value.startedAt <= 0) throw new Error('marker');
       markerStartedAt = value.startedAt;
-    } catch { throw new SmileError('storage_error', 503); }
+    } catch (error) { if (error instanceof SmileError) throw error; throw new SmileError('storage_error', 503); }
   }
   const recovered = recoverSmileManifest(manifest, markerStartedAt, resultExists);
   if (recovered.status !== manifest.status) {
@@ -96,7 +98,10 @@ async function statusResponse(paths: Paths, manifest: SmileManifest): Promise<Re
   return privateJson({
     jobId: manifest.jobId,
     status: manifest.status,
-    ...(manifest.status === 'failed' ? { error: safeSmileError(new SmileError(manifest.errorCode ?? 'processing_failed')).message } : {}),
+    ...(manifest.status === 'failed' ? {
+      error: safeSmileError(new SmileError(manifest.errorCode ?? 'processing_failed')).code,
+      message: safeSmileError(new SmileError(manifest.errorCode ?? 'processing_failed')).message,
+    } : {}),
   });
 }
 
@@ -123,9 +128,7 @@ async function removeJob(paths: Paths): Promise<void> {
   if (error) throw new SmileError('storage_error', 503);
 }
 
-async function runJob(paths: Paths, manifest: SmileManifest, settings: SmileSettings) {
-  const signal = AbortSignal.timeout(SMILE_TIMEOUT_MS);
-  try {
+async function loadJobInputs(paths: Paths, manifest: SmileManifest, signal: AbortSignal) {
     const [photo, mask] = await Promise.all([
       download(paths.photo, 'missing_upload', signal), download(paths.mask, 'missing_upload', signal),
     ]);
@@ -143,33 +146,80 @@ async function runJob(paths: Paths, manifest: SmileManifest, settings: SmileSett
     const inputs = await withSmileSignal(decodeSmileInputs(
       photoBytes, maskBytes,
     ), signal);
-    const cropped = await withSmileSignal(smileProviderInputs(inputs), signal);
-    const generated = await requestSmileEdit({
+    return { inputs, key };
+}
+
+async function completeJob(paths: Paths, manifest: SmileManifest, generated: Uint8Array, signal: AbortSignal,
+  loaded?: Awaited<ReturnType<typeof loadJobInputs>>) {
+    const { inputs, key } = loaded ?? await loadJobInputs(paths, manifest, signal);
+    const result = await withSmileSignal(compositeSmile(inputs, generated), signal);
+    const encryptedResult = await encryptSmileBytes(result, key, manifest.jobId, 'result');
+    signal.throwIfAborted();
+    const current = await recover(paths, await loadManifest(paths, manifest.userId, manifest.jobId));
+    if (current.status === 'done') return;
+    const { error } = await io(db.storage.from(BUCKET).upload(paths.result, encryptedResult, {
+      upsert: false, contentType: 'application/octet-stream', cacheControl: '0',
+    }), signal);
+    if (error) {
+      // Concurrent status checks may finish the same provider result. First wins.
+      const existing = await recover(paths, await loadManifest(paths, manifest.userId, manifest.jobId));
+      if (existing.status === 'done') return;
+      throw new SmileError('storage_error', 503);
+    }
+    await saveManifest(paths, { ...manifest, status: 'done', updatedAt: Date.now() });
+    // Deletion may win after the preflight but before our writes finish.
+    // The persistent tombstone keeps late bytes inaccessible; remove them as well.
+    try { await recover(paths, await loadManifest(paths, manifest.userId, manifest.jobId)); }
+    catch (error) {
+      if (error instanceof SmileError && error.code === 'job_not_found') await removeJob(paths);
+      throw error;
+    }
+}
+
+async function failJob(paths: Paths, manifest: SmileManifest, error: unknown) {
+    const safe = safeSmileError(error);
+    console.error('smile-preview failed:', safe.code);
+    await loadManifest(paths, manifest.userId, manifest.jobId)
+      .then(async (latest) => {
+        const active = await recover(paths, latest);
+        if (active.status !== 'done') await saveManifest(paths, { ...active, status: 'failed', errorCode: safe.code, updatedAt: Date.now() });
+      }).catch(() => {});
+}
+
+async function runJob(paths: Paths, manifest: SmileManifest, settings: SmileSettings) {
+  const signal = AbortSignal.timeout(SMILE_TIMEOUT_MS);
+  try {
+    const loaded = await loadJobInputs(paths, manifest, signal);
+    const cropped = await withSmileSignal(smileProviderInputs(loaded.inputs), signal);
+    const task = await createSmileTask({
       photoData: cropped.photo, maskData: cropped.mask, settings,
       apiKey: Deno.env.get('POLZA_API_KEY')!,
       model: Deno.env.get('POLZA_SMILE_MODEL') || Deno.env.get('POLZA_IMAGE_MODEL') || 'google/gemini-3.1-flash-image-preview',
       baseUrl: Deno.env.get('POLZA_MEDIA_BASE_URL') || undefined,
       signal,
     });
-    const result = await withSmileSignal(compositeSmile(inputs, generated), signal);
-    const encryptedResult = await encryptSmileBytes(result, key, manifest.jobId, 'result');
-    signal.throwIfAborted();
-    // Если параллельное удаление выиграло гонку с запуском, не воскрешаем файлы.
-    await loadManifest(paths, manifest.userId, manifest.jobId);
-    const { error } = await io(db.storage.from(BUCKET).upload(paths.result, encryptedResult, {
-      upsert: false, contentType: 'application/octet-stream', cacheControl: '0',
-    }), signal);
-    if (error) throw new SmileError('storage_error', 503);
-    await saveManifest(paths, { ...manifest, status: 'done', updatedAt: Date.now() });
+    if (task.status === 'done') await completeJob(paths, manifest, task.image, signal, loaded);
+    else await saveManifest(paths, { ...manifest, providerId: task.id, updatedAt: Date.now() });
   } catch (error) {
-    const safe = safeSmileError(error);
-    // Только фиксированный код. Ни фото, ни инструкции, ни URL, ни сырой ответ провайдера.
-    console.error('smile-preview failed:', safe.code);
-    await loadManifest(paths, manifest.userId, manifest.jobId)
-      .then(() => saveManifest(paths, { ...manifest, status: 'failed', errorCode: safe.code, updatedAt: Date.now() }))
-      .catch(() => {});
-    // running.json сохраняется навсегда: повтор запроса с тем же jobId не оплачивается ещё раз.
+    await failJob(paths, manifest, error);
   }
+}
+
+async function resumeJob(paths: Paths, manifest: SmileManifest): Promise<SmileManifest> {
+  if (manifest.status !== 'processing' || !manifest.providerId) return manifest;
+  try {
+    const signal = AbortSignal.timeout(20_000);
+    const task = await pollSmileTask({
+      id: manifest.providerId, apiKey: Deno.env.get('POLZA_API_KEY')!,
+      baseUrl: Deno.env.get('POLZA_MEDIA_BASE_URL') || undefined, signal,
+    });
+    if (task.status === 'done') await completeJob(paths, manifest, task.image, signal);
+  } catch (error) {
+    const code = safeSmileError(error).code;
+    // Transient polling failures must never lose a paid task or create another one.
+    if (!['provider_unavailable', 'timeout', 'storage_error'].includes(code)) await failJob(paths, manifest, error);
+  }
+  return await recover(paths, await loadManifest(paths, manifest.userId, manifest.jobId));
 }
 
 Deno.serve(async (req) => {
@@ -234,10 +284,14 @@ Deno.serve(async (req) => {
           if (locked.status === 'prepared') throw new SmileError('storage_error', 503);
         }
       }
+      const { error: tombstoneError } = await io(db.storage.from(BUCKET).upload(paths.running, JSON.stringify({
+        startedAt: Date.now(), deleted: true,
+      }), { upsert: true, contentType: 'application/json', cacheControl: '0' }));
+      if (tombstoneError) throw new SmileError('storage_error', 503);
       await removeJob(paths);
       return privateJson({ deleted: true });
     }
-    if (body.action === 'status') return await statusResponse(paths, current);
+    if (body.action === 'status') return await statusResponse(paths, await resumeJob(paths, current));
     if (body.action !== 'generate') return privateJson({ error: 'unknown_action' }, 400);
     // Повторный generate только возвращает состояние, даже если body.settings уже другие.
     if (current.status !== 'prepared') return await statusResponse(paths, current);

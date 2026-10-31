@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import { limitMaskView, maskImagePoint, zoomMaskView, type MaskView } from '../lib/mask-viewport';
 
 export interface SmileMaskEditorProps {
   imageUrl: string;
@@ -8,6 +9,8 @@ export interface SmileMaskEditorProps {
   onChange: (blob: Blob | null) => void;
   disabled?: boolean;
   allowGumline?: boolean;
+  initialMask?: Blob;
+  focusPoint?: { x: number; y: number };
 }
 
 type Tool = 'brush' | 'eraser';
@@ -40,6 +43,8 @@ function MaskCanvas({
   onChange,
   disabled = false,
   allowGumline = false,
+  initialMask,
+  focusPoint,
 }: SmileMaskEditorProps) {
   const validSize = Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0;
   const canvasWidth = validSize ? width : 1;
@@ -49,6 +54,12 @@ function MaskCanvas({
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const paintRef = useRef<HTMLCanvasElement | null>(null);
   const maskRef = useRef<HTMLCanvasElement | null>(null);
+  const baseRef = useRef<HTMLCanvasElement | null>(null);
+  const baseCleared = useRef(false);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const pointers = useRef(new Map<number, Point>());
+  const gesture = useRef<{ view: MaskView; center: Point; distance: number } | null>(null);
+  const viewRef = useRef<MaskView>({ zoom: 1, x: 0, y: 0 });
   const strokesRef = useRef<Stroke[]>([]);
   const activeRef = useRef<ActiveStroke | null>(null);
   const revisionRef = useRef(0);
@@ -60,6 +71,9 @@ function MaskCanvas({
   const [drawing, setDrawing] = useState(false);
   const [hasMask, setHasMask] = useState(false);
   const [imageReady, setImageReady] = useState(false);
+  const [baseLoading, setBaseLoading] = useState(false);
+  const [mode, setMode] = useState<'paint' | 'pan'>(initialMask ? 'pan' : 'paint');
+  const [view, setView] = useState<MaskView>(viewRef.current);
   const [imageError, setImageError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -97,7 +111,30 @@ function MaskCanvas({
     if (disabled && activeRef.current) cancelStroke();
   }, [disabled]);
 
-  const blocked = disabled || !validSize || !imageReady || !!imageError;
+  useEffect(() => {
+    let cancelled = false;
+    const rev = ++revisionRef.current;
+    strokesRef.current = []; baseRef.current = null; baseCleared.current = false;
+    setHistoryLength(0); setBaseLoading(Boolean(initialMask));
+    if (!initialMask) { repaint(); publishMask(); return; }
+    setMode('pan');
+    void (async () => {
+      let bitmap: ImageBitmap | undefined;
+      try {
+        bitmap = await createImageBitmap(initialMask);
+        if (cancelled || !mountedRef.current || revisionRef.current !== rev) return;
+        if (bitmap.width !== canvasWidth || bitmap.height !== canvasHeight) throw new Error('size');
+        const base = document.createElement('canvas'); base.width = canvasWidth; base.height = canvasHeight;
+        base.getContext('2d')!.drawImage(bitmap, 0, 0);
+        baseRef.current = base; repaint(); publishMask();
+      } catch {
+        if (!cancelled && mountedRef.current) { setExportError('Не удалось открыть автообласть. Выделите зубы вручную.'); onChangeRef.current(null); }
+      } finally { bitmap?.close(); if (!cancelled) setBaseLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [initialMask, canvasWidth, canvasHeight]);
+
+  const blocked = disabled || baseLoading || !validSize || !imageReady || !!imageError;
   const controlsDisabled = blocked || drawing;
 
   function paintSegment(stroke: Stroke, from: Point, to?: Point) {
@@ -131,6 +168,7 @@ function MaskCanvas({
     if (!paint || !overlay) return;
     paint.fillStyle = '#000';
     paint.fillRect(0, 0, canvasWidth, canvasHeight);
+    if (baseRef.current && !baseCleared.current) paint.drawImage(baseRef.current, 0, 0);
     overlay.clearRect(0, 0, canvasWidth, canvasHeight);
     for (const stroke of strokesRef.current) {
       paintSegment(stroke, stroke.points[0]);
@@ -171,6 +209,8 @@ function MaskCanvas({
       onChangeRef.current(null);
       return;
     }
+    // Invalidate the previous export while a fresh mask blob is being prepared.
+    onChangeRef.current(null);
     try {
       mask.toBlob((blob) => {
         if (!mountedRef.current || revision !== revisionRef.current) return;
@@ -186,10 +226,49 @@ function MaskCanvas({
 
   function pointAt(event: Pick<PointerEvent, 'clientX' | 'clientY'>): Point {
     const bounds = overlayRef.current!.getBoundingClientRect();
-    return {
-      x: Math.max(0, Math.min(canvasWidth, (event.clientX - bounds.left) * canvasWidth / bounds.width)),
-      y: Math.max(0, Math.min(canvasHeight, (event.clientY - bounds.top) * canvasHeight / bounds.height)),
-    };
+    return maskImagePoint(event.clientX, event.clientY, bounds, canvasWidth, canvasHeight);
+  }
+
+  function updateView(next: MaskView) { viewRef.current = next; setView(next); }
+  function rebaseGesture() {
+    const pts = [...pointers.current.values()], bounds = viewportRef.current?.getBoundingClientRect();
+    if (!pts.length || !bounds) { gesture.current = null; return; }
+    const center = pts.length > 1 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : pts[0];
+    gesture.current = { view: viewRef.current, center: { x: center.x - bounds.left, y: center.y - bounds.top },
+      distance: pts.length > 1 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0 };
+  }
+  function beginPointer(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (mode === 'paint') { beginStroke(event); return; }
+    if (blocked || event.button !== 0) return;
+    event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY }); rebaseGesture();
+  }
+  function movePointer(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (mode === 'paint') { extendStroke(event); return; }
+    if (!pointers.current.has(event.pointerId) || !gesture.current || blocked) return;
+    event.preventDefault(); pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const bounds = viewportRef.current!.getBoundingClientRect(), pts = [...pointers.current.values()], start = gesture.current;
+    const center = pts.length > 1 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : pts[0];
+    let next = start.view;
+    if (pts.length > 1 && start.distance > 0) {
+      next = zoomMaskView(start.view, start.view.zoom * Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) / start.distance,
+        start.center.x, start.center.y, bounds.width, bounds.height);
+    }
+    updateView(limitMaskView({ ...next, x: next.x + center.x - bounds.left - start.center.x,
+      y: next.y + center.y - bounds.top - start.center.y }, bounds.width, bounds.height));
+  }
+  function endPointer(event: ReactPointerEvent<HTMLCanvasElement>, cancel = false) {
+    if (pointers.current.delete(event.pointerId)) { releaseCapture(event.pointerId); rebaseGesture(); return; }
+    if (cancel) cancelStroke(event); else finishStroke(event);
+  }
+  function zoomTo(zoom: number) {
+    if (controlsDisabled) return;
+    const bounds = viewportRef.current!.getBoundingClientRect();
+    const center = focusPoint ?? { x: 0.5, y: 0.5 };
+    if (viewRef.current.zoom === 1 && zoom > 1) {
+      updateView(limitMaskView({ zoom, x: bounds.width / 2 - center.x * bounds.width * zoom,
+        y: bounds.height / 2 - center.y * bounds.height * zoom }, bounds.width, bounds.height));
+    } else updateView(zoomMaskView(viewRef.current, zoom, bounds.width / 2, bounds.height / 2, bounds.width, bounds.height));
   }
 
   function beginStroke(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -199,6 +278,7 @@ function MaskCanvas({
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     revisionRef.current++;
+    onChangeRef.current(null);
     const stroke: Stroke = {
       tool,
       size: brushSize * canvasWidth / bounds.width,
@@ -265,6 +345,7 @@ function MaskCanvas({
     if (controlsDisabled || activeRef.current) return;
     revisionRef.current++;
     strokesRef.current = [];
+    baseCleared.current = true;
     setHistoryLength(0);
     setHasMask(false);
     setExportError(null);
@@ -277,18 +358,32 @@ function MaskCanvas({
     onChangeRef.current(null);
   }
 
+  function restoreBase() {
+    if (controlsDisabled) return;
+    strokesRef.current = []; baseCleared.current = false; setHistoryLength(0);
+    repaint(); publishMask();
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <p id={helpId} style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }}>
-        Закрасьте только выбранные верхние зубы. Губы, язык, нижние зубы и фон оставьте вне маски.{' '}
+        {initialMask ? 'Проверьте голубую автообласть. При необходимости уточните её кистью или ластиком.' : 'Закрасьте только выбранные верхние зубы.'} Губы, язык, нижние зубы и фон оставьте вне маски.{' '}
         {allowGumline
           ? 'Для изменения контура десны включите в маску нужный участок десны у этих зубов.'
           : 'Десну не закрашивайте.'}
       </p>
+      <div role="group" aria-label="Масштаб и перемещение" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <button type="button" onClick={() => zoomTo(view.zoom / 1.5)} disabled={controlsDisabled || view.zoom <= 1} style={buttonStyle} aria-label="Отдалить">−</button>
+        <button type="button" onClick={() => zoomTo(1)} disabled={controlsDisabled} style={buttonStyle}>{Math.round(view.zoom * 100)}%</button>
+        <button type="button" onClick={() => zoomTo(view.zoom * 1.5)} disabled={controlsDisabled || view.zoom >= 6} style={buttonStyle} aria-label="Приблизить">+</button>
+        <button type="button" aria-pressed={mode === 'pan'} onClick={() => setMode('pan')} disabled={controlsDisabled} style={{ ...buttonStyle, background: mode === 'pan' ? HIGHLIGHT : buttonStyle.background }}>Переместить</button>
+        <button type="button" aria-pressed={mode === 'paint'} onClick={() => setMode('paint')} disabled={controlsDisabled} style={{ ...buttonStyle, background: mode === 'paint' ? HIGHLIGHT : buttonStyle.background }}>Уточнить кистью</button>
+      </div>
+      <p style={{ margin: 0, fontSize: 11 }}>{mode === 'pan' ? 'Перемещайте фото одним пальцем, увеличивайте двумя или кнопками +/−.' : 'Рисование включено. Для перемещения и увеличения двумя пальцами выберите «Переместить».'}</p>
       <div role="group" aria-label="Инструменты маски" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {(['brush', 'eraser'] as const).map((value) => (
           <button key={value} type="button" aria-pressed={tool === value}
-            disabled={controlsDisabled} onClick={() => setTool(value)}
+            disabled={controlsDisabled} onClick={() => { setTool(value); setMode('paint'); }}
             style={{ ...buttonStyle, background: tool === value ? HIGHLIGHT : buttonStyle.background,
               opacity: controlsDisabled ? 0.5 : 1, cursor: controlsDisabled ? 'default' : 'pointer' }}>
             {value === 'brush' ? 'Кисть' : 'Ластик'}
@@ -298,20 +393,22 @@ function MaskCanvas({
           style={{ ...buttonStyle, opacity: controlsDisabled || !historyLength ? 0.5 : 1 }}>
           Отменить
         </button>
-        <button type="button" disabled={controlsDisabled || !historyLength} onClick={clear}
-          style={{ ...buttonStyle, opacity: controlsDisabled || !historyLength ? 0.5 : 1 }}>
+        <button type="button" disabled={controlsDisabled || !hasMask} onClick={clear}
+          style={{ ...buttonStyle, opacity: controlsDisabled || !hasMask ? 0.5 : 1 }}>
           Очистить
         </button>
+        {initialMask && <button type="button" disabled={controlsDisabled} onClick={restoreBase} style={buttonStyle}>Вернуть автообласть</button>}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <label htmlFor={sizeId} style={{ fontSize: 13, whiteSpace: 'nowrap' }}>Размер: {brushSize}</label>
-        <input id={sizeId} type="range" min={6} max={48} step={1} value={brushSize}
+        <input id={sizeId} type="range" min={2} max={48} step={1} value={brushSize}
           aria-label="Размер кисти и ластика" disabled={controlsDisabled}
           onChange={(event) => setBrushSize(Number(event.currentTarget.value))}
           style={{ flex: 1, minWidth: 0, minHeight: 44, accentColor: HIGHLIGHT }} />
       </div>
-      <div style={{ position: 'relative', width: '100%', aspectRatio: `${canvasWidth} / ${canvasHeight}`,
+      <div ref={viewportRef} style={{ position: 'relative', width: '100%', aspectRatio: `${canvasWidth} / ${canvasHeight}`,
         overflow: 'hidden', borderRadius: 16, background: '#171D29' }}>
+        <div style={{ position: 'absolute', inset: 0, transformOrigin: '0 0', transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
         <img src={imageUrl} width={canvasWidth} height={canvasHeight} draggable={false}
           alt="Исходное фото пациента для выделения верхних зубов"
           onLoad={(event) => {
@@ -327,10 +424,11 @@ function MaskCanvas({
         <canvas ref={overlayRef} width={canvasWidth} height={canvasHeight} role="img"
           aria-label="Маска изменения: рисуйте кистью поверх выбранных верхних зубов"
           aria-describedby={helpId} aria-disabled={blocked}
-          onPointerDown={beginStroke} onPointerMove={extendStroke} onPointerUp={finishStroke}
-          onPointerCancel={cancelStroke} onLostPointerCapture={cancelStroke}
+          onPointerDown={beginPointer} onPointerMove={movePointer} onPointerUp={(event) => endPointer(event)}
+          onPointerCancel={(event) => endPointer(event, true)} onLostPointerCapture={(event) => endPointer(event, true)}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.45,
-            touchAction: 'none', cursor: blocked ? 'default' : 'crosshair' }} />
+            touchAction: 'none', cursor: blocked ? 'default' : mode === 'pan' ? 'grab' : 'crosshair' }} />
+        </div>
       </div>
       <p aria-live="polite" style={{ margin: 0, fontSize: 12, lineHeight: 1.4 }}>
         {!validSize ? 'Некорректный размер фото.' : imageError || exportError || (!imageReady

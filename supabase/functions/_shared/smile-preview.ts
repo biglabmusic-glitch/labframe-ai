@@ -8,8 +8,9 @@ export const SMILE_SHADES = [
   'B1', 'B2', 'B3', 'B4', 'C1', 'C2', 'C3', 'C4', 'D2', 'D3', 'D4',
 ] as const;
 export const SMILE_MAX_BYTES = 20 * 1024 * 1024;
-export const SMILE_TIMEOUT_MS = 100_000;
-export const SMILE_STALE_MS = 150_000;
+export const SMILE_TIMEOUT_MS = 60_000;
+// Provider generation lives outside an Edge invocation; polling can resume later.
+export const SMILE_STALE_MS = 12 * 60_000;
 export const SMILE_PREPARED_TTL_MS = 24 * 60 * 60 * 1000;
 export const SMILE_CIPHER_OVERHEAD = 29;
 
@@ -32,6 +33,7 @@ export interface SmileManifest {
   createdAt: number;
   updatedAt: number;
   startedAt?: number;
+  providerId?: string;
   errorCode?: string;
 }
 
@@ -60,6 +62,7 @@ const MESSAGES: Record<string, string> = {
   timeout: 'Модель не успела ответить. Для повторной попытки создайте новую примерку.',
   expired: 'Эта заготовка устарела. Создайте новую примерку.',
   provider_failed: 'Модель не смогла выполнить примерку. Создайте новую попытку.',
+  provider_unavailable: 'Сервис обработки временно недоступен. Проверьте статус этой же примерки позже.',
   provider_response: 'Модель не вернула подходящее изображение. Создайте новую попытку.',
   result_missing: 'Результат больше недоступен. Создайте новую примерку.',
   processing_failed: 'Не удалось завершить примерку. Создайте новую попытку.',
@@ -209,6 +212,34 @@ async function decodePng(bytes: Uint8Array, minSide = 1): Promise<Image> {
   } catch { throw new SmileError('invalid_png'); }
 }
 
+/** Polza can return JPEG even when PNG was requested. Check its SOF before decoding. */
+async function decodeGeneratedImage(bytes: Uint8Array): Promise<Image> {
+  if (bytes[0] === 137) return await decodePng(bytes);
+  if (bytes.length > SMILE_MAX_BYTES || bytes[0] !== 255 || bytes[1] !== 216) throw new SmileError('provider_response', 502);
+  let dimensions: { width: number; height: number } | undefined;
+  for (let offset = 2; offset + 4 < bytes.length;) {
+    if (bytes[offset++] !== 255) throw new SmileError('provider_response', 502);
+    while (bytes[offset] === 255) offset++;
+    const marker = bytes[offset++];
+    if (marker === 218 || marker === 217) break;
+    const length = (bytes[offset] << 8) | bytes[offset + 1];
+    if (length < 2 || offset + length > bytes.length) throw new SmileError('provider_response', 502);
+    if ([192, 193, 194, 195, 197, 198, 199, 201, 202, 203, 205, 206, 207].includes(marker)) {
+      if (length < 8) throw new SmileError('provider_response', 502);
+      dimensions = { height: (bytes[offset + 3] << 8) | bytes[offset + 4], width: (bytes[offset + 5] << 8) | bytes[offset + 6] };
+      break;
+    }
+    offset += length;
+  }
+  if (!dimensions || dimensions.width < 1 || dimensions.height < 1 || dimensions.width > 2000 || dimensions.height > 2000 ||
+      dimensions.width * dimensions.height > 4_000_000) throw new SmileError('image_dimensions');
+  try {
+    const image = await Image.decode(bytes);
+    if (image.width !== dimensions.width || image.height !== dimensions.height) throw new Error('dimensions');
+    return image;
+  } catch { throw new SmileError('provider_response', 502); }
+}
+
 export interface SmileCrop { x: number; y: number; width: number; height: number }
 export interface SmileFrame { width: number; height: number; offsetX: number; offsetY: number }
 export interface SmileInputs { source: Image; mask: Uint8Array; selectedPixels: number; crop: SmileCrop; frame: SmileFrame }
@@ -283,7 +314,7 @@ function pngDataUrl(bytes: Uint8Array): string {
 
 /** Копируем RGB модели строго внутрь hard mask; остальные RGBA исходника сохраняются побитно. */
 export async function compositeSmile(inputs: SmileInputs, generatedBytes: Uint8Array): Promise<Uint8Array> {
-  const edited = await decodePng(generatedBytes);
+  const edited = await decodeGeneratedImage(generatedBytes);
   const { source, crop, frame } = inputs;
   if (Math.abs((edited.width / edited.height) / (frame.width / frame.height) - 1) > 0.02) {
     throw new SmileError('output_dimensions');
@@ -292,6 +323,11 @@ export async function compositeSmile(inputs: SmileInputs, generatedBytes: Uint8A
   result.bitmap.set(source.bitmap);
   for (let pixel = 0; pixel < inputs.mask.length; pixel++) {
     if (!inputs.mask[pixel]) continue;
+    const px = pixel % source.width, py = Math.floor(pixel / source.width);
+    const edge = px === 0 || py === 0 || px === source.width - 1 || py === source.height - 1 ||
+      !inputs.mask[pixel - 1] || !inputs.mask[pixel + 1] || !inputs.mask[pixel - source.width] || !inputs.mask[pixel + source.width];
+    // Feather inward only: no protected pixel is touched or added to the mask.
+    const blend = edge ? 0.5 : 1;
     const x = Math.max(0, Math.min(edited.width - 1, ((pixel % source.width) - crop.x + frame.offsetX + 0.5) * edited.width / frame.width - 0.5));
     const y = Math.max(0, Math.min(edited.height - 1, (Math.floor(pixel / source.width) - crop.y + frame.offsetY + 0.5) * edited.height / frame.height - 0.5));
     const x0 = Math.floor(x), y0 = Math.floor(y);
@@ -302,7 +338,8 @@ export async function compositeSmile(inputs: SmileInputs, generatedBytes: Uint8A
         edited.bitmap[(y0 * edited.width + x1) * 4 + channel] * dx;
       const bottom = edited.bitmap[(y1 * edited.width + x0) * 4 + channel] * (1 - dx) +
         edited.bitmap[(y1 * edited.width + x1) * 4 + channel] * dx;
-      result.bitmap[pixel * 4 + channel] = Math.round(top * (1 - dy) + bottom * dy);
+      const colour = top * (1 - dy) + bottom * dy;
+      result.bitmap[pixel * 4 + channel] = Math.round(source.bitmap[pixel * 4 + channel] * (1 - blend) + colour * blend);
     }
   }
   return await result.encode();
@@ -382,23 +419,22 @@ export function smileMediaLocation(value: unknown): string | null {
   return null;
 }
 
-export async function requestSmileEdit(options: {
-  photoData: string; maskData: string; settings: SmileSettings;
-  apiKey: string; model: string; baseUrl?: string; signal: AbortSignal;
-  fetcher?: typeof fetch;
-}): Promise<Uint8Array> {
+export interface SmileProviderOptions {
+  apiKey: string; baseUrl?: string; signal: AbortSignal; fetcher?: typeof fetch;
+}
+export type SmileProviderTask = { status: 'processing'; id: string } | { status: 'done'; image: Uint8Array };
+
+async function smileProviderRequest(options: SmileProviderOptions, mediaId?: string, input?: Record<string, unknown>): Promise<SmileProviderTask> {
   const fetcher = options.fetcher ?? fetch;
-  // Этот контракт намеренно не принимает URL полного портрета или нашего Storage.
-  if (![options.photoData, options.maskData].every((value) => /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value))) {
-    throw new SmileError('provider_response', 502);
-  }
   const base = new URL((options.baseUrl ?? 'https://polza.ai/api/v1').replace(/\/+$/, '') + '/');
   if (base.protocol !== 'https:' || !(base.hostname === 'polza.ai' || base.hostname === 'api.polza.ai') ||
     base.username || base.password || base.search || base.hash) throw new SmileError('not_configured', 503);
   const headers = { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' };
   const request = async (url: string, init?: RequestInit): Promise<Record<string, unknown>> => {
-    const response = await fetcher(url, { ...init, headers, signal: options.signal, redirect: 'error' });
-    if (!response.ok) throw new SmileError('provider_failed', 502);
+    let response: Response;
+    try { response = await fetcher(url, { ...init, headers, signal: options.signal, redirect: 'error' }); }
+    catch { throw new SmileError(options.signal.aborted ? 'timeout' : 'provider_unavailable', 503); }
+    if (!response.ok) throw new SmileError('provider_unavailable', 503);
     const bytes = await readSmileBytes(response, 30 * 1024 * 1024, options.signal);
     try {
       const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
@@ -406,48 +442,69 @@ export async function requestSmileEdit(options: {
       return value;
     } catch { throw new SmileError('provider_response', 502); }
   };
-  let data = await request(new URL('media', base).href, {
-    method: 'POST',
-    body: JSON.stringify({
-      model: options.model,
-      async: false,
-      provider: { allow_fallbacks: false },
-      input: {
-        prompt: buildSmilePrompt(options.settings),
-        images: [{ type: 'base64', data: options.photoData }, { type: 'base64', data: options.maskData }],
-        aspect_ratio: '16:9', image_resolution: '1K', output_format: 'png', max_images: 1,
-      },
-    }),
-  });
-  while (true) {
+  const data = await request(new URL(mediaId ? `media/${mediaId}` : 'media', base).href,
+    input ? { method: 'POST', body: JSON.stringify(input) } : undefined);
     options.signal.throwIfAborted();
     if (data.error || data.status === 'failed') throw new SmileError('provider_failed', 502);
     const location = smileMediaLocation(data);
     if (location) {
-      if (location.startsWith('data:image/png;base64,')) {
-        const encoded = location.slice('data:image/png;base64,'.length);
+      const dataPrefix = location.match(/^data:image\/(png|jpeg|jpg);base64,/);
+      if (dataPrefix) {
+        const encoded = location.slice(dataPrefix[0].length);
         if (encoded.length > Math.ceil(SMILE_MAX_BYTES * 4 / 3) + 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
           throw new SmileError('provider_response', 502);
         }
-        try { return Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)); }
+        try { return { status: 'done', image: Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)) }; }
         catch { throw new SmileError('provider_response', 502); }
       }
       let url: URL;
       try { url = new URL(location); } catch { throw new SmileError('provider_response', 502); }
       if (url.protocol !== 'https:' || !(url.hostname === 'polza.ai' || url.hostname.endsWith('.polza.ai')) ||
         url.username || url.password) throw new SmileError('provider_response', 502);
-      const image = await fetcher(url.href, { signal: options.signal, redirect: 'error' });
-      if (!image.ok) throw new SmileError('provider_response', 502);
-      return await readSmileBytes(image, SMILE_MAX_BYTES, options.signal);
+      let image: Response;
+      try { image = await fetcher(url.href, { signal: options.signal, redirect: 'error' }); }
+      catch { throw new SmileError(options.signal.aborted ? 'timeout' : 'provider_unavailable', 503); }
+      if (!image.ok) throw new SmileError('provider_unavailable', 503);
+      return { status: 'done', image: await readSmileBytes(image, SMILE_MAX_BYTES, options.signal) };
     }
     if (!['pending', 'processing'].includes(String(data.status)) || typeof data.id !== 'string' ||
       !/^[a-zA-Z0-9_-]{1,128}$/.test(data.id)) throw new SmileError('provider_response', 502);
-    // Не создаём повторную платную генерацию: опрашиваем тот же media id.
-    const mediaId = data.id;
+    return { status: 'processing', id: data.id };
+}
+
+export async function createSmileTask(options: SmileProviderOptions & {
+  photoData: string; maskData: string; settings: SmileSettings; model: string;
+}): Promise<SmileProviderTask> {
+  // Never accept the original portrait URL or a private Storage URL.
+  if (![options.photoData, options.maskData].every((value) => /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value))) {
+    throw new SmileError('provider_response', 502);
+  }
+  return await smileProviderRequest(options, undefined, {
+    model: options.model, async: true, provider: { allow_fallbacks: false },
+    input: {
+      prompt: buildSmilePrompt(options.settings),
+      images: [{ type: 'base64', data: options.photoData }, { type: 'base64', data: options.maskData }],
+      aspect_ratio: '16:9', image_resolution: '1K', output_format: 'png', max_images: 1,
+    },
+  });
+}
+
+export async function pollSmileTask(options: SmileProviderOptions & { id: string }): Promise<SmileProviderTask> {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(options.id)) throw new SmileError('provider_response', 502);
+  return await smileProviderRequest(options, options.id);
+}
+
+/** Convenience for isolated tests; production persists the task ID between calls. */
+export async function requestSmileEdit(options: SmileProviderOptions & {
+  photoData: string; maskData: string; settings: SmileSettings; model: string;
+}): Promise<Uint8Array> {
+  let task = await createSmileTask(options);
+  while (task.status === 'processing') {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await withSmileSignal(new Promise<void>((resolve) => { timer = setTimeout(resolve, 3000); }), options.signal);
     } finally { clearTimeout(timer); }
-    data = await request(new URL(`media/${mediaId}`, base).href);
+    task = await pollSmileTask({ ...options, id: task.id });
   }
+  return task.image;
 }

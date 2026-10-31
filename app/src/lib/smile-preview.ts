@@ -38,7 +38,7 @@ export interface SmileJobStatus {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
-const REQUEST_TIMEOUT_MS = 12_000;
+const REQUEST_TIMEOUT_MS = 25_000;
 const JOB_STORAGE_KEY = 'labframe.smilePreview.jobId';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -218,6 +218,11 @@ export function smileErrorMessage(error: unknown): string {
     if (/decryption|encrypted_image/.test(error.code)) return 'Не удалось расшифровать результат. Проверьте статус примерки ещё раз.';
     if (error.code === 'job_processing' || error.status === 409) return 'Примерка ещё обрабатывается. Дождитесь завершения, затем удалите её.';
     if (error.code === 'download_failed') return 'Не удалось скачать PNG. Обновите временную ссылку и попробуйте ещё раз.';
+    if (error.code === 'timeout') return 'Время ожидания модели истекло. Проверьте статус этой примерки перед новой попыткой.';
+    if (error.code === 'provider_failed') return 'AI не смог обработать снимок. Попробуйте другую фотографию.';
+    if (error.code === 'provider_response' || error.code === 'processing_failed') return 'Не удалось применить ответ AI. Изображение не изменено; можно создать новую примерку.';
+    if (error.code === 'provider_unavailable') return 'AI временно недоступен. Позже проверьте статус этой же примерки.';
+    if (error.code === 'output_dimensions') return 'AI изменил пропорции фрагмента. Результат не применён, чтобы не исказить фото.';
     if (/mask/.test(error.code)) return 'Проверьте маску: выделите только разрешённую для изменения область.';
     if (/settings|teeth|shade|zenith|instruction|shape/.test(error.code)) return 'Проверьте выбранные зубы, оттенки и указание для зенитов.';
   }

@@ -44,6 +44,8 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
   const objects = new Map<string, Uint8Array>();
   let handler: ((request: Request) => Promise<Response>) | undefined;
   let permissionsFail = false, bucketPublic = false, providerCalls = 0;
+  let providerReady = false, providerReadFail = false;
+  let providerOutput = '';
   let beforeObjectInsert: ((path: string, bytes: Uint8Array) => Promise<void>) | undefined;
   const work: Promise<unknown>[] = [];
   const runtime = globalThis as unknown as { EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void } };
@@ -98,12 +100,19 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
     if (url.hostname === 'polza.ai' && url.pathname === '/api/v1/media') {
       providerCalls++;
       const payload = await request.json();
+      assertEquals(payload.async, true);
       assert(!JSON.stringify(payload).includes(origin));
       assert(!JSON.stringify(payload).includes(environment.SMILE_ENCRYPTION_KEY));
       const image = await Image.decode(Uint8Array.from(atob(payload.input.images[0].data.split(',')[1]), (char) => char.charCodeAt(0)));
       assert(image.width < 64 && image.height < 64, 'the provider receives only the selected crop');
       image.fill(0x112233ff);
-      return Response.json({ data: { url: `data:image/png;base64,${asBase64(await image.encode())}` } });
+      providerOutput = `data:image/png;base64,${asBase64(await image.encode())}`;
+      return Response.json({ id: 'aig_fixture', status: 'pending' });
+    }
+    if (url.hostname === 'polza.ai' && url.pathname === '/api/v1/media/aig_fixture') {
+      if (providerReadFail) return Response.json({ error: 'unavailable' }, { status: 503 });
+      return Response.json(providerReady ? { status: 'completed', data: { url: providerOutput } }
+        : { id: 'aig_fixture', status: 'processing' });
     }
     throw new Error(`Unexpected fixture request: ${request.method} ${url.origin}${url.pathname}`);
   };
@@ -158,6 +167,17 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
       });
       assertEquals(response.status, 200);
       await Promise.all(work);
+      const manifestPath = prepared.photo.path.replace('source.enc', 'manifest.json');
+      const manifest = JSON.parse(new TextDecoder().decode(objects.get(manifestPath)));
+      assertEquals(manifest.providerId, 'aig_fixture');
+      // Survive the old 100-second worker timeout / 150-second stale cutoff.
+      manifest.startedAt = Date.now() - 180_000;
+      objects.set(manifestPath, new TextEncoder().encode(JSON.stringify(manifest)));
+      assertEquals((await (await call(102, { action: 'status', jobId: prepared.jobId })).json()).status, 'processing');
+      providerReadFail = true;
+      assertEquals((await (await call(102, { action: 'status', jobId: prepared.jobId })).json()).status, 'processing');
+      providerReadFail = false;
+      providerReady = true;
       const statusResponse = await call(102, { action: 'status', jobId: prepared.jobId });
       const status = await statusResponse.json();
       assertEquals(status.status, 'done');
@@ -169,7 +189,7 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
       const plain = await decryptSmileImage(new Blob([copiedBuffer(cipher)]), status.encryption, prepared.jobId, 'result');
       const image = await Image.decode(new Uint8Array(await plain.arrayBuffer()));
       assertEquals(image.getPixelAt(1, 1), 0xaabbccff);
-      assertEquals(image.getPixelAt(21, 41), 0x112233ff);
+      assertEquals(image.getPixelAt(22, 42), 0x112233ff);
       const repeated = await call(102, { action: 'generate', jobId: prepared.jobId });
       assertEquals((await repeated.json()).status, 'done');
       assertEquals(providerCalls, 1);
@@ -213,6 +233,39 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
       assertEquals(providerCalls, 1);
       const remaining = [...objects.keys()].filter((path) => path.startsWith(`102/smile-pilot/${job.jobId}/`));
       assertEquals(remaining, [`102/smile-pilot/${job.jobId}/running.json`]);
+    });
+    await test.step('deletion cannot be undone by a status check finishing at the same time', async () => {
+      const job = await (await call(102, { action: 'prepare', consent: true })).json();
+      const photo = new Image(64, 64).fill(0xaabbccff), mask = new Image(64, 64).fill(0x000000ff);
+      for (let y = 40; y < 46; y++) for (let x = 20; x < 32; x++) mask.setPixelAt(x + 1, y + 1, 0xffffffff);
+      for (const [kind, image, path] of [['photo', photo, job.photo.path], ['mask', mask, job.mask.path]] as const) {
+        const encrypted = await encryptSmileImage(new Blob([copiedBuffer(await image.encode())]), job.encryption, job.jobId, kind);
+        objects.set(path, new Uint8Array(await encrypted.arrayBuffer()));
+      }
+      await call(102, { action: 'generate', jobId: job.jobId, settings: {
+        teeth: [11], shades: { '11': 'BL1' }, shape: 'original', zenithMode: 'preserve', translucency: 'natural',
+      } });
+      await Promise.all(work);
+      let reached!: () => void, release!: () => void;
+      const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
+      const releasedPromise = new Promise<void>((resolve) => { release = resolve; });
+      let paused = false;
+      beforeObjectInsert = async (path, bytes) => {
+        if (!paused && path === `102/smile-pilot/${job.jobId}/manifest.json` && JSON.parse(new TextDecoder().decode(bytes)).status === 'done') {
+          paused = true; reached(); await releasedPromise;
+        }
+      };
+      const finishing = call(102, { action: 'status', jobId: job.jobId });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([reachedPromise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('finish lock not reached')), 2000); })]);
+        assertEquals((await call(102, { action: 'delete', jobId: job.jobId })).status, 200);
+      } finally { clearTimeout(timer); release(); beforeObjectInsert = undefined; }
+      assertEquals((await finishing).status, 404);
+      assertEquals((await call(102, { action: 'status', jobId: job.jobId })).status, 404);
+      const remaining = [...objects.keys()].filter((path) => path.startsWith(`102/smile-pilot/${job.jobId}/`));
+      assertEquals(remaining, [`102/smile-pilot/${job.jobId}/running.json`]);
+      assertEquals(providerCalls, 2);
     });
   } finally {
     globalThis.fetch = originalFetch;
