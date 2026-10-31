@@ -73,6 +73,7 @@
 .smile-instruction textarea::placeholder { color: var(--c-on-dark-3); }
 .smile-instruction .smile-micro { margin-top: -5px; }
 .smile-mask-note { margin: 13px 0 0; color: var(--c-on-dark-2); font-size: 11px; }
+.smile-mask-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-bottom: 8px; }
 .smile-mask-note.is-ready { color: var(--c-accent); }
 .smile-summary { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 11px 12px; padding: 13px; border-radius: 12px; background: var(--c-bg-2); font-size: 11px; line-height: 1.5; }
 .smile-summary > span { color: var(--c-on-dark-3); }

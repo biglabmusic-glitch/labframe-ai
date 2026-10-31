@@ -8,9 +8,11 @@ https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/
 
 SHA-256: 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
 
-The model detects facial landmarks only. Tooth pixels are a conservative local
-colour/edge proposal inside the inner lips, not a trained medical segmentation
-model and not an FDI tooth-number recognizer. A visible mask review is required.
+The model detects facial landmarks only, locating a native-resolution mouth crop.
+MobileSAM (see mobilesam/README.md) produces proposed contours from point prompts.
+The colour/edge heuristic supplies initial prompts only, never the final mask.
+Neither model is a trained medical segmentation model or an FDI tooth-number
+recognizer. A visible mask review is required.
 Ambiguous images abstain and retain manual editing. Photos are not uploaded for
 this step. The actual edit still uses the separately disclosed Polza service.
 

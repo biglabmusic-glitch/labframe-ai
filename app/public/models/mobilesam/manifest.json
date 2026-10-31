@@ -1,0 +1,48 @@
+{
+  "model": "MobileSAM",
+  "encoderRevision": "9effc01a9e135621d710d49159f1ffb0b6f724dc",
+  "decoderRevision": "0d3b403339b4674a82493d5e97964dd78089ddc8",
+  "onnxruntime": "1.31.1",
+  "files": {
+    "onnx/encoder.onnx": {
+      "sha256": "e4220ae166e841ebc6159a69b5b762b635af95ed758c86663a978bef80bcea62",
+      "bytes": 11018056,
+      "source": "https://huggingface.co/vietanhdev/segment-anything-onnx-models/resolve/9effc01a9e135621d710d49159f1ffb0b6f724dc/mobile_sam_20230629_quant.zip#mobile_sam.encoder.quant.onnx"
+    },
+    "onnx/decoder.onnx": {
+      "sha256": "8976b90a87ba50a6a72217a5ff994f7d25ce16f2229fcc1ed259e1294c622ffe",
+      "bytes": 16496559,
+      "source": "https://huggingface.co/Acly/MobileSAM/resolve/0d3b403339b4674a82493d5e97964dd78089ddc8/sam_mask_decoder_multi.onnx"
+    },
+    "ENCODER_CARD.md": {
+      "sha256": "e613251715752d02f284d77b3f0803b94919bec6d1a4fee839aa2eab0b25e39e",
+      "bytes": 3677,
+      "source": "https://huggingface.co/vietanhdev/segment-anything-onnx-models/resolve/9effc01a9e135621d710d49159f1ffb0b6f724dc/README.md"
+    },
+    "DECODER_CARD.md": {
+      "sha256": "9f65cf87488ad1a3c8b191ac9fd5a8ce04b999810bfc7d1a2625750edb969c56",
+      "bytes": 712,
+      "source": "https://huggingface.co/Acly/MobileSAM/resolve/0d3b403339b4674a82493d5e97964dd78089ddc8/README.md"
+    },
+    "LICENSE-MOBILESAM.txt": {
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357,
+      "source": "https://raw.githubusercontent.com/ChaoningZhang/MobileSAM/f706ad9c4eb7f219c00d9050e46328518ffb65d2/LICENSE"
+    },
+    "LICENSE-ONNXRUNTIME.txt": {
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+      "bytes": 1073,
+      "source": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.31.1/LICENSE"
+    },
+    "wasm/ort-wasm-simd-threaded.mjs": {
+      "sha256": "30ed0b5cd1182ede931fea448afb567d4dc705ec957af09f108a2be5f770dac3",
+      "bytes": 24738,
+      "source": "npm:onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.mjs"
+    },
+    "wasm/ort-wasm-simd-threaded.wasm": {
+      "sha256": "4b884c203b0fa48d057be3332c65513ff85aa3c5bddd6946acc0fab7ecda001d",
+      "bytes": 14848852,
+      "source": "npm:onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.wasm"
+    }
+  }
+}

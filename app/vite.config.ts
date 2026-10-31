@@ -88,6 +88,7 @@ ${content}
 
 export default defineConfig({
   plugins: [react(), legalPages()],
+  worker: { format: 'es' },
   server: {
     host: true,
     port: 5173,

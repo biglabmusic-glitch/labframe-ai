@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
-import { SmileMaskEditor } from '../components/SmileMaskEditor';
+import { SmileMaskEditor, type SmileSegmentPoint } from '../components/SmileMaskEditor';
+import type { SmileMaskSession } from '../lib/auto-smile-mask';
 import { useApp } from '../state/AppContext';
 import { useRouter } from '../router/Router';
 import { useBackButton } from '../telegram/useBackButton';
@@ -65,9 +66,13 @@ export function ScreenSmilePreview() {
   const [zenithInstruction, setZenithInstruction] = useState('');
   const [mask, setMask] = useState<Blob | null>(null);
   const [autoMask, setAutoMask] = useState<{ mask: Blob; center: { x: number; y: number } } | null>(null);
-  const [autoState, setAutoState] = useState<'idle' | 'loading' | 'ready' | 'manual'>('idle');
+  const [autoState, setAutoState] = useState<'idle' | 'loading' | 'ready' | 'points' | 'manual'>('idle');
   const [autoNote, setAutoNote] = useState('');
   const [autoAttempt, setAutoAttempt] = useState(0);
+  const [segmentPoints, setSegmentPoints] = useState<SmileSegmentPoint[]>([]);
+  const [segmentAttempt, setSegmentAttempt] = useState(0);
+  const [segmentationPending, setSegmentationPending] = useState(false);
+  const [autoCenter, setAutoCenter] = useState<{ x: number; y: number }>();
   const [maskConfirmed, setMaskConfirmed] = useState(false);
   const [consent, setConsent] = useState(false);
   const [jobId, setJobId] = useState<string | null>(readSmileJobId);
@@ -81,6 +86,14 @@ export function ScreenSmilePreview() {
   const submitController = useRef<AbortController | null>(null);
   const normalizingRevision = useRef(0);
   const autoRevision = useRef(0);
+  const autoController = useRef<AbortController | null>(null);
+  const segmentSession = useRef<SmileMaskSession | null>(null);
+  const segmentPointsRef = useRef<SmileSegmentPoint[]>([]);
+  const seedCount = useRef(0);
+  const segmentRevision = useRef(0);
+  const segmentController = useRef<AbortController | null>(null);
+  const segmentChain = useRef<Promise<void>>(Promise.resolve());
+  const disposedSessions = useRef(new WeakSet<SmileMaskSession>());
   const submitting = useRef(false);
   const allowed = Boolean(user.canSmilePreview) && isSmilePreviewReady();
   const busy = phase === 'uploading' || phase === 'processing';
@@ -89,7 +102,8 @@ export function ScreenSmilePreview() {
   const chosenShade = (shades[activeTooth] ?? 'BL1') as SmileShade;
   const maskKey = `${photo?.url ?? ''}:${selected.join('-')}:${zenithMode}`;
   const autoEligible = selected.length === UPPER_TEETH.length && zenithMode === 'preserve';
-  const canGenerate = allowed && editing && !normalizing && !deleting && autoState !== 'loading' && maskConfirmed && Boolean(photo && mask && selected.length && consent) &&
+  const canRefineMask = Boolean(segmentSession.current) && autoEligible && autoState !== 'loading';
+  const canGenerate = allowed && editing && !normalizing && !deleting && autoState !== 'loading' && !segmentationPending && maskConfirmed && Boolean(photo && mask && selected.length && consent) &&
     (zenithMode === 'preserve' || Boolean(zenithInstruction.trim()));
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
@@ -98,8 +112,69 @@ export function ScreenSmilePreview() {
   useEffect(() => { setMask(null); setMaskConfirmed(false); }, [maskKey]);
   const onMaskChange = useCallback((blob: Blob | null) => { setMask(blob); setMaskConfirmed(false); }, []);
 
+  function disposeSegmentSession(session: SmileMaskSession) {
+    if (disposedSessions.current.has(session)) return;
+    disposedSessions.current.add(session);
+    // Disposing immediately terminates the image worker and any native inference.
+    session.dispose();
+  }
+
+  const addSegmentPoint = useCallback((point: SmileSegmentPoint) => {
+    if (!segmentSession.current || busy || !editing) return;
+    if (segmentPointsRef.current.length >= 32) {
+      setAutoNote('Для этого снимка уже достаточно касаний. Уберите последнюю точку или уточните края кистью.');
+      return;
+    }
+    const next = [...segmentPointsRef.current, point];
+    segmentPointsRef.current = next; setSegmentPoints(next);
+    setMask(null); setMaskConfirmed(false);
+    if (!next.some((item) => item.label === 1)) {
+      setSegmentationPending(false); setAutoState('points');
+      setAutoNote('Сначала добавьте касание + на верхнем зубе. Затем можно исключить лишние участки касанием −.');
+      return;
+    }
+    setSegmentationPending(true);
+    setSegmentAttempt((value) => value + 1);
+  }, [busy, editing]);
+
+  function undoSegmentPoint() {
+    if (!segmentSession.current || segmentPointsRef.current.length <= seedCount.current) return;
+    const next = segmentPointsRef.current.slice(0, -1);
+    segmentPointsRef.current = next; setSegmentPoints(next);
+    setMask(null); setMaskConfirmed(false);
+    if (!next.some((item) => item.label === 1)) {
+      segmentRevision.current++; segmentController.current?.abort();
+      setSegmentAttempt(0); setSegmentationPending(false); setAutoMask(null); setAutoState('points');
+      setAutoNote('Коснитесь верхнего зуба в режиме «Добавить касанием», чтобы построить область заново.');
+      return;
+    }
+    setSegmentationPending(true);
+    setSegmentAttempt((value) => value + 1);
+  }
+
+  function resetSegmentPoints() {
+    if (!segmentSession.current || busy) return;
+    segmentRevision.current++; segmentController.current?.abort();
+    segmentPointsRef.current = []; seedCount.current = 0;
+    setSegmentPoints([]); setSegmentAttempt(0); setSegmentationPending(false);
+    setMask(null); setMaskConfirmed(false); setAutoMask(null); setAutoState('points');
+    setAutoNote('Все точки сброшены. Коснитесь верхнего зуба в режиме «Добавить касанием»; лишние участки исключите касанием −.');
+  }
+
+  function useManualMask() {
+    autoRevision.current++; autoController.current?.abort();
+    segmentRevision.current++; segmentController.current?.abort();
+    const session = segmentSession.current; segmentSession.current = null;
+    if (session) disposeSegmentSession(session);
+    segmentPointsRef.current = []; seedCount.current = 0;
+    setSegmentPoints([]); setSegmentationPending(false); setMaskConfirmed(false);
+    setAutoState('manual'); setAutoNote('Ручное уточнение включено. Увеличьте фото и выделите только разрешённые верхние зубы.');
+  }
+
   useEffect(() => {
     if (!photo || !editing) return;
+    segmentPointsRef.current = []; seedCount.current = 0;
+    setSegmentPoints([]); setSegmentAttempt(0); setSegmentationPending(false); setAutoCenter(undefined);
     if (!autoEligible) {
       setAutoMask(null); setAutoState('manual');
       setAutoNote(zenithMode === 'allow' ? 'Для коррекции десны уточните разрешённую область вручную.'
@@ -107,17 +182,27 @@ export function ScreenSmilePreview() {
       return;
     }
     const controller = new AbortController(), revision = ++autoRevision.current;
+    autoController.current = controller;
+    let ownedSession: SmileMaskSession | null = null;
     setAutoMask(null); setMask(null); setMaskConfirmed(false); setAutoState('loading'); setAutoNote('Ищем область зубов на устройстве…');
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => { controller.abort(); reject(new Error('model_timeout')); }, 30_000);
+      timer = setTimeout(() => { controller.abort(); reject(new Error('model_timeout')); }, 90_000);
     });
     void Promise.race([
-      import('../lib/auto-smile-mask').then((module) => module.proposeSmileMask(photo, controller.signal)), timeout,
-    ]).then((proposal) => {
-      if (controller.signal.aborted || autoRevision.current !== revision) return;
-      setAutoMask(proposal); setAutoState('ready');
-      setAutoNote('Предварительно выделены видимые верхние зубы. Увеличьте фото и проверьте границы перед запуском.');
+      import('../lib/auto-smile-mask').then((module) => module.prepareSmileMask(photo, controller.signal)).then((session) => {
+        if (controller.signal.aborted || autoRevision.current !== revision) { disposeSegmentSession(session); throw new Error('cancelled'); }
+        return session;
+      }), timeout,
+    ]).then((session) => {
+      if (controller.signal.aborted || autoRevision.current !== revision) { disposeSegmentSession(session); return; }
+      ownedSession = session; segmentSession.current = session;
+      segmentPointsRef.current = [...session.points]; seedCount.current = session.points.length;
+      setSegmentPoints([...session.points]); setAutoCenter(session.center);
+      setAutoMask(session.initial); setAutoState(session.initial ? 'ready' : 'points');
+      setAutoNote(session.initial
+        ? 'Предварительная область готова. Уточняйте её касаниями +/−, затем проверьте границы на увеличении.'
+        : 'Уверенно определить границы не удалось. Нажмите «Добавить касанием» и коснитесь верхних зубов; лишнее исключите касанием −.');
     }).catch((err) => {
       if (autoRevision.current !== revision) return;
       setAutoState('manual');
@@ -125,8 +210,47 @@ export function ScreenSmilePreview() {
         : err?.code === 'uncertain' ? 'Границы верхних зубов определились неуверенно. Увеличьте фото и выделите область вручную.'
         : 'Автовыделение недоступно на этом снимке или устройстве. Ручное выделение и увеличение работают.');
     }).finally(() => clearTimeout(timer));
-    return () => { autoRevision.current++; controller.abort(); clearTimeout(timer); };
+    return () => {
+      autoRevision.current++; controller.abort(); clearTimeout(timer);
+      segmentRevision.current++; segmentController.current?.abort();
+      if (segmentSession.current === ownedSession) segmentSession.current = null;
+      if (ownedSession) disposeSegmentSession(ownedSession);
+    };
   }, [photo, editing, autoEligible, autoAttempt]);
+
+  useEffect(() => {
+    const session = segmentSession.current;
+    if (!session || !editing || segmentAttempt === 0) return;
+    const controller = new AbortController(), revision = ++segmentRevision.current;
+    segmentController.current = controller;
+    const points = [...segmentPointsRef.current];
+    if (!points.some((point) => point.label === 1)) return;
+    const timer = setTimeout(() => {
+      // Serialize actual inference even when a newer tap aborts delivery of the previous result.
+      segmentChain.current = segmentChain.current.catch(() => {}).then(async () => {
+        if (controller.signal.aborted || segmentSession.current !== session) return;
+        try {
+          const proposal = await session.refine(points, controller.signal);
+          if (controller.signal.aborted || segmentRevision.current !== revision || segmentSession.current !== session) return;
+          setAutoMask(proposal); setAutoCenter(proposal.center); setAutoState('ready');
+          setAutoNote('Область уточнена по касаниям. Проверьте, что выделены только нужные верхние зубы.');
+        } catch (error) {
+          if (controller.signal.aborted || segmentRevision.current !== revision || segmentSession.current !== session) return;
+          setMask(null); setMaskConfirmed(false); setAutoState('points');
+          if (error && typeof error === 'object' && 'code' in error && ['model_unavailable', 'disposed'].includes(String(error.code))) {
+            segmentSession.current = null; disposeSegmentSession(session);
+            segmentPointsRef.current = []; seedCount.current = 0; setSegmentPoints([]); setSegmentationPending(false);
+            setAutoState('manual'); setAutoNote('Локальная модель недоступна на этом устройстве или не успела ответить. Выделите зубы кистью либо повторите определение области.');
+            return;
+          }
+          setAutoNote('По этим точкам границы получились неуверенными. Добавьте касание + на зубе или − на лишнем участке; можно перейти к кисти.');
+        } finally {
+          if (!controller.signal.aborted && segmentRevision.current === revision && segmentSession.current === session) setSegmentationPending(false);
+        }
+      });
+    }, 250);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [segmentAttempt, photo, editing]);
 
   useEffect(() => {
     if (!allowed || phase !== 'processing' || !jobId) return;
@@ -315,7 +439,7 @@ export function ScreenSmilePreview() {
         </section>}
 
         {editing && <>
-          <FormSection step="01" title="Фото пациента" hint="Лицо и открытая улыбка в одном кадре. Подготовим PNG до 1600 px по длинной стороне, сохранив пропорции.">
+          <FormSection step="01" title="Фото пациента" hint="Портрет с открытой улыбкой или крупный снимок зубов. Подготовим PNG до 1600 px по длинной стороне, сохранив пропорции.">
             <input ref={fileInput} className="smile-file-input" type="file" accept="image/*" onChange={(event) => { void pickPhoto(event.target.files?.[0]); event.target.value = ''; }} disabled={normalizing} aria-label="Выбрать фотографию пациента" />
             <button type="button" className={`smile-upload${photo ? ' has-photo' : ''}`} onClick={() => fileInput.current?.click()} disabled={normalizing}>
               {photo ? <><img src={photo.url} alt="Выбранное исходное фото пациента" /><span className="smile-upload-overlay">Заменить фото</span></> : <><span className="smile-upload-icon" aria-hidden="true">＋</span><strong>{normalizing ? 'Подготавливаем фото…' : 'Выбрать фото'}</strong><span>JPEG, PNG или другой доступный формат · до 20 МБ</span></>}
@@ -352,13 +476,25 @@ export function ScreenSmilePreview() {
             </FormSection>
 
             <FormSection step="04" title="Область улыбки" hint="Предварительная автообласть строится на устройстве. Проверьте её: губы, нижние зубы и защищённая десна должны остаться вне выделения.">
-              <p role="status" className="smile-hint">{autoState === 'loading' ? 'Определяем границы… При первом запуске загружается модель; фото никуда не отправляется.' : autoNote}</p>
-              {autoEligible && autoState !== 'loading' && <button type="button" className="smile-text-button" disabled={busy} onClick={() => setAutoAttempt((n) => n + 1)}>Определить область заново</button>}
+              <p role="status" aria-live="polite" className="smile-hint">{autoState === 'loading' ? 'Готовим локальное выделение… При первом запуске загружаются модель и компоненты обработки; это может занять до 90 секунд. Фото не отправляется.' : autoNote}</p>
+              {autoState === 'loading' && <button type="button" className="smile-secondary" onClick={useManualMask}>Не ждать · выделить кистью</button>}
+              {autoEligible && autoState !== 'loading' && <div className="smile-mask-actions">
+                <button type="button" className="smile-text-button" disabled={busy || segmentationPending} onClick={() => setAutoAttempt((n) => n + 1)}>Определить область заново</button>
+                {canRefineMask && <button type="button" className="smile-text-button" disabled={busy} onClick={useManualMask}>Перейти к ручной кисти</button>}
+              </div>}
               {selected.length ? <SmileMaskEditor key={maskKey} imageUrl={photo.url} width={photo.width} height={photo.height}
-                onChange={onMaskChange} initialMask={autoMask?.mask} focusPoint={autoMask?.center}
+                onChange={onMaskChange} initialMask={autoMask?.mask} focusPoint={autoMask?.center ?? autoCenter}
+                onSegmentPoint={canRefineMask ? addSegmentPoint : undefined} points={segmentPoints} segmentationPending={segmentationPending}
                 disabled={busy || autoState === 'loading'} allowGumline={zenithMode === 'allow'} /> : <p className="smile-hint">Сначала выберите зубы на шаге 02.</p>}
+              {canRefineMask && <>
+                <div className="smile-mask-actions">
+                  <button type="button" className="smile-text-button" disabled={busy || segmentPoints.length <= seedCount.current} onClick={undoSegmentPoint}>Убрать последнее касание</button>
+                  <button type="button" className="smile-text-button" disabled={busy || segmentPoints.length === 0} onClick={resetSegmentPoints}>Сбросить все точки</button>
+                </div>
+                <p className="smile-micro">Зелёные точки добавляют область, красные убирают. Новый пересчёт по касаниям заменяет правки кистью. Если автоматика ошиблась, сбросьте все точки и начните с верхнего зуба.</p>
+              </>}
               <p className={`smile-mask-note${mask ? ' is-ready' : ''}`}>{mask ? '✓ Маска подготовлена' : 'Маска обязательна для запуска'}</p><p className="smile-micro">После смены зубов или разрешения на коррекцию десны проверьте область заново.</p>
-              <label className="smile-consent"><input type="checkbox" checked={maskConfirmed} disabled={!mask || autoState === 'loading'} onChange={(event) => setMaskConfirmed(event.target.checked)} /><span>Проверил область: выделены только те зубы и участки, которые разрешено менять.</span></label>
+              <label className="smile-consent"><input type="checkbox" checked={maskConfirmed} disabled={!mask || autoState === 'loading' || segmentationPending} onChange={(event) => setMaskConfirmed(event.target.checked)} /><span>Проверил область: выделены только те зубы и участки, которые разрешено менять.</span></label>
             </FormSection>
 
             <FormSection step="05" title="Проверка и запуск">
