@@ -16,6 +16,7 @@ export interface SmileSettings {
   zenithMode: 'preserve' | 'allow';
   zenithInstruction?: string;
   translucency: 'none' | 'natural';
+  imageResolution?: '1K' | '2K';
 }
 export interface NormalizedSmilePhoto {
   blob: Blob;
@@ -223,6 +224,7 @@ export function smileErrorMessage(error: unknown): string {
     if (error.code === 'provider_response' || error.code === 'processing_failed') return 'Не удалось применить ответ AI. Изображение не изменено; можно создать новую примерку.';
     if (error.code === 'provider_unavailable') return 'AI временно недоступен. Позже проверьте статус этой же примерки.';
     if (error.code === 'output_dimensions') return 'AI изменил пропорции фрагмента. Результат не применён, чтобы не исказить фото.';
+    if (error.code === 'output_alignment') return 'AI сместил или изменил детали вокруг зубов. Результат отклонён. Создайте новую примерку.';
     if (/mask/.test(error.code)) return 'Проверьте маску: выделите только разрешённую для изменения область.';
     if (/settings|teeth|shade|zenith|instruction|shape/.test(error.code)) return 'Проверьте выбранные зубы, оттенки и указание для зенитов.';
   }

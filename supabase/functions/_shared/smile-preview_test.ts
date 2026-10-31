@@ -52,6 +52,8 @@ Deno.test('smile: path связан с владельцем и не приним
 
 Deno.test('smile: параметры зубов/оттенков проверяются, скрытая инструкция отбрасывается', () => {
   assertEquals(validateSmileSettings({ ...SETTINGS, teeth: [21, 11], zenithInstruction: 'ignored' }), SETTINGS);
+  assertEquals(validateSmileSettings({ ...SETTINGS, imageResolution: '2K' }).imageResolution, '2K');
+  assertThrows(() => validateSmileSettings({ ...SETTINGS, imageResolution: '4K' }), SmileError);
   for (const settings of [
     { ...SETTINGS, teeth: [11, 11] }, { ...SETTINGS, teeth: [31] },
     { ...SETTINGS, shades: { '11': 'BL1' } }, { ...SETTINGS, shades: { '11': 'BL1', '21': 'WHITE' } },
@@ -72,6 +74,21 @@ Deno.test('smile: JPEG ответа провайдера конвертируе�
   assertEquals([...png.slice(0, 4)], [137, 80, 78, 71]);
   const result = await Image.decode(png);
   assertEquals(result.getPixelAt(1, 1), source.getPixelAt(1, 1));
+});
+
+Deno.test('smile: 2K PNG/JPEG outputs are accepted, input and decompression limits stay bounded', async () => {
+  const { sourceBytes, maskBytes, source } = await fixture();
+  const inputs = await decodeSmileInputs(sourceBytes, maskBytes);
+  const generated = new Image(2752, 1548).fill(0xeeeeccff);
+  for (const bytes of [await generated.encode(), await generated.encodeJPEG(90)]) {
+    assertThrows(() => pngDimensions(bytes), SmileError);
+    const result = await Image.decode(await compositeSmile(inputs, bytes));
+    assertEquals(result.width, source.width);
+    assertEquals(result.getPixelAt(1, 1), source.getPixelAt(1, 1));
+  }
+  const oversized = await new Image(32, 18).fill(0xffffffff).encode();
+  new DataView(oversized.buffer, oversized.byteOffset, oversized.byteLength).setUint32(16, 100_000);
+  await assertRejects(() => compositeSmile(inputs, oversized), SmileError);
 });
 
 Deno.test('smile: наружу передаётся только crop, а не исходный портрет', async () => {
@@ -123,6 +140,21 @@ Deno.test('smile: изменённые моделью пропорции не в
   await assertRejects(async () => compositeSmile(inputs, await new Image(100, 100).fill(0xffffffff).encode()), SmileError, 'пропорции');
 });
 
+Deno.test('smile: larger masks feather several pixels inward, holes and all protected RGBA stay exact', async () => {
+  const source = new Image(512, 256).fill(0x28323cdd), mask = new Image(512, 256).fill(0x000000ff);
+  rect(mask, 80, 120, 350, 40); mask.setPixelAt(201, 141, 0x000000ff);
+  const inputs = await decodeSmileInputs(await source.encode(), await mask.encode());
+  const generated = new Image(inputs.frame.width, inputs.frame.height).fill(0xc8d2dcff);
+  const result = await Image.decode(await compositeSmile(inputs, await generated.encode()));
+  for (let p = 0; p < inputs.mask.length; p++) {
+    if (!inputs.mask[p]) assertEquals([...result.bitmap.subarray(p * 4, p * 4 + 4)], [...source.bitmap.subarray(p * 4, p * 4 + 4)]);
+    assertEquals(result.bitmap[p * 4 + 3], source.bitmap[p * 4 + 3]);
+  }
+  const red = (x: number) => result.bitmap[(130 * 512 + x) * 4];
+  assert(red(80) > 40 && red(80) < red(81));
+  assert(red(81) < red(82)); assertEquals(red(82), 200);
+});
+
 Deno.test('smile: вклейка учитывает координаты crop и чёрных полей', async () => {
   const { sourceBytes, maskBytes } = await fixture();
   const inputs = await decodeSmileInputs(sourceBytes, maskBytes);
@@ -160,11 +192,12 @@ Deno.test('smile: provider получает base64 crop/mask без исходн
   const responseData = `data:image/png;base64,${btoa(String.fromCharCode(...output))}`;
   let calls = 0;
   const result = await requestSmileEdit({
-    photoData: provider.photo, maskData: provider.mask, settings: SETTINGS, apiKey: 'fixture-secret', model: 'fixture-model', signal: AbortSignal.timeout(2000),
+    photoData: provider.photo, maskData: provider.mask, settings: { ...SETTINGS, imageResolution: '2K' }, apiKey: 'fixture-secret', model: 'fixture-model', signal: AbortSignal.timeout(2000),
     fetcher: ((_url: string | URL | Request, init?: RequestInit) => {
       calls++;
       const payload = JSON.parse(String(init?.body));
       assertEquals(payload.provider.allow_fallbacks, false);
+      assertEquals(payload.input.image_resolution, '2K');
       assertEquals(payload.input.images, [{ type: 'base64', data: provider.photo }, { type: 'base64', data: provider.mask }]);
       assertEquals(payload.user, undefined);
       return Promise.resolve(Response.json({ data: { url: responseData } }));

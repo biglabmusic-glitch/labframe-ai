@@ -60,6 +60,7 @@ export function ScreenSmilePreview() {
   const [rangeAnchor, setRangeAnchor] = useState<number | null>(null);
   const [shape, setShape] = useState<SmileShape>('original');
   const [translucency, setTranslucency] = useState<SmileSettings['translucency']>('natural');
+  const [imageResolution, setImageResolution] = useState<'1K' | '2K'>('2K');
   const [zenithMode, setZenithMode] = useState<SmileSettings['zenithMode']>('preserve');
   const [zenithInstruction, setZenithInstruction] = useState('');
   const [mask, setMask] = useState<Blob | null>(null);
@@ -220,7 +221,7 @@ export function ScreenSmilePreview() {
     const settings: SmileSettings = {
       teeth: [...selected],
       shades: Object.fromEntries(selected.map((id) => [String(id), shades[id] ?? 'BL1'])),
-      shape, translucency, zenithMode,
+      shape, translucency, zenithMode, imageResolution,
       ...(zenithMode === 'allow' ? { zenithInstruction: zenithInstruction.trim() } : {}),
     };
     setError(''); setPhase('uploading');
@@ -339,6 +340,11 @@ export function ScreenSmilePreview() {
             </FormSection>
 
             <FormSection step="03" title="Форма и детали">
+              <h3>Детализация</h3>
+              <div className="smile-segmented" role="group" aria-label="Детализация генерации">
+                {(['1K', '2K'] as const).map((resolution) => <button type="button" key={resolution} className={imageResolution === resolution ? 'is-selected' : ''} aria-pressed={imageResolution === resolution} onClick={() => setImageResolution(resolution)}>{resolution === '2K' ? '2K · подробнее' : '1K · сравнить'}</button>)}
+              </div>
+              <p className="smile-micro">2K запрашивает больше деталей и может обрабатываться дольше. Для сравнения используйте одинаковые фото, область и настройки.</p>
               <div className="smile-shapes" role="group" aria-label="Форма выбранных зубов">{SHAPES.map((option) => <button type="button" key={option.id} className={shape === option.id ? 'is-selected' : ''} aria-pressed={shape === option.id} onClick={() => setShape(option.id)}><ShapeGlyph shape={option.id} /><span>{option.label}</span></button>)}</div>
               <h3>Прозрачность режущего края</h3><div className="smile-segmented" role="group" aria-label="Прозрачность режущего края"><button type="button" className={translucency === 'none' ? 'is-selected' : ''} aria-pressed={translucency === 'none'} onClick={() => setTranslucency('none')}>Без прозрачности</button><button type="button" className={translucency === 'natural' ? 'is-selected' : ''} aria-pressed={translucency === 'natural'} onClick={() => setTranslucency('natural')}>Естественная</button></div>
               <h3>Десневые зениты</h3><div className="smile-segmented" role="group" aria-label="Коррекция десневых зенитов"><button type="button" className={zenithMode === 'preserve' ? 'is-selected' : ''} aria-pressed={zenithMode === 'preserve'} onClick={() => setZenithMode('preserve')}>Сохранить</button><button type="button" className={zenithMode === 'allow' ? 'is-selected' : ''} aria-pressed={zenithMode === 'allow'} onClick={() => setZenithMode('allow')}>Разрешить коррекцию</button></div>

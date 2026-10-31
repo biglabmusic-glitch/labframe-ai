@@ -1,6 +1,7 @@
 // Закрытый пилот: чистые проверки, промпт, ограниченная маской сборка и Polza.
 // Здесь нет клиента БД, переменных окружения, логирования или второго AI-провайдера.
 import { Image } from 'https://deno.land/x/imagescript@1.2.17/mod.ts';
+import { alignSmileContext, inwardMaskDistance } from './smile-quality.ts';
 
 export const SMILE_TEETH = [16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26] as const;
 export const SMILE_SHADES = [
@@ -21,6 +22,7 @@ export interface SmileSettings {
   zenithMode: 'preserve' | 'allow';
   zenithInstruction?: string;
   translucency: 'none' | 'natural';
+  imageResolution?: '1K' | '2K';
 }
 
 export type SmileStatus = 'prepared' | 'processing' | 'done' | 'failed';
@@ -58,6 +60,7 @@ const MESSAGES: Record<string, string> = {
   mask_empty: 'Отметьте на маске область выбранных верхних зубов.',
   mask_too_large: 'Маска слишком большая. Ограничьте её выбранными зубами и разрешённым краем десны.',
   output_dimensions: 'Модель изменила размер или пропорции кадра. Создайте новую примерку.',
+  output_alignment: 'Модель сместила или изменила детали вокруг зубов. Результат отклонён: создайте новую примерку.',
   rate_limited: 'Слишком много примерок за час. Попробуйте позже.',
   timeout: 'Модель не успела ответить. Для повторной попытки создайте новую примерку.',
   expired: 'Эта заготовка устарела. Создайте новую примерку.',
@@ -103,6 +106,7 @@ export function validateSmileSettings(value: unknown): SmileSettings {
   if (!record(value) || !Array.isArray(value.teeth) || !record(value.shades)) throw new SmileError('bad_settings');
   const teeth = value.teeth;
   const shades = value.shades;
+  if (value.imageResolution !== undefined && !['1K', '2K'].includes(String(value.imageResolution))) throw new SmileError('bad_settings');
   if (!teeth.length || teeth.length > SMILE_TEETH.length || new Set(teeth).size !== teeth.length ||
     teeth.some((n) => typeof n !== 'number' || !(SMILE_TEETH as readonly number[]).includes(n))) {
     throw new SmileError('bad_settings');
@@ -131,6 +135,7 @@ export function validateSmileSettings(value: unknown): SmileSettings {
     zenithMode: value.zenithMode as SmileSettings['zenithMode'],
     ...(zenithInstruction ? { zenithInstruction } : {}),
     translucency: value.translucency as SmileSettings['translucency'],
+    ...(value.imageResolution ? { imageResolution: value.imageResolution as '1K' | '2K' } : {}),
   };
 }
 
@@ -164,6 +169,7 @@ export function buildSmilePrompt(settings: SmileSettings): string {
     `Edit ONLY the selected UPPER teeth, identified by FDI numbers: ${settings.teeth.join(', ')}. Teeth not selected must stay unchanged.`,
     'The upper arch may span FDI 16 through 26 only where already visible. Do NOT force all twelve teeth to be visible. Never reveal a tooth covered by a lip or cheek, widen the mouth, lift a lip or fabricate a wider smile. An absent tooth in an already visible selected tooth space may receive a plausible crown without shifting surrounding tissues.',
     'Leave the lower teeth, mandible, bite, jaw position and dental midline unchanged. Maintain natural tooth positions, occlusion, depth and perspective.',
+    'Preserve existing interproximal separations and individual tooth boundaries. No fused crowns, duplicated teeth, doubled incisal edges, extra cusps, repeated textures or halo outlines. Keep the original light direction and exposure; retain believable enamel detail rather than featureless white surfaces.',
     `PER-TOOTH SHADE MAP (apply only to the selected teeth; do not impose one shade on the whole smile): ${JSON.stringify(settings.shades)}. Use a uniform BL1 only if every selected tooth is explicitly assigned BL1.`,
     shape,
     settings.zenithMode === 'preserve'
@@ -177,14 +183,14 @@ export function buildSmilePrompt(settings: SmileSettings): string {
 }
 
 /** Проверяем IHDR до декодера: большой распакованный PNG не должен попасть в ImageScript. */
-export function pngDimensions(bytes: Uint8Array, minSide = 1): { width: number; height: number } {
+export function pngDimensions(bytes: Uint8Array, minSide = 1, maxSide = 2000, maxPixels = 4_000_000): { width: number; height: number } {
   if (bytes.length > SMILE_MAX_BYTES) throw new SmileError('image_too_large');
   const signature = [137, 80, 78, 71, 13, 10, 26, 10];
   if (bytes.length < 45 || signature.some((v, i) => bytes[i] !== v)) throw new SmileError('invalid_png');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (view.getUint32(8) !== 13 || String.fromCharCode(...bytes.subarray(12, 16)) !== 'IHDR') throw new SmileError('invalid_png');
   const width = view.getUint32(16), height = view.getUint32(20);
-  if (width < minSide || height < minSide || width > 2000 || height > 2000 || width * height > 4_000_000) {
+  if (width < minSide || height < minSide || width > maxSide || height > maxSide || width * height > maxPixels) {
     throw new SmileError('image_dimensions');
   }
   let ended = false;
@@ -203,8 +209,8 @@ export function pngDimensions(bytes: Uint8Array, minSide = 1): { width: number; 
   return { width, height };
 }
 
-async function decodePng(bytes: Uint8Array, minSide = 1): Promise<Image> {
-  const dimensions = pngDimensions(bytes, minSide);
+async function decodePng(bytes: Uint8Array, minSide = 1, generated = false): Promise<Image> {
+  const dimensions = generated ? pngDimensions(bytes, minSide, 3072, 5_000_000) : pngDimensions(bytes, minSide);
   try {
     const image = await Image.decode(bytes);
     if (image.width !== dimensions.width || image.height !== dimensions.height) throw new Error('dimensions');
@@ -214,7 +220,7 @@ async function decodePng(bytes: Uint8Array, minSide = 1): Promise<Image> {
 
 /** Polza can return JPEG even when PNG was requested. Check its SOF before decoding. */
 async function decodeGeneratedImage(bytes: Uint8Array): Promise<Image> {
-  if (bytes[0] === 137) return await decodePng(bytes);
+  if (bytes[0] === 137) return await decodePng(bytes, 1, true);
   if (bytes.length > SMILE_MAX_BYTES || bytes[0] !== 255 || bytes[1] !== 216) throw new SmileError('provider_response', 502);
   let dimensions: { width: number; height: number } | undefined;
   for (let offset = 2; offset + 4 < bytes.length;) {
@@ -231,8 +237,8 @@ async function decodeGeneratedImage(bytes: Uint8Array): Promise<Image> {
     }
     offset += length;
   }
-  if (!dimensions || dimensions.width < 1 || dimensions.height < 1 || dimensions.width > 2000 || dimensions.height > 2000 ||
-      dimensions.width * dimensions.height > 4_000_000) throw new SmileError('image_dimensions');
+  if (!dimensions || dimensions.width < 1 || dimensions.height < 1 || dimensions.width > 3072 || dimensions.height > 3072 ||
+      dimensions.width * dimensions.height > 5_000_000) throw new SmileError('image_dimensions');
   try {
     const image = await Image.decode(bytes);
     if (image.width !== dimensions.width || image.height !== dimensions.height) throw new Error('dimensions');
@@ -319,17 +325,18 @@ export async function compositeSmile(inputs: SmileInputs, generatedBytes: Uint8A
   if (Math.abs((edited.width / edited.height) / (frame.width / frame.height) - 1) > 0.02) {
     throw new SmileError('output_dimensions');
   }
+  const alignment = alignSmileContext(source, edited, inputs.mask, crop, frame);
+  if (alignment.rejected) throw new SmileError('output_alignment');
+  const radius = Math.max(1, Math.min(4, Math.round(crop.width * 0.006)));
+  const distance = inwardMaskDistance(inputs.mask, source.width, source.height, radius + 1);
   const result = new Image(source.width, source.height);
   result.bitmap.set(source.bitmap);
   for (let pixel = 0; pixel < inputs.mask.length; pixel++) {
     if (!inputs.mask[pixel]) continue;
-    const px = pixel % source.width, py = Math.floor(pixel / source.width);
-    const edge = px === 0 || py === 0 || px === source.width - 1 || py === source.height - 1 ||
-      !inputs.mask[pixel - 1] || !inputs.mask[pixel + 1] || !inputs.mask[pixel - source.width] || !inputs.mask[pixel + source.width];
     // Feather inward only: no protected pixel is touched or added to the mask.
-    const blend = edge ? 0.5 : 1;
-    const x = Math.max(0, Math.min(edited.width - 1, ((pixel % source.width) - crop.x + frame.offsetX + 0.5) * edited.width / frame.width - 0.5));
-    const y = Math.max(0, Math.min(edited.height - 1, (Math.floor(pixel / source.width) - crop.y + frame.offsetY + 0.5) * edited.height / frame.height - 0.5));
+    const t = distance[pixel] / (radius + 1), blend = t * t * (3 - 2 * t);
+    const x = Math.max(0, Math.min(edited.width - 1, ((pixel % source.width) - crop.x + frame.offsetX + 0.5) * edited.width / frame.width - 0.5 + alignment.x));
+    const y = Math.max(0, Math.min(edited.height - 1, (Math.floor(pixel / source.width) - crop.y + frame.offsetY + 0.5) * edited.height / frame.height - 0.5 + alignment.y));
     const x0 = Math.floor(x), y0 = Math.floor(y);
     const x1 = Math.min(x0 + 1, edited.width - 1), y1 = Math.min(y0 + 1, edited.height - 1);
     const dx = x - x0, dy = y - y0;
@@ -484,7 +491,7 @@ export async function createSmileTask(options: SmileProviderOptions & {
     input: {
       prompt: buildSmilePrompt(options.settings),
       images: [{ type: 'base64', data: options.photoData }, { type: 'base64', data: options.maskData }],
-      aspect_ratio: '16:9', image_resolution: '1K', output_format: 'png', max_images: 1,
+      aspect_ratio: '16:9', image_resolution: options.settings.imageResolution ?? '1K', output_format: 'png', max_images: 1,
     },
   });
 }
