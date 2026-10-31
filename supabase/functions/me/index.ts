@@ -106,6 +106,7 @@ Deno.serve(async (req) => {
       credits:    user.credits ?? 0,
       isAdmin,
       canSmilePreview: !user.banned && (isAdmin || user.smile_tester === true),
+      smileProvider: Deno.env.get('SMILE_PROVIDER')==='fal'?'fal':'polza',
       smileInviteStatus,
       // Согласие на обработку персональных данных: фронт по нему решает,
       // показывать ли экран согласия при входе.

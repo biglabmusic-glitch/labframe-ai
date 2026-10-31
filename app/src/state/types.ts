@@ -23,6 +23,7 @@ export interface User {
   isAdmin?: boolean;
   /** Закрытый пилот: отдельное серверное разрешение для приглашённых тестеров. */
   canSmilePreview?: boolean;
+  smileProvider?: 'polza'|'fal';
   smileInviteStatus?: SmileInviteStatus;
   refCode?: string;
   referralsCount?: number;
@@ -68,7 +69,7 @@ export interface Job {
   createdAt: number;
   thumbBg: string;
   dark?: boolean;
-  resultUrl?: string;     // публичный URL готовой картинки
+  resultUrl?: string;     // временный подписанный URL готовой картинки
   thumbUrl?: string;      // уменьшенная копия для квадратика на Home (нет — берём resultUrl)
   captionMain?: string;   // первая строка подписи (preview под миниатюрой)
 }

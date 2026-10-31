@@ -3,7 +3,6 @@
 // показывать только готовые посты.
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
-import { publicUrl } from '../_shared/storage.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
@@ -25,17 +24,24 @@ Deno.serve(async (req) => {
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (error) return jsonResponse({ error: error.message }, { status: 500 });
+  if (error) return jsonResponse({ error: 'history_unavailable' }, { status: 503 });
+  const paths = [...new Set((jobs ?? []).flatMap((j) => [j.result_path,j.thumb_path]).filter((p): p is string => Boolean(p)))];
+  const urls = new Map<string,string>();
+  if (paths.length) {
+    const {data:signed,error:signError}=await db.storage.from('results').createSignedUrls(paths,3600);
+    if (signError) return jsonResponse({error:'history_unavailable'},{status:503});
+    for (const item of signed ?? []) if(item.path && item.signedUrl) urls.set(item.path,item.signedUrl);
+  }
 
   const items = (jobs ?? []).map((j) => ({
     id:          j.id,
     style:       j.style,
     format:      j.format,
     workType:    j.work_type ?? undefined,
-    resultUrl:   j.result_path ? publicUrl('results', j.result_path) : undefined,
+    resultUrl:   urls.get(j.result_path),
     // Миниатюра для квадратика истории — в десять раз легче полной картинки.
     // У старых работ её может ещё не быть: фон доделывает, а пока — полная.
-    thumbUrl:    j.thumb_path ? publicUrl('results', j.thumb_path) : undefined,
+    thumbUrl:    urls.get(j.thumb_path),
     captionMain: j.caption_main ?? undefined,
     createdAt:   new Date(j.created_at).getTime(),
   }));

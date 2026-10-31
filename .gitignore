@@ -33,3 +33,5 @@ supabase/.temp
 # Скрипт кладёт их вне репозитория, но подстрахуемся на случай запуска с -OutDir внутрь.
 labframe-backups/
 data_*.sql
+*.lfbackup
+*.lfobject

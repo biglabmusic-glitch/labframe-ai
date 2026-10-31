@@ -1,8 +1,3 @@
-// Проверка Telegram initData — единственный способ доказать, что запрос
-// действительно идёт из мини-аппа конкретного юзера.
-// Алгоритм: https://core.telegram.org/bots/webapps#validating-data-received-via-the-web-app
-// Reference-валидатор от ядра telegram-apps — используем его как первый эшелон,
-// наш ручной HMAC оставлен как запасной для диагностики.
 import { validate as refValidate } from 'npm:@telegram-apps/init-data-node@2.0.5';
 import { env } from './env.ts';
 
@@ -14,147 +9,65 @@ export interface TgUser {
   photo_url?: string;
   language_code?: string;
 }
-
-// Срок годности initData. Telegram выдаёт свежую строку при каждом запуске
-// мини-аппа, так что сутки — с запасом.
-const MAX_INITDATA_AGE_SEC = 86_400;
-
 export class AuthError extends Error {
-  constructor(public code: string) { super(code); }
+  constructor(public code: string) {
+    super(code);
+  }
 }
 
 export async function verifyInitData(initData: string): Promise<TgUser> {
   if (!initData) throw new AuthError('empty_initdata');
-
-  const token = env.BOT_TOKEN;
-  const trimmedToken = token.trim();
-  const tokenHasWhitespace = token !== trimmedToken;
-
-  // 1) Эшелон один: reference-валидатор от ядра telegram-apps.
-  //    Если он скажет ok — мы точно знаем, что initData валидный.
-  let refOk = false;
-  let refErr = '';
+  if (initData.length > 16 * 1024) throw new AuthError('bad_signature');
+  const params = new URLSearchParams(initData);
+  if (!params.get('hash')) throw new AuthError('no_hash');
+  if (
+    ['hash', 'auth_date', 'user'].some((key) => params.getAll(key).length !== 1) ||
+    !/^[a-f0-9]{64}$/i.test(params.get('hash')!)
+  ) {
+    throw new AuthError('bad_signature');
+  }
+  const authDate = Number(params.get('auth_date'));
+  if (!Number.isSafeInteger(authDate) || authDate <= 0) throw new AuthError('no_auth_date');
+  const age = Math.floor(Date.now() / 1000) - authDate;
+  if (age > 86400) throw new AuthError('initdata_expired');
+  if (age < -60) throw new AuthError('invalid_auth_date');
+  // One standard validator. Diagnostic HMAC calculations must never authorize.
   try {
-    await refValidate(initData, trimmedToken, { expiresIn: 86400 });
-    refOk = true;
-  } catch (e) {
-    refErr = e instanceof Error ? e.message : String(e);
+    await refValidate(initData, env.BOT_TOKEN.trim(), { expiresIn: 86400 });
+  } catch {
+    throw new AuthError('bad_signature');
   }
-
-  // Парсим initData в любом случае (нужны user, плюс diagnostics)
-  const rawPairs: Array<[string, string]> = [];
-  let hash = '';
-  for (const pair of initData.split('&')) {
-    const eq = pair.indexOf('=');
-    if (eq < 0) continue;
-    const key = pair.slice(0, eq);
-    const rawValue = pair.slice(eq + 1);
-    if (key === 'hash') { hash = rawValue; continue; }
-    if (key === 'signature') continue; // ed25519, исключаем из data_check_string
-    rawPairs.push([key, rawValue]);
-  }
-  if (!hash) throw new AuthError('no_hash');
-
-  // 2) Эшелон два: наш ручной HMAC обоими способами (raw vs decoded). Только для диагностики.
-  const sortedRaw = [...rawPairs].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  const dcsRaw     = sortedRaw.map(([k, v]) => `${k}=${v}`).join('\n');
-  const dcsDecoded = sortedRaw.map(([k, v]) => `${k}=${decodeURIComponent(v)}`).join('\n');
-
-  const enc = new TextEncoder();
-  const km = await crypto.subtle.importKey('raw', enc.encode(trimmedToken),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const secretKey = await crypto.subtle.sign('HMAC', km, enc.encode('WebAppData'));
-  const fk = await crypto.subtle.importKey('raw', secretKey,
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const hexOf = async (s: string): Promise<string> => {
-    const sig = await crypto.subtle.sign('HMAC', fk, enc.encode(s));
-    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  };
-  const sigRaw     = await hexOf(dcsRaw);
-  const sigDecoded = await hexOf(dcsDecoded);
-  const ourMatch   = sigRaw === hash ? 'raw' : sigDecoded === hash ? 'decoded' : null;
-
-  if (!refOk && !ourMatch) {
-    const err = new AuthError('bad_signature');
-    // debug пишем ТОЛЬКО в server-side лог, наружу (в HTTP-ответ) не отдаём.
-    // Никаких фрагментов BOT_TOKEN здесь быть не должно — это секрет.
-    (err as { debug?: unknown }).debug = {
-      ref_err: refErr.slice(0, 80),
-      tg_hash_8: hash.slice(0, 8),
-      raw_hash_8: sigRaw.slice(0, 8),
-      dec_hash_8: sigDecoded.slice(0, 8),
-      keys: sortedRaw.map(([k]) => k).join(','),
-      dcs_raw_len: dcsRaw.length,
-      dcs_dec_len: dcsDecoded.length,
-      bot_id: trimmedToken.split(':')[0],          // публичный id бота (не секрет)
-      bot_tok_ws: tokenHasWhitespace,              // true = в env лишний whitespace
-    };
-    console.error('initdata hash mismatch', (err as { debug?: unknown }).debug);
-    throw err;
-  }
-  // Срок проверяем ОТДЕЛЬНО и для обоих эшелонов.
-  //
-  // Reference-валидатор умеет это сам (expiresIn выше), а ручной HMAC — нет.
-  // Из-за этого просроченный initData не проходил у эталона, но тихо проходил
-  // по запасному пути: подпись-то верная, она не портится со временем. То есть
-  // перехваченная строка работала бы вечно, а initData — это предъявительский
-  // пропуск: кто им владеет, тот и «этот пользователь».
-  const authDate = Number(rawPairs.find(([k]) => k === 'auth_date')?.[1] ?? '');
-  if (!Number.isFinite(authDate) || authDate <= 0) throw new AuthError('no_auth_date');
-  const ageSec = Math.floor(Date.now() / 1000) - authDate;
-  if (ageSec > MAX_INITDATA_AGE_SEC) {
-    console.error(`initdata expired: возраст ${ageSec}s, предел ${MAX_INITDATA_AGE_SEC}s`);
-    throw new AuthError('initdata_expired');
-  }
-
-  console.log('initdata validated via', refOk ? 'ref' : ourMatch);
-
-  const userRawPair = rawPairs.find(([k]) => k === 'user');
-  if (!userRawPair) throw new AuthError('no_user');
   try {
-    return JSON.parse(decodeURIComponent(userRawPair[1])) as TgUser;
+    const user = JSON.parse(params.get('user')!);
+    if (!user || !Number.isSafeInteger(user.id) || user.id <= 0) throw new Error();
+    return user as TgUser;
   } catch {
     throw new AuthError('user_parse_failed');
   }
 }
 
-/**
- * Безопасный wrapper, который возвращает либо TgUser, либо jsonResponse 401 с кодом ошибки.
- */
 export async function authorize(req: Request): Promise<{ user: TgUser } | { response: Response }> {
   try {
-    const user = await verifyInitData(req.headers.get('x-telegram-initdata') ?? '');
-    return { user };
-  } catch (e) {
-    const code = e instanceof AuthError ? e.code : 'unknown';
-    const debug = (e as { debug?: unknown }).debug;
-    // Диагностику оставляем только в логах функции. Клиенту отдаём минимум:
-    // тело ответа видно любому анонимному отправителю кривого initData,
-    // поэтому никакие внутренние детали (тем более про токен) туда не уходят.
-    console.error('auth failed', code, debug);
-    return {
-      response: jsonResponse(
-        { error: 'unauthorized', code },
-        { status: 401 },
-      ),
-    };
+    return { user: await verifyInitData(req.headers.get('x-telegram-initdata') ?? '') };
+  } catch (error) {
+    const code = error instanceof AuthError ? error.code : 'bad_signature';
+    return { response: jsonResponse({ error: 'unauthorized', code }, { status: 401 }) };
   }
 }
-
-const ALLOWED_HEADERS = 'authorization, x-client-info, apikey, content-type, x-telegram-initdata, x-internal-secret';
-
+const ALLOWED_HEADERS =
+  'authorization, x-client-info, apikey, content-type, x-telegram-initdata, x-internal-secret';
 export function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Headers': ALLOWED_HEADERS,
       ...init?.headers,
     },
   });
 }
-
 export function corsPreflight() {
   return new Response(null, {
     status: 204,

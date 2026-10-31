@@ -17,19 +17,35 @@
 
 export type PhpValue = string | PhpValue[] | { [k: string]: PhpValue };
 
+export const PAYMENT_BODY_MAX_BYTES = 64 * 1024;
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_FORM_FIELDS = 256;
+const MAX_FORM_DEPTH = 8;
+const MAX_ARRAY_INDEX = 127;
+
+export function isPaymentSignature(sign: string | null): sign is string {
+  return sign !== null && /^[a-fA-F0-9]{64}$/.test(sign);
+}
+
 /**
  * Разбирает form-urlencoded тело в структуру, разворачивая PHP-скобки:
  * `products[0][name]=Пакет` → `{ products: [ { name: 'Пакет' } ] }`.
  * Числовые ключи дают массивы, строковые — объекты (как json_encode в PHP).
  */
 export function parsePhpFormBody(body: string): Record<string, PhpValue> {
+  if (new TextEncoder().encode(body).byteLength > PAYMENT_BODY_MAX_BYTES) throw new Error('form_too_large');
   const out: Record<string, PhpValue> = {};
-
+  let fields = 0;
   for (const [rawKey, value] of new URLSearchParams(body)) {
+    if (++fields > MAX_FORM_FIELDS || rawKey.length > 256) throw new Error('form_limits');
     const m = rawKey.match(/^([^\[]+)((?:\[[^\]]*\])*)$/);
-    if (!m) { out[rawKey] = value; continue; }
+    if (!m) throw new Error('invalid_form_key');
 
     const path = [m[1], ...[...m[2].matchAll(/\[([^\]]*)\]/g)].map((x) => x[1])];
+    if (path.length > MAX_FORM_DEPTH || path.some((key) => !key || FORBIDDEN_KEYS.has(key) ||
+        (/^\d+$/.test(key) && (!Number.isSafeInteger(Number(key)) || Number(key) > MAX_ARRAY_INDEX)))) {
+      throw new Error('invalid_form_key');
+    }
     assign(out, path, value);
   }
   return out;
@@ -60,13 +76,19 @@ function assign(root: Record<string, PhpValue>, path: string[], value: string): 
 }
 
 function getChild(node: PhpValue, key: string): PhpValue | undefined {
-  if (Array.isArray(node)) return node[Number(key)];
-  if (typeof node === 'object') return node[key];
+  if (Array.isArray(node)) {
+    if (!/^\d+$/.test(key)) throw new Error('invalid_array_key');
+    return node[Number(key)];
+  }
+  if (typeof node === 'object' && Object.hasOwn(node, key)) return node[key];
   return undefined;
 }
 
 function setChild(node: PhpValue, key: string, value: PhpValue): void {
-  if (Array.isArray(node)) node[Number(key)] = value;
+  if (Array.isArray(node)) {
+    if (!/^\d+$/.test(key)) throw new Error('invalid_array_key');
+    node[Number(key)] = value;
+  }
   else if (typeof node === 'object') node[key] = value;
 }
 
@@ -116,7 +138,7 @@ export async function verifySignature(
   sign: string | null,
   secret: string,
 ): Promise<boolean> {
-  if (!sign) return false;
+  if (!isPaymentSignature(sign)) return false;
   const expected = await signPayload(data, secret);
   return timingSafeEqual(expected, sign.toLowerCase());
 }

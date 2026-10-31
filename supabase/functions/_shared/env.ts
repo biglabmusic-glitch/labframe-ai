@@ -6,9 +6,9 @@ export const env = {
   SUPABASE_ANON_KEY:         required('SUPABASE_ANON_KEY'),
   SUPABASE_SERVICE_ROLE_KEY: required('SUPABASE_SERVICE_ROLE_KEY'),
 
-  REPLICATE_API_TOKEN:       required('REPLICATE_API_TOKEN'),
+  REPLICATE_API_TOKEN:       Deno.env.get('REPLICATE_API_TOKEN') ?? '',
 
-  POLZA_API_KEY:             required('POLZA_API_KEY'),
+  POLZA_API_KEY:             Deno.env.get('POLZA_API_KEY') ?? '',
   POLZA_BASE_URL:            Deno.env.get('POLZA_BASE_URL') ?? 'https://api.polza.ai/api/v1',
   POLZA_MODEL:               Deno.env.get('POLZA_MODEL') ?? 'gpt-4o-mini',
 

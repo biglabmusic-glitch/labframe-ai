@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -56,7 +57,10 @@ interface AppContextValue extends AppState {
   giveConsent: () => Promise<void>;
 }
 
-const STORAGE_KEY = 'labframe.v1';
+function storageKey(): string|null {
+  const id=WebApp?.initDataUnsafe?.user?.id;
+  return id ? `labframe.v2:${id}` : null;
+}
 
 function getInitials(first?: string, last?: string, username?: string): string {
   const a = (first ?? username ?? '?').trim();
@@ -119,7 +123,9 @@ function sanitizeDraftForPersist(d: Draft): Draft {
 
 function loadPersisted(): PersistedState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    localStorage.removeItem('labframe.v1');
+    const key=storageKey();
+    const raw = key ? localStorage.getItem(key):null;
     return raw ? JSON.parse(raw) as PersistedState : {};
   } catch {
     return {};
@@ -128,7 +134,13 @@ function loadPersisted(): PersistedState {
 
 function savePersisted(state: PersistedState) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const key=storageKey();
+    if(!key)return;
+    // Private signed URLs expire and must not be kept as a durable credential.
+    const {logoUrl,...brand}=state.brand ?? {};
+    void logoUrl;
+    const safe={...state,brand,history:state.history?.map(({resultUrl,thumbUrl,...job})=>{void resultUrl;void thumbUrl;return job;})};
+    localStorage.setItem(key, JSON.stringify(safe));
   } catch {
     // ignore (private mode, quota etc.)
   }
@@ -137,7 +149,7 @@ function savePersisted(state: PersistedState) {
 const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const persisted = loadPersisted();
+  const [persisted] = useState(loadPersisted);
 
   const [user, setUserState] = useState<User>(buildInitialUser);
   const [brand, setBrandState] = useState<BrandData>({ ...emptyBrand, ...(persisted.brand ?? {}) });
@@ -156,6 +168,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [balanceKnown, setBalanceKnown] = useState<boolean>(false);
   const [consentAt, setConsentAt] = useState<string | null>(null);
   const [consentKnown, setConsentKnown] = useState<boolean>(false);
+  const lastHistoryRefresh=useRef(0);
+  useEffect(()=>{
+    if(!isBackendReady())return;
+    let active=true;
+    const refresh=async()=>{
+      if(document.visibilityState==='hidden' || Date.now()-lastHistoryRefresh.current<30_000)return;
+      lastHistoryRefresh.current=Date.now();
+      try {
+        const jobs=await api.listJobs(24);
+        if(active)setHistoryState(jobs.items.map((j)=>({...j,thumbBg:'var(--c-card-dd)',dark:j.style==='dark'})));
+      }catch{ /* keep current history through a temporary outage */ }
+    };
+    const timer=setInterval(()=>{void refresh();},30*60*1000);
+    const foreground=()=>{void refresh();};
+    document.addEventListener('visibilitychange',foreground);
+    return()=>{active=false;clearInterval(timer);document.removeEventListener('visibilitychange',foreground);};
+  },[]);
 
   // Согласие пишем на сервере: localStorage чистится вместе с кэшем и ничего
   // не подтверждает, а дата в базе — подтверждает.
@@ -226,6 +255,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             credits:    me.user!.credits ?? 0,
             isAdmin:    me.user!.isAdmin ?? false,
             canSmilePreview: me.user!.canSmilePreview ?? false,
+            smileProvider: me.user!.smileProvider ?? 'polza',
             smileInviteStatus: me.user!.smileInviteStatus,
             refCode:        me.user!.refCode ?? p.refCode,
             referralsCount: me.user!.referralsCount ?? 0,
@@ -237,7 +267,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (me?.brand) {
           setBrandState((p) => ({ ...p, ...me.brand! }));
         }
-        if (jobs?.items?.length) {
+        if (jobs?.items) {
           setHistoryState(jobs.items.map((j) => ({
             id:          j.id,
             style:       j.style,

@@ -51,12 +51,33 @@ export interface GenerateTextOutput {
   promptTokens?: number;
   completionTokens?: number;
   durationMs: number;
+  source: 'ai' | 'template' | 'none';
+  fallbackReason?: string;
 }
 
 export async function generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
   if (input.textType === 'none') {
-    return { main: '', alt: '', hashtags: [], durationMs: 0 };
+    return { main: '', alt: '', hashtags: [], durationMs: 0, source: 'none' };
   }
+  if (!env.POLZA_API_KEY || Deno.env.get('TEXT_AI_DISABLED') === 'true') return fallbackText(input, 'text_unavailable');
+  try { return await generateAiText({ ...input, textType: input.textType }); }
+  catch {
+    // No raw provider response/prompt in logs. A caption must not discard a paid image.
+    return fallbackText(input, 'text_unavailable');
+  }
+}
+
+export function fallbackText(input: GenerateTextInput, reason = 'text_unavailable'): GenerateTextOutput {
+  const label = WORK_LABEL[input.workType ?? 'other'];
+  const title = label[0].toUpperCase() + label.slice(1);
+  return {
+    main: `${title}. Детали работы на фото.`, alt: '',
+    hashtags: [...new Set((input.brandHashtags ?? []).filter((x) => typeof x === 'string').map(cleanText))].slice(0, 12),
+    durationMs: 0, source: 'template', fallbackReason: reason,
+  };
+}
+
+async function generateAiText(input: Omit<GenerateTextInput, 'textType'> & { textType: Exclude<TextType, 'none'> }): Promise<GenerateTextOutput> {
 
   const t0 = Date.now();
   const workLabel = WORK_LABEL[input.workType ?? 'other'];
@@ -104,8 +125,8 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`polza ${res.status}: ${text}`);
+    await res.body?.cancel();
+    throw new Error(`text_provider_${res.status}`);
   }
 
   const data = await res.json() as {
@@ -113,24 +134,26 @@ export async function generateText(input: GenerateTextInput): Promise<GenerateTe
     usage?: { prompt_tokens: number; completion_tokens: number };
   };
 
-  const raw = data.choices[0]?.message?.content ?? '{}';
-  let parsed: { main: string; alt: string; hashtags: string[] };
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = { main: raw, alt: '', hashtags: [] };
+  const raw = data.choices?.[0]?.message?.content;
+  if (typeof raw !== 'string' || raw.length > 12_000) throw new Error('invalid_text');
+  const parsed = JSON.parse(raw) as { main?: unknown; alt?: unknown; hashtags?: unknown };
+  if (typeof parsed?.main !== 'string' || !cleanText(parsed.main) || parsed.main.length > 3000 ||
+      (parsed.alt !== undefined && typeof parsed.alt !== 'string') ||
+      (parsed.hashtags !== undefined && (!Array.isArray(parsed.hashtags) || parsed.hashtags.some((x) => typeof x !== 'string')))) {
+    throw new Error('invalid_text');
   }
 
   // Дополняем фирменными хэштегами клиента (без дублей)
-  const tags = [...new Set([...(parsed.hashtags ?? []), ...(input.brandHashtags ?? [])])].slice(0, 12);
+  const tags = [...new Set([...(parsed.hashtags as string[] ?? []), ...(input.brandHashtags ?? [])])].slice(0, 12);
 
   return {
     main: cleanText(parsed.main ?? ''),
-    alt:  cleanText(parsed.alt ?? ''),
+    alt:  cleanText(typeof parsed.alt === 'string' ? parsed.alt : ''),
     hashtags: tags.map(cleanText).filter(Boolean),
     promptTokens: data.usage?.prompt_tokens,
     completionTokens: data.usage?.completion_tokens,
     durationMs: Date.now() - t0,
+    source: 'ai',
   };
 }
 

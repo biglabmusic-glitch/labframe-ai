@@ -1,183 +1,80 @@
-// POST /create-job
-// Принимает: { photoPath, workType?, style, format, branding, textType }
-// photoPath — путь в bucket 'photos' (фронт загружает фото через подписанный URL).
-// Возвращает: { id, status: 'created' }
-// Дальше воркер process-job (cron / pg_net) подхватывает job в статусе 'created'.
+// POST /create-job: reserve, enforce limits and insert in one database transaction.
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
-import { creditCost } from '../_shared/credits.ts';
 import { db } from '../_shared/db.ts';
-import { resolveDecor } from '../_shared/decor.ts';
-
-interface Body {
-  photoPath: string;
-  workType?: 'crown' | 'veneer' | 'bridge' | 'other';
-  style: 'clean' | 'dark' | 'soft';
-  format: '4x5' | '1x1' | '9x16';
-  branding: 'logo' | 'name' | 'none';
-  textType: 'short' | 'sell' | 'tech' | 'none';
-  decorPreset?: string;     // id пресета / 'custom' / отсутствует = без декора
-  decorAddition?: string;   // текст для 'custom'
-}
-
-// Через сколько минут активный job считается зависшим и перестаёт занимать слот
-// в rate-limit. Должно быть не меньше порогов sweepStale в process-job.
-const STALE_ACTIVE_MIN = 15;
+import { BodyError, readJsonBody } from '../_shared/http-body.ts';
+import { boundedInt, JobInputError, jobSettings, requestKey } from '../_shared/job-input.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
   if (req.method !== 'POST') return jsonResponse({ error: 'method' }, { status: 405 });
-
   const auth = await authorize(req);
   if ('response' in auth) return auth.response;
   const tg = auth.user;
-
-  // Гарантируем, что юзер существует в БД (FK jobs.user_id → users.id).
-  // Без этого первый запрос юзера падает с violates foreign key constraint,
-  // если фронт не успел дёрнуть /me перед /create-job.
-  await db.from('users').upsert(
-    {
-      id: tg.id,
-      username:      tg.username      ?? null,
-      first_name:    tg.first_name    ?? null,
-      last_name:     tg.last_name     ?? null,
-      photo_url:     tg.photo_url     ?? null,
-      language_code: tg.language_code ?? 'ru',
-      last_seen_at:  new Date().toISOString(),
-    },
-    { onConflict: 'id', ignoreDuplicates: false },
-  );
-
-  // Проверяем ban — админ из /admin мог забанить юзера.
-  const { data: userRow } = await db.from('users').select('banned').eq('id', tg.id).maybeSingle();
-  if (userRow?.banned) {
-    return jsonResponse({ error: 'banned' }, { status: 403 });
-  }
-
-  // Rate-limit per user: не больше 2 активных job одновременно (анти-спам, двойной клик).
-  // Считаем только свежие: job старше STALE_ACTIVE_MIN — это зависший хвост, его
-  // добьёт sweepStale в воркере. Раньше пара таких намертво блокировала юзера
-  // ошибкой too_many_in_progress, и починить это можно было только руками в БД.
-  const { count } = await db
-    .from('jobs')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', tg.id)
-    .in('status', ['created', 'processing'])
-    .gte('created_at', new Date(Date.now() - STALE_ACTIVE_MIN * 60_000).toISOString());
-
-  if ((count ?? 0) >= 2) {
-    return jsonResponse({ error: 'too_many_in_progress' }, { status: 429 });
-  }
-
-  let body: Body;
-  try { body = await req.json(); }
-  catch { return jsonResponse({ error: 'bad_json' }, { status: 400 }); }
-
-  const missing: string[] = [];
-  if (!body.photoPath) missing.push('photoPath');
-  if (!body.style)     missing.push('style');
-  if (!body.format)    missing.push('format');
-  if (missing.length) {
-    return jsonResponse({ error: 'missing_fields', missing }, { status: 400 });
-  }
-
-  // Фото должно быть своим. Путь приходит от клиента, а воркер открывает его
-  // служебным ключом — без этой проверки можно было подставить путь к чужому
-  // фото и получить его обработанным в свой аккаунт. Та же защита, что у
-  // логотипа в save-brand.
-  if (!body.photoPath.startsWith(`${tg.id}/`) || body.photoPath.includes('..')) {
-    return jsonResponse({ error: 'forbidden_path' }, { status: 403 });
-  }
-
-  // Декор: резолвим выбор в {surface, addition}. null = декора нет.
-  const decor = resolveDecor(body.decorPreset, body.decorAddition, body.style);
-
-  // Лимиты — один выключатель на весь бэк: LIMITS_DISABLED=1 значит демо-период,
-  // всё открыто всем. Только явная единица: раньше выключало всё, что не '0',
-  // и пропавший или опечатанный секрет делал генерации бесплатными для всех.
-  // Отказ должен быть в сторону «платно», а не «даром».
-  //
-  // Баланс проверяем здесь, а не триггером enforce_usage_limit: тот снят
-  // миграцией 0005 и возвращать его не нужно, иначе «включить оплату» означало
-  // бы ещё и накатить миграцию на прод в момент запуска продаж.
-  // Включение оплаты: supabase secrets set LIMITS_DISABLED=0
-  //
-  // Генерации списываем сразу, одним атомарным запросом (reserve_credits), и
-  // запоминаем в credits_reserved. Упадёт работа — триггер вернёт их обратно,
-  // за неудачу человек не платит.
-  //
-  // Раньше здесь была только проверка «хватает ли», а списание — по готовности.
-  // Между ними была щель: с одной генерацией можно было запустить две работы
-  // подряд, обе проходили проверку, и вторая доставалась бесплатно.
-  const cost = creditCost(decor ? body.decorPreset : null);
-  const limitsDisabled = Deno.env.get('LIMITS_DISABLED') === '1';
-  let reserved = 0;
-  if (!limitsDisabled) {
-    const { data: ok, error: reserveErr } = await db.rpc('reserve_credits', {
-      p_user_id: tg.id,
-      p_cost: cost,
+  let settings: Record<string, string | null>;
+  let key: string | null;
+  try {
+    const body = await readJsonBody<Record<string, unknown>>(req);
+    settings = jobSettings(body, tg.id);
+    key = requestKey(body.requestKey);
+  } catch (e) {
+    const error = e instanceof BodyError || e instanceof JobInputError
+      ? e.message
+      : 'invalid_settings';
+    return jsonResponse({ error }, {
+      status: e instanceof BodyError ? e.status : error === 'forbidden_path' ? 403 : 400,
     });
-    if (reserveErr) {
-      console.error('reserve_credits упал:', reserveErr.message);
-      return jsonResponse({ error: 'reserve_failed' }, { status: 500 });
-    }
-    if (!ok) {
-      const { data: u } = await db.from('users').select('credits').eq('id', tg.id).maybeSingle();
-      // needed/have отдаём наружу: фронту нужно показать «нужно 3, у вас 1».
-      return jsonResponse(
-        { error: 'insufficient_credits', needed: cost, have: u?.credits ?? 0 },
-        { status: 402 },
-      );
-    }
-    reserved = cost;
   }
+  const secret = Deno.env.get('INTERNAL_SECRET');
+  if (!secret) return jsonResponse({ error: 'processing_unavailable' }, { status: 503 });
+  const { error: profileError } = await db.from('users').upsert({
+    id: tg.id,
+    username: tg.username ?? null,
+    first_name: tg.first_name ?? null,
+    last_name: tg.last_name ?? null,
+    photo_url: tg.photo_url ?? null,
+    language_code: tg.language_code ?? 'ru',
+    last_seen_at: new Date().toISOString(),
+  }, { onConflict: 'id', ignoreDuplicates: false });
+  if (profileError) return jsonResponse({ error: 'profile_unavailable' }, { status: 503 });
 
-  const { data: job, error } = await db
-    .from('jobs')
-    .insert({
-      user_id: tg.id,
-      credits_reserved: reserved,
-      photo_path: body.photoPath,
-      work_type: body.workType ?? null,
-      style: body.style,
-      format: body.format,
-      branding: body.branding ?? 'none',
-      text_type: body.textType ?? 'short',
-      decor_preset:   decor ? body.decorPreset : null,
-      decor_surface:  decor?.surface  ?? null,
-      decor_addition: decor?.addition ?? null,
-      status: 'created',
-    })
-    .select('id, status')
-    .single();
-
+  const { data: job, error } = await db.rpc('create_job_atomic', {
+    p_user_id: tg.id,
+    p_request_key: key,
+    p_settings: settings,
+    p_billing_exempt: Deno.env.get('LIMITS_DISABLED') === '1',
+    p_daily_limit: boundedInt(Deno.env.get('JOBS_PER_USER_PER_DAY'), 50),
+  });
   if (error) {
-    // Работа не создалась, а генерации уже списаны — возвращаем.
-    if (reserved > 0) {
-      const { error: refundErr } = await db.rpc('add_credits', { p_user_id: tg.id, p_delta: reserved });
-      if (refundErr) console.error(`не вернули ${reserved} генераций юзеру ${tg.id}:`, refundErr.message);
-    }
-    console.error('create-job insert упал:', error.message);
-    return jsonResponse({ error: 'create_failed' }, { status: 500 });
+    const status: Record<string, number> = {
+      banned: 403,
+      consent_required: 403,
+      forbidden_path: 403,
+      too_many_in_progress: 429,
+      daily_limit: 429,
+      idempotency_conflict: 409,
+      invalid_settings: 400,
+    };
+    const known = Object.keys(status).find((code) => error.message === code);
+    if (!known) console.error('create_job_atomic unavailable', error.code);
+    return jsonResponse({ error: known ?? 'job_create_unavailable' }, {
+      status: known ? status[known] : 503,
+    });
   }
-
-  // Триггерим process-job асинхронно — пользователю отдаём id сразу,
-  // обработка идёт фоном (15–25 сек), фронт опрашивает get-job до done.
-  // Передаём jobId: воркер заберёт именно этот job, а не «самый старый в очереди»,
-  // иначе два одновременных create-job дрались за одного кандидата и один из job-ов
-  // мог остаться необработанным.
-  const internalSecret = Deno.env.get('INTERNAL_SECRET') ?? '';
-  const supabaseUrl    = Deno.env.get('SUPABASE_URL')    ?? '';
-  // @ts-expect-error EdgeRuntime is provided by Supabase Edge Runtime
-  EdgeRuntime.waitUntil(
-    fetch(`${supabaseUrl}/functions/v1/process-job`, {
+  if (job?.error === 'insufficient_credits') return jsonResponse(job, { status: 402 });
+  if (!job?.id) return jsonResponse({ error: 'job_create_unavailable' }, { status: 503 });
+  if (job.status === 'created' || job.status === 'processing') {
+    const run = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/process-job`, {
       method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-internal-secret': internalSecret,
-      },
+      signal: AbortSignal.timeout(120_000),
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret },
       body: JSON.stringify({ jobId: job.id }),
-    }).catch((e) => console.error('process-job trigger failed', e)),
-  );
-
+    }).then((r) => {
+      if (!r.ok) console.error('worker dispatch status', r.status);
+      return r.body?.cancel();
+    })
+      .catch(() => console.error('worker dispatch unavailable; cron will resume'));
+    // @ts-ignore Supabase Edge Runtime global
+    if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(run);
+  }
   return jsonResponse({ id: job.id, status: job.status });
 });

@@ -106,8 +106,8 @@ async function request<T>(body: unknown, signal?: AbortSignal): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function prepareSmileJob(signal?: AbortSignal): Promise<SmilePreparedJob> {
-  return request({ action: 'prepare', consent: true }, signal);
+export function prepareSmileJob(signal?: AbortSignal, expectedProvider:'polza'|'fal'='polza'): Promise<SmilePreparedJob> {
+  return request({ action: 'prepare', consent: true, expectedProvider }, signal);
 }
 
 export function generateSmilePreview(jobId: string, settings: SmileSettings, signal?: AbortSignal): Promise<SmileJobStatus> {
@@ -217,6 +217,7 @@ export function smileErrorMessage(error: unknown): string {
     if (error.code === 'upload_failed') return 'Фото или маска не загрузились. Проверьте соединение.';
     if (error.code === 'encryption_unavailable') return 'Браузер не смог зашифровать фото. Обновите Telegram или откройте приложение на другом устройстве.';
     if (/decryption|encrypted_image/.test(error.code)) return 'Не удалось расшифровать результат. Проверьте статус примерки ещё раз.';
+    if (error.code === 'processor_changed') return 'Сервис обработки изменился. Откройте примерку заново и проверьте условия перед согласием.';
     if (error.code === 'job_processing' || error.status === 409) return 'Примерка ещё обрабатывается. Дождитесь завершения, затем удалите её.';
     if (error.code === 'download_failed') return 'Не удалось скачать PNG. Обновите временную ссылку и попробуйте ещё раз.';
     if (error.code === 'timeout') return 'Время ожидания модели истекло. Проверьте статус этой примерки перед новой попыткой.';

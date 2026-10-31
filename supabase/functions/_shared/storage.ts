@@ -1,6 +1,8 @@
 // Утилиты для работы со Storage: подписанные URL для входного фото,
 // загрузка готовых картинок.
 import { db } from './db.ts';
+import { env } from './env.ts';
+import { readBodyBytes } from './http-body.ts';
 
 // Сколько браузер и Telegram держат картинку в кеше, не спрашивая снова.
 //
@@ -23,9 +25,15 @@ export async function signUrl(bucket: string, path: string, ttlSec = 60 * 10): P
 
 /** Тянет файл в память. */
 export async function fetchBytes(url: string): Promise<Uint8Array> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const location = new URL(url);
+  const owned = location.origin === new URL(env.SUPABASE_URL).origin && location.pathname.startsWith('/storage/v1/object/');
+  const provider = ['polza.ai','replicate.delivery','fal.media'].some((host) => location.hostname === host || location.hostname.endsWith(`.${host}`));
+  if (location.username || location.password || (!owned && (!provider || location.protocol !== 'https:' || location.port))) {
+    throw new Error('fetchBytes invalid_location');
+  }
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: 'error' });
   if (!res.ok) throw new Error(`fetchBytes ${res.status}`);
-  return new Uint8Array(await res.arrayBuffer());
+  return await readBodyBytes(res, 20 * 1024 * 1024, FETCH_TIMEOUT_MS);
 }
 
 /** Кладёт готовую картинку в bucket — с долгим кешем, она не меняется. */
@@ -38,13 +46,8 @@ export async function uploadBytes(
   const { error } = await db.storage.from(bucket).upload(path, bytes, {
     upsert: true,
     contentType,
-    cacheControl: IMMUTABLE_CACHE,
+    cacheControl: bucket === 'results' ? '3600' : IMMUTABLE_CACHE,
   });
   if (error) throw new Error(`uploadBytes: ${error.message}`);
   return path;
-}
-
-export function publicUrl(bucket: string, path: string): string {
-  const { data } = db.storage.from(bucket).getPublicUrl(path);
-  return data.publicUrl;
 }

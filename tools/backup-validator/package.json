@@ -1,0 +1,7 @@
+{
+  "name": "labframe-backup-validator",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": { "@electric-sql/pglite": "0.5.14" }
+}

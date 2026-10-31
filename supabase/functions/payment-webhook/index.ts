@@ -11,7 +11,8 @@
 import { jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { amountMatches, generateGiftCode, parseOrderId } from '../_shared/packages.ts';
-import { parsePhpFormBody, verifySignature, type PhpValue } from '../_shared/prodamus.ts';
+import { isPaymentSignature, PAYMENT_BODY_MAX_BYTES, parsePhpFormBody, verifySignature, type PhpValue } from '../_shared/prodamus.ts';
+import { BodyError, readTextBody } from '../_shared/http-body.ts';
 import { grantReferralReward } from '../_shared/referral.ts';
 import { sendMessage } from '../_shared/telegram.ts';
 import { notifyAdmins } from '../_shared/admins.ts';
@@ -46,18 +47,19 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'not_configured' }, { status: 500 });
   }
 
-  const body = await req.text();
+  const signature = req.headers.get('Sign');
+  if (!isPaymentSignature(signature)) return jsonResponse({ error: 'bad_signature' }, { status: 403 });
   let data: Record<string, PhpValue>;
   try {
-    data = parsePhpFormBody(body);
+    data = parsePhpFormBody(await readTextBody(req, PAYMENT_BODY_MAX_BYTES));
   } catch (e) {
-    console.error('битое тело уведомления:', e instanceof Error ? e.message : e);
-    return jsonResponse({ error: 'bad_body' }, { status: 400 });
+    return jsonResponse({ error: e instanceof BodyError ? e.code : 'bad_body' },
+      { status: e instanceof BodyError ? e.status : 400 });
   }
 
-  const ok = await verifySignature(data, req.headers.get('Sign'), secret);
+  const ok = await verifySignature(data, signature, secret);
   if (!ok) {
-    console.error('подпись не сошлась, order_id=', String(data.order_id ?? '—'));
+    console.error('payment webhook: invalid signature');
     return jsonResponse({ error: 'bad_signature' }, { status: 403 });
   }
 

@@ -8,6 +8,7 @@ import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { env } from '../_shared/env.ts';
 import { allowAction, tooOften } from '../_shared/rate-limit.ts';
+import { requireActiveAccount } from '../_shared/account-access.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflight();
@@ -16,6 +17,9 @@ Deno.serve(async (req) => {
   const auth = await authorize(req);
   if ('response' in auth) return auth.response;
   const tg = auth.user;
+  const denied=await requireActiveAccount(tg.id);
+  if(denied)return denied;
+  if(!env.POLZA_API_KEY)return jsonResponse({error:'provider_unavailable'},{status:503});
 
   // Каждый вызов — запрос к модели за наши деньги. Двадцати на час хватает
   // любому живому человеку: столько раз подряд хэштеги не переподбирают.

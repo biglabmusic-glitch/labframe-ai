@@ -36,6 +36,8 @@ export interface SmileManifest {
   updatedAt: number;
   startedAt?: number;
   providerId?: string;
+  providerName?: 'polza'|'fal';
+  providerModel?: string;
   errorCode?: string;
 }
 
@@ -44,6 +46,7 @@ const MESSAGES: Record<string, string> = {
   bad_job: 'Некорректный номер примерки.',
   bad_json: 'Не удалось прочитать параметры запроса.',
   permission_required: 'Подтвердите разрешение на обработку фото и передачу внешнему AI.',
+  processor_changed: 'Сервис обработки изменился. Откройте примерку заново и проверьте условия перед согласием.',
   not_admin: 'Примерка доступна только участникам закрытого теста.',
   banned: 'Доступ к примерке закрыт для этого аккаунта.',
   auth_unavailable: 'Не удалось проверить доступ. Попробуйте позже.',
@@ -429,7 +432,7 @@ export function smileMediaLocation(value: unknown): string | null {
 export interface SmileProviderOptions {
   apiKey: string; baseUrl?: string; signal: AbortSignal; fetcher?: typeof fetch;
 }
-export type SmileProviderTask = { status: 'processing'; id: string } | { status: 'done'; image: Uint8Array };
+export type SmileProviderTask = { status: 'processing'; id: string } | { status: 'done'; image: Uint8Array; id?: string };
 
 async function smileProviderRequest(options: SmileProviderOptions, mediaId?: string, input?: Record<string, unknown>): Promise<SmileProviderTask> {
   const fetcher = options.fetcher ?? fetch;
@@ -454,6 +457,7 @@ async function smileProviderRequest(options: SmileProviderOptions, mediaId?: str
     options.signal.throwIfAborted();
     if (data.error || data.status === 'failed') throw new SmileError('provider_failed', 502);
     const location = smileMediaLocation(data);
+    const taskId=typeof data.id==='string' && /^[a-zA-Z0-9_-]{1,128}$/.test(data.id) ? {id:data.id}:{};
     if (location) {
       const dataPrefix = location.match(/^data:image\/(png|jpeg|jpg);base64,/);
       if (dataPrefix) {
@@ -461,7 +465,7 @@ async function smileProviderRequest(options: SmileProviderOptions, mediaId?: str
         if (encoded.length > Math.ceil(SMILE_MAX_BYTES * 4 / 3) + 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
           throw new SmileError('provider_response', 502);
         }
-        try { return { status: 'done', image: Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)) }; }
+        try { return { status: 'done', image: Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)),...taskId }; }
         catch { throw new SmileError('provider_response', 502); }
       }
       let url: URL;
@@ -472,7 +476,7 @@ async function smileProviderRequest(options: SmileProviderOptions, mediaId?: str
       try { image = await fetcher(url.href, { signal: options.signal, redirect: 'error' }); }
       catch { throw new SmileError(options.signal.aborted ? 'timeout' : 'provider_unavailable', 503); }
       if (!image.ok) throw new SmileError('provider_unavailable', 503);
-      return { status: 'done', image: await readSmileBytes(image, SMILE_MAX_BYTES, options.signal) };
+      return { status: 'done', image: await readSmileBytes(image, SMILE_MAX_BYTES, options.signal),...taskId };
     }
     if (!['pending', 'processing'].includes(String(data.status)) || typeof data.id !== 'string' ||
       !/^[a-zA-Z0-9_-]{1,128}$/.test(data.id)) throw new SmileError('provider_response', 502);

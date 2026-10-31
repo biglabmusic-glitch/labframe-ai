@@ -37,6 +37,18 @@ export function ScreenResult() {
   const [regenLoading, setRegenLoading] = useState(false);
   const [feedback, setFeedback] = useState<'liked' | 'disliked' | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Renew signed URLs when a result screen survives a long background interval.
+  useEffect(()=>{
+    if(!jobId || !isBackendReady())return;
+    let active=true;
+    const refresh=()=>{
+      if(document.visibilityState==='hidden')return;
+      void api.getJob(jobId).then(j=>{if(active && j.resultUrl)setResultUrl(j.resultUrl);}).catch(()=>{});
+    };
+    const timer=setInterval(refresh,30*60*1000);
+    document.addEventListener('visibilitychange',refresh);
+    return()=>{active=false;clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};
+  },[jobId]);
 
   // Тянем результат с бэка, если job был
   useEffect(() => {
@@ -101,7 +113,10 @@ export function ScreenResult() {
           }
         } catch { /* fallback ниже */ }
       }
-      WebApp?.openLink?.(resultUrl);
+      try {
+        const current=jobId ? (await api.getJob(jobId)).resultUrl : resultUrl;
+        if(current)WebApp?.openLink?.(current);
+      }catch{ /* keep private result available in history for a later retry */ }
     },
   });
 

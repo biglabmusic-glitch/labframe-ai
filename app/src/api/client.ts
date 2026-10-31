@@ -4,6 +4,7 @@
  */
 import type { BrandData, Job, StyleId, TextType, WorkType, FormatId, BrandingKind } from '../state/types';
 import { WebApp } from '../telegram/webapp';
+import { newRequestKey } from '../lib/job-request';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
@@ -19,7 +20,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * Больше, чем watchdog в process-job (5 мин на processing), чтобы юзер сначала
  * увидел настоящую причину сбоя от бэка, а не общий таймаут.
  */
-const JOB_POLL_TIMEOUT_MS = 6 * 60 * 1000;
+const JOB_POLL_TIMEOUT_MS = 14 * 60 * 1000;
 
 /**
  * fetch с ретраями для сетевых сбоев. iOS WebKit при флапе сети / cold-start Edge-функции
@@ -41,13 +42,18 @@ async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Prom
     // встроенных браузеров Telegram на старых iOS, а этот способ работает везде.
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+    const abort=()=>ctrl.abort();
+    init.signal?.addEventListener('abort',abort,{once:true});
+    if(init.signal?.aborted)ctrl.abort();
     try {
-      return await fetch(url, { ...init, signal: init.signal ?? ctrl.signal });
+      return await fetch(url, { ...init, signal: ctrl.signal });
     } catch (e) {
+      if(init.signal?.aborted)throw e;
       lastErr = e;
       if (attempt < retries) await sleep(600 * (attempt + 1)); // 0.6s, 1.2s
     } finally {
       clearTimeout(timer);
+      init.signal?.removeEventListener('abort',abort);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error('network');
@@ -56,13 +62,13 @@ async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Prom
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!API_BASE) throw new Error('VITE_API_BASE_URL is not set');
   const res = await fetchWithRetry(`${API_BASE}${path}`, {
+    ...init,
     headers: {
       'Content-Type': 'application/json',
       'x-telegram-initdata': initData(),
       ...(SUPABASE_ANON ? { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` } : {}),
       ...init?.headers,
     },
-    ...init,
   });
   if (!res.ok) {
     let detail = '';
@@ -79,6 +85,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export interface CreateJobInput {
+  requestKey?: string;
   photoPath: string;
   workType?: WorkType;
   style: StyleId;
@@ -93,7 +100,8 @@ export interface JobResult {
   id: string;
   status: 'created' | 'photo_uploaded' | 'settings_selected' | 'processing' | 'done' | 'failed';
   resultUrl?: string | null;
-  caption?: { main: string; alt?: string; hashtags: string[] };
+  caption?: { main: string; alt?: string; hashtags: string[]; source?: 'ai'|'template'|'none' };
+  stage?: 'queued'|'image'|'caption';
   error?: string | null;
 }
 
@@ -107,6 +115,7 @@ export interface MeResponse {
     credits: number;
     isAdmin?: boolean;
     canSmilePreview?: boolean;
+    smileProvider?: 'polza'|'fal';
     smileInviteStatus?: import('../state/types').SmileInviteStatus;
     refCode?: string | null;
     referralsCount?: number;
@@ -185,6 +194,11 @@ export interface CreatedSmileInvite {
 }
 
 export interface AdminStats {
+  resilience?: {
+    available:boolean;attempts24h?:number;limit24h?:number;unknownAttempts?:number;queuedJobs?:number;
+    providers?:Array<{name:string;id:string;configured:boolean;enabled:boolean;openUntil:string|null;lastSuccessAt:string|null;lastError:string|null}>;
+    backup?:{snapshot_at:string;completed_at:string;data_verified:boolean;storage_verified:boolean;storage_included:boolean;portable_recovery:boolean}|null;
+  };
   totalUsers: number;
   newUsers7d: number;
   jobs7d: number;
@@ -334,19 +348,19 @@ export const api = {
     return { logoPath: photoPath, previewUrl: URL.createObjectURL(file) };
   },
 
-  async createJob(input: CreateJobInput): Promise<JobResult> {
+  async createJob(input: CreateJobInput, signal?: AbortSignal): Promise<JobResult> {
     if (!API_BASE) {
       await new Promise((r) => setTimeout(r, 600));
       return { id: 'mock-' + Date.now(), status: 'processing' };
     }
-    return request<JobResult>('/create-job', { method: 'POST', body: JSON.stringify(input) });
+    return request<JobResult>('/create-job', { method: 'POST', signal, body: JSON.stringify({ ...input, requestKey: input.requestKey ?? newRequestKey() }) });
   },
 
-  async getJob(id: string): Promise<JobResult> {
+  async getJob(id: string, signal?: AbortSignal): Promise<JobResult> {
     if (!API_BASE) {
       return { id, status: 'done', resultUrl: null, caption: { main: '', hashtags: [] } };
     }
-    return request<JobResult>(`/get-job?id=${encodeURIComponent(id)}`);
+    return request<JobResult>(`/get-job?id=${encodeURIComponent(id)}`, { signal });
   },
 
   async me(): Promise<MeResponse | null> {
@@ -520,10 +534,23 @@ export const api = {
     onTick?: (j: JobResult) => void,
     intervalMs = 2000,
     timeoutMs = JOB_POLL_TIMEOUT_MS,
+    signal?: AbortSignal,
   ): Promise<JobResult> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const j = await this.getJob(id);
+      if(signal?.aborted)throw new DOMException('Aborted','AbortError');
+      if(Date.now()>=deadline)throw new Error(`job_timeout ${id}`);
+      let j: JobResult;
+      try {j=await this.getJob(id,signal);}
+      catch(error) {
+        if(signal?.aborted)throw error;
+        const message=error instanceof Error ? error.message:'';
+        if(/^(5\d\d|429)\b|network|load failed|fetch|aborted/i.test(message)) {
+          await sleep(Math.max(3000,intervalMs));
+          continue;
+        }
+        throw error;
+      }
       onTick?.(j);
       if (j.status === 'done' || j.status === 'failed') return j;
       if (Date.now() >= deadline) throw new Error(`job_timeout ${id}`);
@@ -562,6 +589,10 @@ export function isBackendReady(): boolean {
  * остальное падает в общий fallback с сырым текстом в подсказке (для debug).
  */
 export function friendlyError(raw: string): { title: string; sub: string } {
+  if(raw.includes('consent_required'))return {title:'Нужно согласие',sub:'Откройте приложение заново и примите условия обработки данных.'};
+  if(raw.includes('daily_limit') || raw.includes('provider_daily_limit'))return {title:'Достигнут дневной лимит',sub:'Попробуйте позже. За неудачную обработку генерация возвращается.'};
+  if(raw.includes('image_providers_unavailable') || raw.includes('provider_unavailable') || raw.includes('account_'))return {title:'Обработка временно недоступна',sub:'Сервис генерации недоступен. Попробуйте позже; за неудачную работу генерация не списывается.'};
+  if(/processing_unavailable|job_create_unavailable|profile_unavailable|history_unavailable|result_unavailable/.test(raw))return {title:'Временный сбой связи',sub:'Попробуйте снова. Повтор запроса продолжит сохранённую работу.'};
   if (raw.includes('bad_signature') || raw.includes('empty_initdata') || raw.includes('no_hash') || raw.includes('no_user') || raw.includes('initdata_expired') || raw.includes('no_auth_date')) {
     return {
       title: 'Не удалось проверить личность',

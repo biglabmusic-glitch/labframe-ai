@@ -62,7 +62,7 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
     if (url.origin === origin && url.pathname === '/rest/v1/users') {
       if (permissionsFail) return Response.json({ message: 'fixture database unavailable' }, { status: 503 });
       const id = Number(url.searchParams.get('id')?.replace('eq.', ''));
-      return Response.json(id === 105 ? [] : [{ is_admin: id === 101, smile_tester: id === 102 || id === 104, banned: id === 104 }]);
+      return Response.json(id === 105 ? [] : [{ is_admin: id === 101, smile_tester: id === 102 || id === 104, banned: id === 104,consent_at:new Date().toISOString(),consent_version:2 }]);
     }
     if (url.origin === origin && url.pathname === '/rest/v1/rpc/hit_rate_limit') return Response.json(true);
     if (url.origin === origin && url.pathname === '/storage/v1/bucket/photos') return Response.json({ id: 'photos', name: 'photos', public: bucketPublic });

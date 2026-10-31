@@ -13,8 +13,9 @@ export interface Limit {
   windowSec: number;
 }
 
-/** Разрешено ли обращение. Ошибка базы — разрешаем: лимит не важнее работы сервиса. */
+/** A failed limit check must not permit an operation that spends money. */
 export async function allowAction(userId: number, action: string, { limit, windowSec }: Limit): Promise<boolean> {
+  try {
   const { data, error } = await db.rpc('hit_rate_limit', {
     p_user_id: userId,
     p_action: action,
@@ -23,9 +24,13 @@ export async function allowAction(userId: number, action: string, { limit, windo
   });
   if (error) {
     console.error(`лимит ${action} не проверился:`, error.message);
-    return true;
+    return false;
   }
-  return data !== false;
+  return data === true;
+  } catch {
+    console.error(`лимит ${action} временно недоступен`);
+    return false;
+  }
 }
 
 /** Готовый отказ: 429 и человеческая причина. */

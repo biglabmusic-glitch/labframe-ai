@@ -290,6 +290,25 @@ function MoneyTab() {
         <Kpi label="ПРОДАНО ГЕНЕРАЦИЙ" value={stats.creditsSold} />
       </div>
 
+      <SectionTitle>Резерв генерации</SectionTitle>
+      <Card>
+        <div style={{padding:14,fontSize:13,lineHeight:1.6}}>
+          {!stats.resilience?.available ? 'Статус резерва временно недоступен.' : <>
+            {stats.resilience.providers?.map(p=><div key={p.id}>
+              <strong>{p.name}</strong>: {!p.configured ? 'ключ не настроен' : !p.enabled ? 'не включён в маршрут' :
+                p.openUntil && new Date(p.openUntil).getTime()>Date.now() ? `пауза до ${new Date(p.openUntil).toLocaleTimeString('ru-RU')}` :
+                p.lastSuccessAt ? `последний ответ ${new Date(p.lastSuccessAt).toLocaleString('ru-RU')}` : 'генерация ещё не проверена'}
+            </div>)}
+            <div>Попытки за сутки: {stats.resilience.attempts24h} / {stats.resilience.limit24h}. В очереди: {stats.resilience.queuedJobs}.</div>
+            {Boolean(stats.resilience.unknownAttempts) && <div>Нужно проверить исход отправки: {stats.resilience.unknownAttempts}.</div>}
+            <div>Копия БД: {stats.resilience.backup ? new Date(stats.resilience.backup.snapshot_at).toLocaleString('ru-RU') : 'нет подтверждённой копии'}.</div>
+            {stats.resilience.backup && <div>
+              Восстановление данных: {stats.resilience.backup.data_verified?'проверено':'не проверено'}. Файлы: {stats.resilience.backup.storage_verified?'проверены':'не проверены'}.
+              {!stats.resilience.backup.portable_recovery && ' Переносимое восстановление ещё не настроено.'}
+            </div>}
+          </>}
+        </div>
+      </Card>
       <SectionTitle>Расходы на модели</SectionTitle>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <Kpi

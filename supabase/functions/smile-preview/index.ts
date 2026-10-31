@@ -2,6 +2,8 @@
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { envAdminIds } from '../_shared/admins.ts';
 import { db } from '../_shared/db.ts';
+import {createFalSmileTask,pollFalSmileTask,smileProviderConfig} from '../_shared/smile-fal.ts';
+import {boundedInt} from '../_shared/job-input.ts';
 import { deriveSmileKey, decryptSmileBytes, encryptSmileBytes, smileEncryption } from '../_shared/smile-crypto.ts';
 import {
   compositeSmile, createSmileTask, decodeSmileInputs, pollSmileTask, readSmileBytes, recoverSmileManifest,
@@ -57,7 +59,9 @@ async function loadManifest(paths: Paths, userId: number, jobId: string): Promis
       !Number.isFinite(manifest.createdAt) || !Number.isFinite(manifest.updatedAt) ||
       !Number.isFinite(manifest.consentAt) || manifest.consentAt <= 0 ||
       (manifest.startedAt !== undefined && !Number.isFinite(manifest.startedAt)) ||
-      (manifest.providerId !== undefined && !/^[a-zA-Z0-9_-]{1,128}$/.test(manifest.providerId))) throw new Error('manifest');
+      (manifest.providerId !== undefined && !/^[a-zA-Z0-9_-]{1,128}$/.test(manifest.providerId)) ||
+      (manifest.providerName !== undefined && !['polza','fal'].includes(manifest.providerName)) ||
+      (manifest.providerModel !== undefined && (typeof manifest.providerModel!=='string' || manifest.providerModel.length>200))) throw new Error('manifest');
     return manifest;
   } catch { throw new SmileError('job_not_found', 404); }
 }
@@ -110,9 +114,9 @@ function privateJson(body: unknown, status = 200): Response {
 }
 
 /** В отличие от общего fail-open helper, сбой лимита пилота запрещает платный вызов. */
-async function requireRate(userId: number, action: string, limit: number) {
+async function requireRate(userId: number, action: string, limit: number, windowSec=3600) {
   const { data, error } = await io(db.rpc('hit_rate_limit', {
-    p_user_id: userId, p_action: action, p_limit: limit, p_window_sec: 3600,
+    p_user_id: userId, p_action: action, p_limit: limit, p_window_sec: windowSec,
   }));
   if (error || typeof data !== 'boolean') throw new SmileError('storage_error', 503);
   if (!data) throw new SmileError('rate_limited', 429);
@@ -188,19 +192,29 @@ async function failJob(paths: Paths, manifest: SmileManifest, error: unknown) {
 
 async function runJob(paths: Paths, manifest: SmileManifest, settings: SmileSettings) {
   const signal = AbortSignal.timeout(SMILE_TIMEOUT_MS);
+  let submitted=false;
   try {
     const loaded = await loadJobInputs(paths, manifest, signal);
     const cropped = await withSmileSignal(smileProviderInputs(loaded.inputs), signal);
-    const task = await createSmileTask({
+    submitted=true;
+    const task = manifest.providerName==='fal' ? await createFalSmileTask({photoData:cropped.photo,maskData:cropped.mask,settings,signal}) : await createSmileTask({
       photoData: cropped.photo, maskData: cropped.mask, settings,
       apiKey: Deno.env.get('POLZA_API_KEY')!,
-      model: Deno.env.get('POLZA_SMILE_MODEL') || Deno.env.get('POLZA_IMAGE_MODEL') || 'google/gemini-3.1-flash-image-preview',
+      model: manifest.providerModel || Deno.env.get('POLZA_SMILE_MODEL') || Deno.env.get('POLZA_IMAGE_MODEL') || 'google/gemini-3.1-flash-image-preview',
       baseUrl: Deno.env.get('POLZA_MEDIA_BASE_URL') || undefined,
       signal,
     });
+    if(task.id){
+      const accepted={...manifest,providerId:task.id,updatedAt:Date.now()};
+      await saveManifest(paths,accepted);
+      manifest=accepted;
+    }
     if (task.status === 'done') await completeJob(paths, manifest, task.image, signal, loaded);
-    else await saveManifest(paths, { ...manifest, providerId: task.id, updatedAt: Date.now() });
   } catch (error) {
+    if(submitted && !manifest.providerId && ['provider_unavailable','provider_response','timeout','storage_error'].includes(safeSmileError(error).code)){
+      // An unacknowledged POST may already be paid. Keep its lock until the deadline.
+      return;
+    }
     await failJob(paths, manifest, error);
   }
 }
@@ -209,7 +223,7 @@ async function resumeJob(paths: Paths, manifest: SmileManifest): Promise<SmileMa
   if (manifest.status !== 'processing' || !manifest.providerId) return manifest;
   try {
     const signal = AbortSignal.timeout(20_000);
-    const task = await pollSmileTask({
+    const task = manifest.providerName==='fal' ? await pollFalSmileTask(manifest.providerId,signal) : await pollSmileTask({
       id: manifest.providerId, apiKey: Deno.env.get('POLZA_API_KEY')!,
       baseUrl: Deno.env.get('POLZA_MEDIA_BASE_URL') || undefined, signal,
     });
@@ -217,7 +231,7 @@ async function resumeJob(paths: Paths, manifest: SmileManifest): Promise<SmileMa
   } catch (error) {
     const code = safeSmileError(error).code;
     // Transient polling failures must never lose a paid task or create another one.
-    if (!['provider_unavailable', 'timeout', 'storage_error'].includes(code)) await failJob(paths, manifest, error);
+    if (!['provider_unavailable', 'provider_response', 'timeout', 'storage_error'].includes(code)) await failJob(paths, manifest, error);
   }
   return await recover(paths, await loadManifest(paths, manifest.userId, manifest.jobId));
 }
@@ -229,7 +243,7 @@ Deno.serve(async (req) => {
   if ('response' in auth) return auth.response;
   const userId = auth.user.id;
   try {
-    const { data: row, error: permissionError } = await io(db.from('users').select('is_admin, banned, smile_tester').eq('id', userId).maybeSingle());
+    const { data: row, error: permissionError } = await io(db.from('users').select('is_admin, banned, smile_tester, consent_at, consent_version').eq('id', userId).maybeSingle());
     if (permissionError) throw new SmileError('auth_unavailable', 503);
     if (row?.banned) throw new SmileError('banned', 403);
     if (!smilePilotAllowed(userId, envAdminIds(), row)) throw new SmileError('not_admin', 403);
@@ -237,15 +251,18 @@ Deno.serve(async (req) => {
     if (bucketError || !bucket || bucket.public !== false) throw new SmileError('private_storage_required', 503);
 
     const body = await readBody(req);
+    if(['prepare','generate'].includes(String(body.action)) && (!row?.consent_at || row.consent_version!==2))throw new SmileError('permission_required',403);
     if (body.action === 'prepare') {
       if (body.consent !== true) throw new SmileError('permission_required');
+      const provider=smileProviderConfig();
+      if((body.expectedProvider??'polza')!==provider.providerName)throw new SmileError('processor_changed',409);
       await requireRate(userId, 'smile-prepare', 60);
       const jobId = crypto.randomUUID();
       const encryption = smileEncryption(await jobKey(userId, jobId));
       const paths = smilePaths(userId, jobId);
       const now = Date.now();
       await saveManifest(paths, {
-        version: 2, jobId, userId, status: 'prepared', createdAt: now, updatedAt: now, consentAt: now,
+        version: 2, jobId, userId, status: 'prepared', createdAt: now, updatedAt: now, consentAt: now,...provider,
       }, false);
       const [photo, mask] = await Promise.all([
         io(db.storage.from(BUCKET).createSignedUploadUrl(paths.photo, { upsert: false })),
@@ -300,6 +317,7 @@ Deno.serve(async (req) => {
     const runtime = (globalThis as unknown as { EdgeRuntime?: { waitUntil: (work: Promise<unknown>) => void } }).EdgeRuntime;
     if (!runtime?.waitUntil) throw new SmileError('runtime_unavailable', 503);
     await requireRate(userId, 'smile-generate', 20);
+    await requireRate(0,'smile-daily-budget',boundedInt(Deno.env.get('SMILE_GENERATIONS_PER_DAY'),100,10000),86400);
     const startedAt = Date.now();
     // Уникальная вставка в Storage — атомарный замок, общий для всех Edge isolates.
     const { error: markerError } = await io(db.storage.from(BUCKET).upload(paths.running, JSON.stringify({ startedAt }), {

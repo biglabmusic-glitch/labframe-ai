@@ -25,6 +25,9 @@ cd app && npm install && npm run dev          # http://localhost:5173
 
 ## Прод
 
+Актуальные ограничения резервирования, приватного хранения и проверок:
+[docs/reliability.md](docs/reliability.md).
+
 См. [DEPLOY.md](DEPLOY.md). Кратко:
 
 1. GitHub → Vercel (фронт)

@@ -8,30 +8,30 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import { api, isBackendReady, friendlyError } from '../api/client';
+import { clearPendingRequest, pendingRequestKey } from '../lib/job-request';
 
 const STEPS = [
-  'Анализ фото',
-  'Очистка фона',
-  'Выравнивание света',
-  'Кадрирование',
-  'Брендирование',
-  'Генерация текста',
+  'Подготовка',
+  'Обработка изображения',
+  'Сохранение и подпись',
 ];
 
 export function ScreenProcessing() {
-  const { draft, setDraft } = useApp();
+  const { draft: initialDraft, setDraft, user } = useApp();
+  const draft = useRef(initialDraft).current;
   const { replace } = useRouter();
   const [activeIdx, setActiveIdx] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const startedRef = useRef(false);
+  const [jobSaved,setJobSaved]=useState(false);
 
   useBackButton(null);
   useMainButton(null);
 
   // запускаем job один раз
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    const controller=new AbortController();
+    let mockTimer: ReturnType<typeof setInterval>|undefined;
+    let delayed: ReturnType<typeof setTimeout>|undefined;
 
     (async () => {
       // Defence-in-depth: если попали сюда без обязательных полей (state
@@ -44,7 +44,7 @@ export function ScreenProcessing() {
         if (!draft.format)           need.push('формат');
         if (need.length) {
           setErrorMsg(`Не хватает: ${need.join(', ')}. Начнём заново.`);
-          setTimeout(() => replace('upload'), 1200);
+          delayed=setTimeout(() => replace('upload'), 1200);
           return;
         }
       }
@@ -54,11 +54,11 @@ export function ScreenProcessing() {
       if (!isBackendReady() || !draft.photo) {
         // Mock-режим — фейковый прогресс
         const ms = 1800;
-        const t = setInterval(() => {
+        const t = mockTimer = setInterval(() => {
           setActiveIdx((i) => {
             if (i >= STEPS.length - 1) {
               clearInterval(t);
-              setTimeout(() => {
+              delayed=setTimeout(() => {
                 setDraft({ status: 'done' });
                 replace('result');
               }, 600);
@@ -67,11 +67,11 @@ export function ScreenProcessing() {
             return i + 1;
           });
         }, ms);
-        return () => clearInterval(t);
+        return;
       }
 
       try {
-        const job = await api.createJob({
+        const input = {
           photoPath: draft.photo.photoPath ?? draft.photo.url ?? '',
           workType:  draft.workType,
           style:     draft.style!,
@@ -80,17 +80,16 @@ export function ScreenProcessing() {
           textType:  draft.textType ?? 'short',
           decorPreset:   draft.decor?.preset,
           decorAddition: draft.decor?.addition,
-        });
-
-        // имитируем плавный прогресс пока бэк работает
-        let i = 0;
-        const tick = setInterval(() => {
-          i = Math.min(i + 1, STEPS.length - 1);
-          setActiveIdx(i);
-        }, 2200);
-
-        const finalJob = await api.waitForJob(job.id, undefined, 2000);
-        clearInterval(tick);
+        };
+        const requestKey=pendingRequestKey(sessionStorage,user.telegramId ?? 0,input);
+        const job = await api.createJob({...input,requestKey},controller.signal);
+        if(controller.signal.aborted)return;
+        setJobSaved(true);
+        const finalJob = await api.waitForJob(job.id,(j)=>{
+          if(!controller.signal.aborted)setActiveIdx(j.stage==='caption'?2:j.stage==='image'?1:0);
+        },2000,undefined,controller.signal);
+        if(controller.signal.aborted)return;
+        clearPendingRequest(sessionStorage,user.telegramId ?? 0);
         setActiveIdx(STEPS.length - 1);
 
         // Известные коды («не подобрали job», таймаут воркера) переводим в человеческий
@@ -109,15 +108,16 @@ export function ScreenProcessing() {
           setErrorMsg(friendlyError(finalJob.error ?? 'Обработка не удалась').sub);
         }
       } catch (e) {
+        if(controller.signal.aborted)return;
         setErrorMsg(friendlyError(e instanceof Error ? e.message : 'Ошибка обработки').sub);
       }
     })();
-  }, [draft, replace, setDraft]);
+    return ()=>{controller.abort();clearInterval(mockTimer);clearTimeout(delayed);};
+  }, [draft, replace, setDraft, user.telegramId]);
 
-  const progress = Math.round(((activeIdx + 1) / STEPS.length) * 100);
+  const progress = Math.min(95,Math.round(((activeIdx + 1) / STEPS.length) * 100));
   const dashTotal = 490;
   const dashOffset = dashTotal * (1 - progress / 100);
-  const eta = Math.max(0, Math.ceil(((STEPS.length - 1 - activeIdx) * 2.2)));
 
   return (
     <Screen>
@@ -129,7 +129,7 @@ export function ScreenProcessing() {
         sub={
           errorMsg
             ? errorMsg
-            : 'Обычно занимает 12–20 секунд. Можно свернуть Telegram — пришлём уведомление.'
+            : 'Обычно около минуты. Можно свернуть Telegram — работа продолжится, а готовый результат появится в истории.'
         }
       />
 
@@ -146,7 +146,7 @@ export function ScreenProcessing() {
               {progress}<span style={{ fontSize: 18, opacity: 0.5 }}>%</span>
             </div>
             <div className="mono" style={{ fontSize: 10, color: 'var(--c-on-dark-3)', letterSpacing: 0.8, marginTop: 2 }}>
-              ETA {eta} СЕК
+              {errorMsg ? 'НЕ УДАЛОСЬ ЗАВЕРШИТЬ' : jobSaved ? 'РАБОТА СОХРАНЕНА' : 'ПОДГОТОВКА'}
             </div>
           </div>
         </div>

@@ -6,7 +6,7 @@
 import { Image } from 'https://deno.land/x/imagescript@1.2.17/mod.ts';
 import { resizeArea } from './branding.ts';
 import { db } from './db.ts';
-import { fetchBytes, publicUrl, uploadBytes } from './storage.ts';
+import { fetchBytes, signUrl, uploadBytes } from './storage.ts';
 
 // Квадратик истории — около 110 точек; втрое больше покрывает экраны с
 // высокой плотностью пикселей.
@@ -60,7 +60,7 @@ export async function backfillThumbs(limit: number): Promise<number> {
   let done = 0;
   for (const job of jobs ?? []) {
     try {
-      const bytes = await fetchBytes(publicUrl('results', job.result_path));
+      const bytes = await fetchBytes(await signUrl('results', job.result_path));
       if (await saveThumb(job.id, job.result_path, bytes)) done++;
     } catch (e) {
       // Результат пропал из хранилища — помечаем, чтобы не спотыкаться о него

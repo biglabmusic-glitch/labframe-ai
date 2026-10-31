@@ -12,6 +12,7 @@ import { PaymentLinkError, buildPaymentLink } from '../_shared/payment-link.ts';
 import { STEP_GOALS, STEP_LABELS, type StepId } from '../_shared/funnel.ts';
 import { envAdminIds } from '../_shared/admins.ts';
 import { createSmileInvite, listSmileInvites, revokeSmileInvite, SmileInviteError } from '../_shared/smile-invites.ts';
+import { resilienceStatus } from '../_shared/resilience-status.ts';
 
 interface AdminBody {
   action:
@@ -277,6 +278,7 @@ async function getStats() {
 
   return {
     totalUsers,
+    resilience: await resilienceStatus(),
     newUsers7d,
     jobs7d,
     successRate7d: jobs7d > 0 ? Math.round((jobsDone7d / jobs7d) * 100) : 0,

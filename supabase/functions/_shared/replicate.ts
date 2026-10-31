@@ -1,6 +1,5 @@
-// Image AI — модуль с промтами + тонкая обёртка над роутером моделей (image-providers.ts).
-// Сюда добавляем все промты, оттуда — выбираем провайдер (flux-kontext / nano-banana / polza).
-import { generateImage, type ProviderName } from './image-providers.ts';
+// Build a provider-independent input. Network tasks are persisted by job-images.ts.
+import type { ImageInput } from './image-contracts.ts';
 import { buildDecorPrompt, COMMON_OUTPUT_DECOR } from './decor.ts';
 
 export type StyleId = 'clean' | 'dark' | 'soft';
@@ -118,18 +117,11 @@ export interface ProcessImageInput {
   style: StyleId;
   format: FormatId;
   brandText?: string;
-  forceProvider?: ProviderName;      // 'auto' (default) / 'flux-kontext' / 'nano-banana' / 'polza'
   customPrompt?: string;             // если задан — используется вместо STYLE_PROMPT (см. agent.ts)
   decor?: { surface: string; addition: string }; // если задан — декор-ветка (минуя агента)
 }
 
-export interface ProcessImageOutput {
-  imageUrl: string;
-  durationMs: number;
-  provider: string;
-}
-
-export async function processImage(input: ProcessImageInput): Promise<ProcessImageOutput> {
+export function buildImageInput(input: ProcessImageInput): ImageInput {
   void input.brandText; // больше не идёт в промт — брендирование постпроцессингом
   // Если агент дал свой промт — оборачиваем его нашим железным контекстом:
   // POSITION_LOCK (нельзя менять зуб) + промт агента + COMMON_OUTPUT (нельзя добавлять текст).
@@ -140,8 +132,7 @@ export async function processImage(input: ProcessImageInput): Promise<ProcessIma
       ? `${POSITION_LOCK}\n\n${input.customPrompt}\n\n${COMMON_OUTPUT}`
       : (input.logoUrl ? buildPromptWithLogo(input.style) : buildPrompt(input.style));
 
-  return generateImage(
-    {
+  return {
       photoUrl: input.photoUrl,
       // Логотип В МОДЕЛЬ НЕ ОТДАЁМ, хотя он у нас есть.
       //
@@ -155,7 +146,5 @@ export async function processImage(input: ProcessImageInput): Promise<ProcessIma
       style:    input.style,
       format:   input.format,
       prompt,
-    },
-    input.forceProvider ?? 'auto',
-  );
+    };
 }

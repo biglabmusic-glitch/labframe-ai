@@ -7,6 +7,8 @@
 import { authorize, corsPreflight, jsonResponse } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { allowAction, tooOften } from '../_shared/rate-limit.ts';
+import { requireActiveAccount } from '../_shared/account-access.ts';
+import { BodyError, readJsonBody } from '../_shared/http-body.ts';
 
 // Расширения, которые сохраняем как есть. Всё остальное превращаем в jpg.
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif', 'gif']);
@@ -18,14 +20,16 @@ Deno.serve(async (req) => {
   const auth = await authorize(req);
   if ('response' in auth) return auth.response;
   const tg = auth.user;
+  const denied=await requireActiveAccount(tg.id);
+  if(denied)return denied;
 
   // Каждая подпись — право записать файл в хранилище. Без ограничения один
   // цикл в приложении мог бы забить место, за которое платим мы.
   if (!await allowAction(tg.id, 'sign-upload', { limit: 60, windowSec: 3600 })) return tooOften();
 
   let body: { filename?: string; contentType?: string; kind?: 'photo' | 'logo' };
-  try { body = await req.json(); }
-  catch { return jsonResponse({ error: 'bad_json' }, { status: 400 }); }
+  try { body = await readJsonBody(req); }
+  catch(e) { return jsonResponse({ error: e instanceof BodyError ? e.code:'bad_json' }, { status: e instanceof BodyError ? e.status:400 }); }
 
   const kind = body.kind === 'logo' ? 'logo' : 'photo';
   const bucket = kind === 'logo' ? 'brand' : 'photos';
@@ -34,8 +38,10 @@ Deno.serve(async (req) => {
   // подтипов: iOS шлёт heic/heif, Android — webp, и запрещать их нельзя.
   // Пустой contentType пропускаем — некоторые мобильные WebView не проставляют его,
   // и отказ здесь сломал бы загрузку у части живых юзеров.
+  if((body.contentType!==undefined && typeof body.contentType!=='string') ||
+    (body.filename!==undefined && (typeof body.filename!=='string' || body.filename.length>255)))return jsonResponse({error:'invalid_settings'},{status:400});
   const contentType = body.contentType?.trim() ?? '';
-  if (contentType && !contentType.startsWith('image/')) {
+  if (contentType && !/^image\/(jpeg|jpg|png|webp|heic|heif|avif|gif)$/i.test(contentType)) {
     return jsonResponse({ error: 'unsupported_type' }, { status: 400 });
   }
 

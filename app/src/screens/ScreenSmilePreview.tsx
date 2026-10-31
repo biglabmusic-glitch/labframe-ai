@@ -351,7 +351,7 @@ export function ScreenSmilePreview() {
     setError(''); setPhase('uploading');
     let preparedId: string | null = null;
     try {
-      const prepared = await prepareSmileJob(controller.signal);
+      const prepared = await prepareSmileJob(controller.signal,user.smileProvider??'polza');
       preparedId = prepared.jobId;
       rememberSmileJobId(preparedId); setJobId(preparedId);
       await Promise.all([
@@ -499,7 +499,7 @@ export function ScreenSmilePreview() {
 
             <FormSection step="05" title="Проверка и запуск">
               <div className="smile-summary"><span>Зубы</span><strong>{selected.join(', ') || 'Не выбраны'}</strong><span>Форма</span><strong>{SHAPES.find((option) => option.id === shape)?.label}</strong><span>Зениты</span><strong>{zenithMode === 'preserve' ? 'Сохранить' : 'По точному указанию'}</strong></div>
-              <div className="smile-privacy"><strong>Защита фотографий</strong><p>Исходное фото и результат хранятся в LabFrame зашифрованными. Внешний AI получает только фрагмент улыбки; у него собственные условия хранения. По документации Polza результаты обработки хранятся у сервиса 7 дней.</p><p>Для пилота используйте учебные или собственные тестовые фото с разрешением на обработку. Хранилище LabFrame пока размещено вне РФ. Кнопка удаления удаляет файлы LabFrame.</p></div>
+              <div className="smile-privacy"><strong>Защита фотографий</strong><p>Исходное фото и результат хранятся в LabFrame зашифрованными. Внешний AI получает только фрагмент улыбки; у него собственные условия хранения. {user.smileProvider==='fal'?'Сервис обработки — fal.ai. Для файлов запрашивается удаление через час; у поставщика модели собственные условия обработки.':'Сервис обработки — Polza.ai. По его документации результаты хранятся 7 дней.'}</p><p>Для пилота используйте учебные или собственные тестовые фото с разрешением на обработку. Хранилище LabFrame пока размещено вне РФ. Кнопка удаления удаляет файлы LabFrame.</p></div>
               <label className="smile-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>У меня есть разрешение использовать это фото для примерки и передать фрагмент улыбки внешнему AI с указанными условиями хранения.</span></label>
               <p className="smile-cost-note">В закрытом тесте примерки не списываются с вашего баланса генераций.</p>
               <button type="button" className="smile-primary smile-generate" disabled={!canGenerate} onClick={() => void generate()}>Создать примерку <span aria-hidden="true">↗</span></button>

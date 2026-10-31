@@ -1,10 +1,21 @@
-import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
+import { assertEquals, assertThrows } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
   canonicalJson,
   parsePhpFormBody,
   signPayload,
   verifySignature,
 } from './prodamus.ts';
+
+Deno.test('form parser rejects expansion, deep trees and prototype keys before signing', () => {
+  for (const body of [
+    'products[1000000][name]=x', 'products[4294967294]=x',
+    '__proto__[polluted]=x', 'x[constructor][prototype][polluted]=x',
+    'x[a][b][c][d][e][f][g][h]=x',
+    Array.from({ length: 257 }, (_, i) => `k${i}=v`).join('&'),
+    'x=' + 'x'.repeat(65536),
+  ]) assertThrows(() => parsePhpFormBody(body));
+  assertEquals(Object.hasOwn(Object.prototype, 'polluted'), false);
+});
 
 // Реальное по форме уведомление Продамуса: PHP-скобки, кириллица, плюс как пробел,
 // процентное кодирование в дате.
