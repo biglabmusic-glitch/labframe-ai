@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Screen } from '../components/Screen';
 import { ScreenIntro } from '../components/ScreenIntro';
 import { StepBadge } from '../components/StepBadge';
-import { IconCheck } from '../components/primitives/icons';
+import { IconCheck, IconClose } from '../components/primitives/icons';
 import { useApp } from '../state/AppContext';
 import { useMainButton } from '../telegram/useMainButton';
 import { useBackButton } from '../telegram/useBackButton';
 import { useRouter } from '../router/Router';
 import { api, isBackendReady, friendlyError } from '../api/client';
 import { clearPendingRequest, pendingRequestKey } from '../lib/job-request';
+import { SUPPORT_URL } from '../constants';
 
 const STEPS = [
   'Подготовка',
@@ -16,18 +17,26 @@ const STEPS = [
   'Сохранение и подпись',
 ];
 
+interface ProcessingError {
+  title: string;
+  sub: string;
+  terminal?: boolean;
+  needsUpload?: boolean;
+}
+
 export function ScreenProcessing() {
   const { draft: initialDraft, setDraft, user } = useApp();
   const draft = useRef(initialDraft).current;
-  const { replace } = useRouter();
+  const { replace, reset } = useRouter();
   const [activeIdx, setActiveIdx] = useState(0);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [error, setError] = useState<ProcessingError | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [jobSaved,setJobSaved]=useState(false);
 
   useBackButton(null);
   useMainButton(null);
 
-  // запускаем job один раз
+  // Повтор после сбоя связи использует тот же requestKey и продолжает работу.
   useEffect(() => {
     const controller=new AbortController();
     let mockTimer: ReturnType<typeof setInterval>|undefined;
@@ -43,8 +52,7 @@ export function ScreenProcessing() {
         if (!draft.style)            need.push('стиль');
         if (!draft.format)           need.push('формат');
         if (need.length) {
-          setErrorMsg(`Не хватает: ${need.join(', ')}. Начнём заново.`);
-          delayed=setTimeout(() => replace('upload'), 1200);
+          setError({ title: 'Нужно загрузить фото заново', sub: `Не сохранились данные: ${need.join(', ')}. Выберите фото и настройки ещё раз.`, needsUpload: true });
           return;
         }
       }
@@ -90,11 +98,8 @@ export function ScreenProcessing() {
         },2000,undefined,controller.signal);
         if(controller.signal.aborted)return;
         clearPendingRequest(sessionStorage,user.telegramId ?? 0);
-        setActiveIdx(STEPS.length - 1);
-
-        // Известные коды («не подобрали job», таймаут воркера) переводим в человеческий
-        // текст. Незнакомые friendlyError возвращает как есть — поведение не меняется.
         if (finalJob.status === 'done') {
+          setActiveIdx(STEPS.length - 1);
           setDraft({
             status: 'done',
             // result в state мы не храним, тянем по id из get-job на ScreenResult.
@@ -105,15 +110,16 @@ export function ScreenProcessing() {
           sessionStorage.setItem('labframe.lastJobId', finalJob.id);
           replace('result');
         } else {
-          setErrorMsg(friendlyError(finalJob.error ?? 'Обработка не удалась').sub);
+          setDraft({ status: 'failed' });
+          setError({ ...friendlyError(finalJob.error ?? 'processing_failed'), terminal: true });
         }
       } catch (e) {
         if(controller.signal.aborted)return;
-        setErrorMsg(friendlyError(e instanceof Error ? e.message : 'Ошибка обработки').sub);
+        setError(friendlyError(e instanceof Error ? e.message : 'Ошибка обработки'));
       }
     })();
     return ()=>{controller.abort();clearInterval(mockTimer);clearTimeout(delayed);};
-  }, [draft, replace, setDraft, user.telegramId]);
+  }, [draft, replace, setDraft, user.telegramId, attempt]);
 
   const progress = Math.min(95,Math.round(((activeIdx + 1) / STEPS.length) * 100));
   const dashTotal = 490;
@@ -125,14 +131,29 @@ export function ScreenProcessing() {
         <StepBadge n={8} total={8} />
       </div>
       <ScreenIntro
-        title={errorMsg ? 'Что-то пошло не так' : 'AI обрабатывает фото...'}
+        title={error ? error.title : 'AI обрабатывает фото...'}
         sub={
-          errorMsg
-            ? errorMsg
+          error
+            ? error.sub
             : 'Обычно около минуты. Можно свернуть Telegram — работа продолжится, а готовый результат появится в истории.'
         }
       />
 
+      {error ? <div style={{ padding: '0 22px 24px', display: 'grid', gap: 16 }} role="alert">
+        <div aria-hidden="true" style={{ width: 64, height: 64, border: '1.5px solid var(--c-accent)', borderRadius: 999, display: 'grid', placeItems: 'center', margin: '0 auto 8px' }}>
+          <IconClose size={30} color="var(--c-accent)" />
+        </div>
+        {error.terminal && <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: 'var(--c-on-dark-2)' }}>За эту попытку генерация не списана. Фото и настройки сохранены.</p>}
+        {!error.terminal && !error.needsUpload && jobSaved && <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: 'var(--c-on-dark-2)' }}>Работа сохранена на сервере и может ещё обрабатываться. Повторное подключение проверит ту же работу.</p>}
+        <button type="button" className="main-action-button" onClick={() => {
+          if (error.needsUpload) { replace('upload'); return; }
+          setError(null);
+          setActiveIdx(0);
+          setAttempt((value) => value + 1);
+        }}>{error.needsUpload ? 'Загрузить фото' : error.terminal ? 'Попробовать снова' : 'Повторить подключение'}</button>
+        <button type="button" onClick={() => reset('home')} style={{ minHeight: 48, padding: '12px 16px', border: '1px solid rgba(239,243,255,0.2)', borderRadius: 'var(--r-md)', background: 'transparent', color: 'var(--c-on-dark)', font: 'inherit' }}>На главную</button>
+        <a href={SUPPORT_URL} target="_blank" rel="noreferrer" style={{ minHeight: 44, display: 'grid', placeItems: 'center', color: 'var(--c-accent)', fontSize: 14 }}>Написать в поддержку</a>
+      </div> : <>
       <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 28px' }}>
         <div style={{ position: 'relative', width: 180, height: 180 }}>
           <svg width="180" height="180" viewBox="0 0 180 180" style={{ transform: 'rotate(-90deg)' }}>
@@ -146,12 +167,11 @@ export function ScreenProcessing() {
               {progress}<span style={{ fontSize: 18, opacity: 0.5 }}>%</span>
             </div>
             <div className="mono" style={{ fontSize: 10, color: 'var(--c-on-dark-3)', letterSpacing: 0.8, marginTop: 2 }}>
-              {errorMsg ? 'НЕ УДАЛОСЬ ЗАВЕРШИТЬ' : jobSaved ? 'РАБОТА СОХРАНЕНА' : 'ПОДГОТОВКА'}
+              {jobSaved ? 'РАБОТА СОХРАНЕНА' : 'ПОДГОТОВКА'}
             </div>
           </div>
         </div>
       </div>
-
       <div style={{ padding: '0 22px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {STEPS.map((label, i) => {
           const done = i < activeIdx;
@@ -179,6 +199,7 @@ export function ScreenProcessing() {
           );
         })}
       </div>
+      </>}
     </Screen>
   );
 }

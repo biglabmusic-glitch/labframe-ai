@@ -12,7 +12,7 @@ import type { BrandData, Draft, Job, User } from './types';
 import { WebApp, getStartParam } from '../telegram/webapp';
 import { api, isBackendReady, type SaveBrandInput } from '../api/client';
 import { PRIVACY_VERSION } from '../lib/privacy';
-import { isReturningAccount, startupFailure } from './startup';
+import { isReturningAccount, startupFailure, syncStartup } from './startup';
 
 interface AppState {
   user: User;
@@ -31,7 +31,7 @@ interface AppContextValue extends AppState {
   addToHistory: (j: Job) => void;
   /** Сохранить бренд на сервере + локально. Возвращает Promise чтобы вызывающий мог дождаться. */
   syncBrandToServer: (b: Partial<BrandData> & { removeLogo?: boolean }) => Promise<void>;
-  /** true пока тянем /me и /list-jobs при старте — UI может показать спиннер если нужно. */
+  /** true пока проверяем профиль через /me; история загружается независимо. */
   syncing: boolean;
   /**
    * false, пока /me ни разу не ответил. До этого момента user.credits равен нулю
@@ -225,67 +225,71 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (async () => {
       setSyncing(true);
       try {
-        const [me, jobs] = await Promise.all([
-          api.me(),
-          // A history outage must not hide a successfully redeemed invitation.
-          api.listJobs(24).catch(() => ({ items: [] })),
-        ]);
-        if (cancelled) return;
-        if (!me?.user) throw new Error('Profile unavailable');
-        setStartupError(null);
+        let historyCount = 0;
+        let verifiedProfile: Awaited<ReturnType<typeof api.me>> = null;
+        await syncStartup(api.me, () => api.listJobs(24), (me) => {
+          if (cancelled) return;
+          if (!me?.user) throw new Error('Profile unavailable');
+          verifiedProfile = me;
+          setStartupError(null);
 
-        // Если зашли по реф-ссылке (start_param='ref_<CODE>') — тихо привязываемся.
-        // Бэк сам отсечёт «не новый юзер»/самоприглашение. Награда — позже, при оплате.
-        const sp = getStartParam();
-        if (sp.startsWith('ref_')) {
-          api.applyReferral({ startParam: sp }).catch(() => { /* молча */ });
-        }
-        if (me?.user) {
-          // Согласие с политикой: по нему решается, пускать ли дальше входа.
-          setConsentKnown(true);
-          setBalanceKnown(true);
-          setConsentAt(
-            me.user.consentAt && me.user.consentVersion === PRIVACY_VERSION
-              ? me.user.consentAt
-              : null,
-          );
-          setUserState((p) => ({
-            ...p,
-            telegramId: me.user!.telegramId,
-            username:   me.user!.username   ?? p.username,
-            name:       [me.user!.firstName, me.user!.lastName].filter(Boolean).join(' ') || p.name,
-            initials:   getInitials(me.user!.firstName, me.user!.lastName, me.user!.username),
-            avatarUrl:  me.user!.photoUrl   ?? p.avatarUrl,
-            credits:    me.user!.credits ?? 0,
-            isAdmin:    me.user!.isAdmin ?? false,
-            canSmilePreview: me.user!.canSmilePreview ?? false,
-            smileProvider: me.user!.smileProvider ?? 'polza',
-            smileInviteStatus: me.user!.smileInviteStatus,
-            refCode:        me.user!.refCode ?? p.refCode,
-            referralsCount: me.user!.referralsCount ?? 0,
-            referralsPaid:  me.user!.referralsPaid ?? 0,
-          }));
-          // A dentist coming for the pilot does not need marketing-brand setup.
-          if (sp.startsWith('smile_') && me.user.canSmilePreview) setOnboarded(true);
-          if (isReturningAccount(me, jobs.items.length)) setOnboarded(true);
-        }
-        if (me?.brand) {
-          setBrandState((p) => ({ ...p, ...me.brand! }));
-        }
-        if (jobs?.items) {
-          setHistoryState(jobs.items.map((j) => ({
-            id:          j.id,
-            style:       j.style,
-            format:      j.format,
-            workType:    j.workType,
-            createdAt:   j.createdAt,
-            thumbBg:     'var(--c-card-dd)',
-            dark:        j.style === 'dark',
-            resultUrl:   j.resultUrl,
-            thumbUrl:    j.thumbUrl,
-            captionMain: j.captionMain,
-          })));
-        }
+          // Если зашли по реф-ссылке (start_param='ref_<CODE>') — тихо привязываемся.
+          // Бэк сам отсечёт «не новый юзер»/самоприглашение. Награда — позже, при оплате.
+          const sp = getStartParam();
+          if (sp.startsWith('ref_')) {
+            api.applyReferral({ startParam: sp }).catch(() => { /* молча */ });
+          }
+          if (me?.user) {
+            // Согласие с политикой: по нему решается, пускать ли дальше входа.
+            setConsentKnown(true);
+            setBalanceKnown(true);
+            setConsentAt(
+              me.user.consentAt && me.user.consentVersion === PRIVACY_VERSION
+                ? me.user.consentAt
+                : null,
+            );
+            setUserState((p) => ({
+              ...p,
+              telegramId: me.user!.telegramId,
+              username:   me.user!.username   ?? p.username,
+              name:       [me.user!.firstName, me.user!.lastName].filter(Boolean).join(' ') || p.name,
+              initials:   getInitials(me.user!.firstName, me.user!.lastName, me.user!.username),
+              avatarUrl:  me.user!.photoUrl   ?? p.avatarUrl,
+              credits:    me.user!.credits ?? 0,
+              isAdmin:    me.user!.isAdmin ?? false,
+              canSmilePreview: me.user!.canSmilePreview ?? false,
+              smileProvider: me.user!.smileProvider ?? 'polza',
+              smileInviteStatus: me.user!.smileInviteStatus,
+              refCode:        me.user!.refCode ?? p.refCode,
+              referralsCount: me.user!.referralsCount ?? 0,
+              referralsPaid:  me.user!.referralsPaid ?? 0,
+            }));
+            // A dentist coming for the pilot does not need marketing-brand setup.
+            if (sp.startsWith('smile_') && me.user.canSmilePreview) setOnboarded(true);
+            if (isReturningAccount(me, historyCount)) setOnboarded(true);
+          }
+          if (me?.brand) {
+            setBrandState((p) => ({ ...p, ...me.brand! }));
+          }
+        }, (jobs) => {
+          if (cancelled) return;
+          historyCount = jobs.items.length;
+          if (verifiedProfile && isReturningAccount(verifiedProfile, historyCount)) setOnboarded(true);
+          if (jobs?.items) {
+            setHistoryState(jobs.items.map((j) => ({
+              id:          j.id,
+              style:       j.style,
+              format:      j.format,
+              workType:    j.workType,
+              createdAt:   j.createdAt,
+              thumbBg:     'var(--c-card-dd)',
+              dark:        j.style === 'dark',
+              resultUrl:   j.resultUrl,
+              thumbUrl:    j.thumbUrl,
+              captionMain: j.captionMain,
+            })));
+          }
+        });
       } catch (error) {
         if (!cancelled) setStartupError(startupFailure(error));
       } finally {

@@ -592,9 +592,10 @@ export function isBackendReady(): boolean {
 /**
  * Конвертирует сырое сообщение об ошибке (как формирует request()) в человеческий
  * заголовок + подсказку для UI. Известные коды получают понятный текст,
- * остальное падает в общий fallback с сырым текстом в подсказке (для debug).
+ * Неизвестные ошибки получают безопасную подсказку без внутренних кодов.
  */
 export function friendlyError(raw: string): { title: string; sub: string } {
+  if (raw.includes('processing_failed')) return { title: 'Не удалось обработать фото', sub: 'Во время обработки произошёл сбой. Попробуйте позже или напишите в поддержку.' };
   if(raw.includes('consent_required'))return {title:'Нужно согласие',sub:'Откройте приложение заново и примите условия обработки данных.'};
   if(raw.includes('daily_limit') || raw.includes('provider_daily_limit'))return {title:'Достигнут дневной лимит',sub:'Попробуйте позже. За неудачную обработку генерация возвращается.'};
   if(raw.includes('image_providers_unavailable') || raw.includes('provider_unavailable') || raw.includes('account_'))return {title:'Обработка временно недоступна',sub:'Сервис генерации недоступен. Попробуйте позже; за неудачную работу генерация не списывается.'};
@@ -653,5 +654,5 @@ export function friendlyError(raw: string): { title: string; sub: string } {
       sub:   'Похоже, на секунду пропал интернет или сервер «просыпался». Нажмите «Попробовать снова» — обычно со второго раза проходит.',
     };
   }
-  return { title: 'Не удалось загрузить', sub: raw };
+  return { title: 'Не удалось завершить запрос', sub: 'Попробуйте подключиться снова. Если ошибка повторяется, напишите в поддержку.' };
 }
