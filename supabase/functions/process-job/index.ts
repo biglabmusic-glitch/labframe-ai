@@ -81,6 +81,7 @@ Deno.serve(async (req) => {
     const thumbs = preferred ? 0 : await backfillThumbs(4).catch(() => 0);
     return jsonResponse({ ok: true, picked: 0, thumbs });
   }
+  let stage = 'prepare';
   try {
     let resultPath = job.result_path;
     let model: string = job.model_used ?? '';
@@ -163,6 +164,7 @@ Deno.serve(async (req) => {
         }).prompt;
         await checkpoint(job, { prompt_used: prompt, agent_notes: agentNotes });
       }
+      stage = 'generate_image';
       const image = await advanceJobImage(job.id, job.worker_token, {
         photoUrl,
         style: job.style,
@@ -174,6 +176,7 @@ Deno.serve(async (req) => {
         return jsonResponse({ ok: true, jobId: job.id, status: 'processing' });
       }
       model = image.provider;
+      stage = 'download_image';
       const base = await fetchBytes(image.imageUrl);
       let final = base;
       if (logoUrl) {
@@ -188,6 +191,7 @@ Deno.serve(async (req) => {
         }
       }
       resultPath = `${job.user_id}/${job.id}.jpg`;
+      stage = 'save_image';
       await uploadBytes(
         'results',
         resultPath,
@@ -199,6 +203,7 @@ Deno.serve(async (req) => {
       await saveThumb(job.id, resultPath, final);
       await logAi(job.id, 'image-ai', model, image.durationMs, true);
     }
+    stage = 'generate_caption';
     const { data: brand, error: brandError } = await db.from('brand').select('master_name,hashtags')
       .eq('user_id', job.user_id).maybeSingle();
     if (brandError) throw new TemporaryStorageError();
@@ -222,6 +227,7 @@ Deno.serve(async (req) => {
         text.fallbackReason,
       );
     }
+    stage = 'complete';
     await checkpoint(job, {
       status: 'done',
       result_path: resultPath,
@@ -263,6 +269,13 @@ Deno.serve(async (req) => {
         'provider_health_unavailable',
       ].includes(code) || /^(signUrl|uploadBytes|fetchBytes)/.test(code)
     ) {
+      console.error('job stage deferred', {
+        jobId: job.id,
+        stage,
+        code: /^fetchBytes [a-z_0-9]+$/.test(code)
+          ? code.replace('fetchBytes ', 'download_')
+          : 'storage_unavailable',
+      });
       await defer(job).catch(() => {});
       return jsonResponse({ error: 'processing_unavailable', jobId: job.id }, { status: 503 });
     }
@@ -272,6 +285,7 @@ Deno.serve(async (req) => {
         )
         ? code
         : 'processing_failed';
+    console.error('job stage failed', { jobId: job.id, stage, code: safe });
     try {
       await checkpoint(job, {
         status: 'failed',
