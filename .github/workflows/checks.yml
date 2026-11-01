@@ -52,7 +52,7 @@ jobs:
         working-directory: app
       - run: node scripts/check-secrets.mjs
       - name: Telegram identity and startup regressions
-        run: deno test --allow-net=deno.land:443 scripts/test-telegram-sdk.ts scripts/test-startup.ts scripts/test-main-action.ts
+        run: deno test --allow-net=deno.land:443 scripts/test-telegram-sdk.ts scripts/test-startup.ts scripts/test-main-action.ts scripts/test-admin-cache.ts
       - name: Server, encryption and mask tests
         run: deno test --allow-env --allow-read --allow-net=deno.land:443 --unstable-sloppy-imports supabase/functions scripts/test-smile-mask-region.ts scripts/test-mask-tools.ts scripts/test-job-request.ts
       - name: Atomic job and permissions tests

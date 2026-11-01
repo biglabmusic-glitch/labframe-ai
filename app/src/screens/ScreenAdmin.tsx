@@ -7,6 +7,7 @@ import { useMainButton } from '../telegram/useMainButton';
 import { useRouter } from '../router/Router';
 import { api, type AdminGrant, type AdminPayment, type AdminSmileInvite, type AdminStats, type AdminUser, type CreatedSmileInvite } from '../api/client';
 import { WebApp } from '../telegram/webapp';
+import { createAdminRequestCache, type AdminRequestCache } from '../lib/admin-request-cache';
 
 type Tab = 'dashboard' | 'money' | 'users' | 'smile';
 const ADMIN_TABS: Array<{ id: Tab; label: string }> = [
@@ -17,6 +18,7 @@ const ADMIN_TABS: Array<{ id: Tab; label: string }> = [
 export function ScreenAdmin() {
   const { back } = useRouter();
   const [tab, setTab] = useState<Tab>('dashboard');
+  const [statsCache] = useState(() => createAdminRequestCache(api.adminStats));
   useBackButton(back);
   useMainButton(null);
 
@@ -52,7 +54,7 @@ export function ScreenAdmin() {
       </div>
 
       <div id="admin-tab-panel" role="tabpanel" aria-labelledby={`admin-tab-${tab}`} tabIndex={0}>
-        {tab === 'smile' ? <SmileInvitesTab /> : tab === 'dashboard' ? <DashboardTab /> : tab === 'money' ? <MoneyTab /> : <UsersTab />}
+        {tab === 'smile' ? <SmileInvitesTab /> : tab === 'dashboard' ? <DashboardTab statsCache={statsCache} /> : tab === 'money' ? <MoneyTab statsCache={statsCache} /> : <UsersTab />}
       </div>
     </Screen>
   );
@@ -257,27 +259,46 @@ function SmileInvitesTab() {
 // ─── Деньги ────────────────────────────────────────────────────────────────
 // История покупок и выручка. Нужна, чтобы разбирать споры «я платил, ничего
 // не пришло» и видеть, какой пакет реально берут.
-function MoneyTab() {
-  const [stats, setStats] = useState<AdminStats | null>(null);
+function MoneyTab({ statsCache }: { statsCache: AdminRequestCache<AdminStats> }) {
+  const [stats, setStats] = useState<AdminStats | null>(() => statsCache.peek());
   const [items, setItems] = useState<AdminPayment[]>([]);
   const [err, setErr] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!stats);
+  const [paymentsLoading, setPaymentsLoading] = useState(true);
+  const [paymentsError, setPaymentsError] = useState('');
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [balanceError, setBalanceError] = useState('');
+  const mounted = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.adminStats(), api.adminPayments(100)])
-      .then(([s, p]) => {
-        if (cancelled) return;
-        setStats(s);
-        setItems(p.payments);
-      })
+    mounted.current = true;
+    statsCache.load()
+      .then((s) => { if (!cancelled) setStats(s); })
       .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
+    api.adminPayments(100)
+      .then((p) => { if (!cancelled) setItems(p.payments); })
+      .catch(() => { if (!cancelled) setPaymentsError('Не удалось загрузить историю покупок. Откройте вкладку повторно.'); })
+      .finally(() => { if (!cancelled) setPaymentsLoading(false); });
+    return () => { cancelled = true; mounted.current = false; };
+  }, [statsCache]);
 
-  if (loading) return <Hint text="Загружаем платежи..." />;
-  if (err) return <Hint text={err} error />;
+  async function refreshBalance() {
+    setBalanceLoading(true); setBalanceError('');
+    try {
+      await api.adminRefreshProviderBalance();
+      const fresh = await statsCache.load(true);
+      if (mounted.current) setStats(fresh);
+    } catch {
+      if (mounted.current) setBalanceError('Не удалось обновить остаток Polza. Показан предыдущий замер.');
+    } finally {
+      if (mounted.current) setBalanceLoading(false);
+    }
+  }
+
+  if (loading && !stats) return <Hint text="Загружаем статистику..." />;
+  if (err && !stats) return <Hint text={err} error />;
   if (!stats) return null;
 
   return (
@@ -310,6 +331,14 @@ function MoneyTab() {
         </div>
       </Card>
       <SectionTitle>Расходы на модели</SectionTitle>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <button type="button" disabled={balanceLoading} onClick={() => void refreshBalance()}
+          style={{ ...INVITE_BUTTON, opacity: balanceLoading ? 0.6 : 1 }}>
+          {balanceLoading ? 'Обновляем остаток…' : 'Обновить остаток Polza'}
+        </button>
+        <span style={{ fontSize: 11, color: 'var(--c-on-dark-3)' }}>Показан последний сохранённый замер. Дата указана под остатком.</span>
+        {balanceError && <span role="alert" style={{ fontSize: 12, color: '#F4B19A' }}>{balanceError}</span>}
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <Kpi
           label="ОСТАТОК POLZA"
@@ -404,8 +433,9 @@ function MoneyTab() {
       </div>
 
       <SectionTitle>История покупок</SectionTitle>
+      {paymentsError && <Hint text={paymentsError} error />}
       <Card kind="dark" pad={12} radius={16}>
-        {items.length === 0 ? (
+        {paymentsLoading ? <div role="status" style={{ fontSize: 12 }}>Загружаем платежи…</div> : items.length === 0 && !paymentsError ? (
           <div style={{ fontSize: 12, color: 'var(--c-on-dark-3)' }}>Покупок пока не было</div>
         ) : (
           items.map((p, i) => (
@@ -441,27 +471,29 @@ function MoneyTab() {
 }
 
 // ─── Dashboard ─────────────────────────────────────────────────────────────
-function DashboardTab() {
-  const [stats, setStats] = useState<AdminStats | null>(null);
+function DashboardTab({ statsCache }: { statsCache: AdminRequestCache<AdminStats> }) {
+  const [stats, setStats] = useState<AdminStats | null>(() => statsCache.peek());
   const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!stats);
+  const mounted = useRef(false);
 
-  const reload = async () => {
+  const reload = useCallback(async (force = false) => {
     setLoading(true);
     setErr(null);
-    try { setStats(await api.adminStats()); }
-    catch (e) { setErr(e instanceof Error ? e.message : 'error'); }
-    finally { setLoading(false); }
-  };
+    try { const fresh = await statsCache.load(force); if (mounted.current) setStats(fresh); }
+    catch (e) { if (mounted.current) setErr(e instanceof Error ? e.message : 'error'); }
+    finally { if (mounted.current) setLoading(false); }
+  }, [statsCache]);
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { mounted.current = true; void reload(); return () => { mounted.current = false; }; }, [reload]);
 
   if (loading && !stats) return <Hint text="Загружаем статистику..." />;
-  if (err) return <Hint text={err} error />;
+  if (err && !stats) return <Hint text={err} error />;
   if (!stats) return null;
 
   return (
     <div style={{ padding: '0 16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {err && <Hint text={err} error />}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <Kpi label="ВСЕГО ЮЗЕРОВ" value={stats.totalUsers} sub={`+${stats.newUsers7d} за неделю`} />
         <Kpi label="JOBS 7Д" value={stats.jobs7d} sub={`${stats.successRate7d}% успешных`} />
@@ -559,7 +591,7 @@ function DashboardTab() {
 
       <button
         type="button"
-        onClick={reload}
+        onClick={() => void reload(true)}
         disabled={loading}
         style={{
           padding: '10px 14px',

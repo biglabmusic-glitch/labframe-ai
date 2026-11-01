@@ -17,6 +17,7 @@ import { resilienceStatus } from '../_shared/resilience-status.ts';
 interface AdminBody {
   action:
     | 'stats'
+    | 'refresh-provider-balance'
     | 'users'
     | 'grant-credits'
     | 'send-message'
@@ -72,7 +73,17 @@ Deno.serve(async (req) => {
   catch { return jsonResponse({ error: 'bad_json' }, { status: 400 }); }
 
   switch (body.action) {
-    case 'stats':         return jsonResponse(await getStats());
+    case 'stats': {
+      const started = performance.now();
+      const stats = await getStats();
+      const duration = Math.round(performance.now() - started);
+      console.info('admin_stats_ms', duration);
+      return jsonResponse(stats, { headers: { 'Server-Timing': `stats;dur=${duration}` } });
+    }
+    case 'refresh-provider-balance': {
+      const snapshot = await snapshotProviderBalance().catch(() => ({ error: 'balance_unavailable' }));
+      return jsonResponse(snapshot.error ? { error: snapshot.error } : { ok: true }, { status: snapshot.error ? 503 : 200 });
+    }
     case 'users':         return jsonResponse(await listUsers(body.search ?? '', body.limit ?? 50, body.offset ?? 0));
     case 'grant-credits': return handleGrantCredits(body, tg.id);
     case 'grants':        return listGrants(body);
@@ -135,6 +146,15 @@ async function getStats() {
     allPayments,
     topUsers,
     byDay,
+    doneTotal,
+    zeroCredits,
+    referredCount,
+    referralPaidCount,
+    jobUserIds,
+    fin7,
+    fin30,
+    resilience,
+    funnel,
   ] = await Promise.all([
     countWhere('users', () => db.from('users').select('id', { count: 'exact', head: true })),
     countWhere('users', () => db.from('users').select('id', { count: 'exact', head: true }).gte('created_at', sinceISO(7))),
@@ -184,14 +204,32 @@ async function getStats() {
       .select('created_at, status')
       .gte('created_at', sinceISO(14))
       .then((r) => bucketByDay(r.data ?? [])),
+    countWhere('jobs', () => db.from('jobs').select('id', { count: 'exact', head: true }).eq('status', 'done')),
+    countWhere('users', () => db.from('users').select('id', { count: 'exact', head: true }).eq('credits', 0)),
+    countWhere('users', () => db.from('users').select('id', { count: 'exact', head: true }).not('referred_by', 'is', null)),
+    countWhere('referrals', () => db.from('referrals').select('id', { count: 'exact', head: true }).eq('status', 'paid')),
+    allRows<{ id: string; user_id: number }>((from, to) =>
+      db.from('jobs').select('id, user_id').order('id').range(from, to))
+      .then((rows) => new Set((rows ?? []).map((row) => row.user_id))),
+    providerFinance(7),
+    providerFinance(30),
+    resilienceStatus(),
+    funnelStats(),
   ]);
 
   // Имена к упавшим работам: по голому id человека не узнать, а без username
   // на странице не зайти к нему в профиль.
   const failedIds = [...new Set(recentFailures.map((f) => f.user_id))];
-  const { data: failedUsers } = failedIds.length
-    ? await db.from('users').select('id, username, first_name').in('id', failedIds)
-    : { data: [] as Array<{ id: number; username: string | null; first_name: string | null }> };
+  const payerIds = [...new Set(allPayments.map((payment) => payment.user_id))];
+  const [{ data: failedUsers }, freeDone] = await Promise.all([
+    failedIds.length
+      ? db.from('users').select('id, username, first_name').in('id', failedIds)
+      : Promise.resolve({ data: [] as Array<{ id: number; username: string | null; first_name: string | null }> }),
+    payerIds.length > 0
+      ? countWhere('jobs', () => db.from('jobs').select('id', { count: 'exact', head: true })
+        .eq('status', 'done').not('user_id', 'in', `(${payerIds.join(',')})`))
+      : Promise.resolve(doneTotal),
+  ]);
   const failedById = new Map((failedUsers ?? []).map((u) => [u.id, u]));
   const failuresWithNames = recentFailures.map((f) => ({
     ...f,
@@ -230,55 +268,21 @@ async function getStats() {
 
   // Сколько работ довели до результата — по ним и делим расход, чтобы получить
   // себестоимость одной генерации.
-  const [doneTotal, payerIds] = await Promise.all([
-    countWhere('jobs', () => db.from('jobs').select('id', { count: 'exact', head: true }).eq('status', 'done')),
-    db.from('payments').select('user_id').then((r) => [...new Set((r.data ?? []).map((x) => x.user_id))]),
-  ]);
-
-  // Работы тех, кто НИ РАЗУ не платил. Их расход — прямой убыток, ради этой
-  // цифры и урезался бесплатный старт.
-  const freeDone = payerIds.length > 0
-    ? await countWhere('jobs', () => db.from('jobs')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'done')
-        .not('user_id', 'in', `(${payerIds.join(',')})`))
-    : doneTotal;
 
   // ─── Воронка ────────────────────────────────────────────────────────────
   //
   // Один счётчик «всего пользователей» ничего не объясняет: важно, где именно
   // люди останавливаются. Шаги: зарегистрировался → сделал первую работу →
   // израсходовал баланс → заплатил.
-  const [zeroCredits, referredCount, referralPaidCount, jobUserIds] = await Promise.all([
-    countWhere('users', () => db.from('users')
-      .select('id', { count: 'exact', head: true }).eq('credits', 0)),
-    countWhere('users', () => db.from('users')
-      .select('id', { count: 'exact', head: true }).not('referred_by', 'is', null)),
-    countWhere('referrals', () => db.from('referrals')
-      .select('id', { count: 'exact', head: true }).eq('status', 'paid')),
-    // Кто хоть раз доходил до генерации. Тянем идентификаторы целиком:
-    // отдельного «посчитай уникальных» в этом API нет, а работ пока тысячи.
-    db.from('jobs').select('user_id').then((r) => new Set((r.data ?? []).map((x) => x.user_id))),
-  ]);
-
   const activated = jobUserIds.size;
   const payers = payerIds.length;
 
-  // Освежаем остаток именно сейчас: между работами он не меняется, но если
-  // генераций давно не было, последний замер может быть недельной давности —
-  // а смотрят сюда как раз чтобы не прозевать ноль.
-  // Цифру берём из живого ответа провайдера, а не из последней строки истории:
-  // если запись в базу почему-то не проходит, на экране должен быть остаток на
-  // сейчас, а не позавчерашний замер.
-  const snapshot = await snapshotProviderBalance()
-    .catch((e) => ({ error: String(e), live: null }));
-  const providerError = snapshot.error;
-  const [fin7, fin30] = await Promise.all([providerFinance(7), providerFinance(30)]);
-  const live = snapshot.live;
+  // Opening the dashboard only reads saved measurements. A slow provider must
+  // not block the admin; the Money tab has an explicit live-balance refresh.
 
   return {
     totalUsers,
-    resilience: await resilienceStatus(),
+    resilience,
     newUsers7d,
     jobs7d,
     successRate7d: jobs7d > 0 ? Math.round((jobsDone7d / jobs7d) * 100) : 0,
@@ -302,18 +306,18 @@ async function getStats() {
 
     // Экономика по провайдеру моделей. Расход и пополнения выведены из истории
     // замеров остатка: провайдер отдаёт только «сколько сейчас».
-    providerBalance:  live?.balance ?? fin30.balance,
-    providerCurrency: live?.currency ?? fin30.currency,
+    providerBalance:  fin30.balance,
+    providerCurrency: fin30.currency,
     // Вся сумма на счёте и зарезервированное — чтобы понимать, почему остаток
     // расходится с личным кабинетом провайдера, и когда его сняли.
-    providerTotal:    live?.total ?? fin30.total,
-    providerReserved: live?.reserved ?? fin30.reserved,
-    providerMeasuredAt: live?.at ?? fin30.measuredAt,
+    providerTotal:    fin30.total,
+    providerReserved: fin30.reserved,
+    providerMeasuredAt: fin30.measuredAt,
     providerSpent7d:  fin7.spent,
     providerSpent30d: fin30.spent,
     providerToppedUp30d: fin30.toppedUp,
     // Потрачено за всё время — приходит от провайдера, замеры не нужны.
-    providerSpentTotal: live?.spentTotal ?? fin30.spentTotal,
+    providerSpentTotal: fin30.spentTotal,
     // Маржа за 30 дней. Пока замеров меньше двух, расход неизвестен, и
     // разность выродилась бы в саму выручку — цифра выглядела бы правдой,
     // не будучи ею. В таком случае честнее не показывать ничего.
@@ -355,9 +359,9 @@ async function getStats() {
     financePoints: fin30.points,
     // Почему остаток не удалось снять. Видно прямо на экране: искать это
     // в логах функции ровно тогда, когда кончаются деньги, — плохая идея.
-    providerError,
+    providerError: null,
 
-    funnel: await funnelStats(),
+    funnel,
   };
 }
 

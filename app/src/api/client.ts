@@ -412,6 +412,12 @@ export const api = {
       body: JSON.stringify({ action: 'stats' }),
     });
   },
+  async adminRefreshProviderBalance(): Promise<{ ok: true }> {
+    return request<{ ok: true }>('/admin', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'refresh-provider-balance' }),
+    });
+  },
   /** Зафиксировать согласие с политикой обработки персональных данных. */
   async giveConsent(version: number): Promise<{ consentAt: string }> {
     return request<{ consentAt: string }>('/consent', {
