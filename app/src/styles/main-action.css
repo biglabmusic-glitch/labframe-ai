@@ -1,0 +1,20 @@
+.main-action-bar {
+  position: fixed; z-index: 1000; right: 0; bottom: 0; left: 0;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(transparent, var(--c-bg) 18%);
+}
+.main-action-button {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; min-height: 56px; padding: 15px 18px; border: 0;
+  border-radius: var(--r-md); background: var(--c-accent); color: var(--c-ink);
+  font: inherit; font-size: 15px; font-weight: 600; line-height: 1.35;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18); touch-action: manipulation;
+}
+.main-action-button:disabled { opacity: .48; cursor: default; }
+.main-action-button:focus-visible { outline: 2px solid var(--c-card-w); outline-offset: 3px; }
+.main-action-spinner {
+  width: 16px; height: 16px; border: 2px solid currentColor;
+  border-right-color: transparent; border-radius: 50%; animation: main-action-spin .8s linear infinite;
+}
+@keyframes main-action-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .main-action-spinner { animation: none; } }
