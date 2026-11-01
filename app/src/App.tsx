@@ -3,6 +3,8 @@ import { AppProvider, useApp } from './state/AppContext';
 import { RouterProvider, useRouter, type RouteId } from './router/Router';
 import { getStartParam, initTelegramWebApp } from './telegram/webapp';
 import { Splash } from './components/Splash';
+import { StartupNotice } from './components/StartupNotice';
+import { isBackendReady } from './api/client';
 
 import { ScreenWelcome } from './screens/ScreenWelcome';
 import { ScreenOnboardingBrand } from './screens/ScreenOnboardingBrand';
@@ -79,10 +81,15 @@ function Root() {
  * Пустоты на экране при этом нет — сверху ещё висит сплэш.
  */
 function AppRouter() {
-  const { user, onboarded, consentAt, consentKnown, balanceLoaded, balanceKnown, syncing } = useApp();
+  const { user, onboarded, consentAt, consentKnown, balanceLoaded, balanceKnown, syncing, startupError, retryStartup } = useApp();
   const [inviteDismissed, setInviteDismissed] = useState(false);
   const inviteLaunch = !inviteDismissed && getStartParam().startsWith('smile_');
   if (!balanceLoaded) return null;
+  // RouterProvider captures its initial route once. Do not mount it until the
+  // signed profile is known, including after a timeout or authentication failure.
+  if (isBackendReady() && !balanceKnown) {
+    return <StartupNotice error={startupError} retry={retryStartup} />;
+  }
 
   // Do not mount the router with a wrong initial route while invite redemption
   // is still running after the ordinary app's six-second loading failsafe.

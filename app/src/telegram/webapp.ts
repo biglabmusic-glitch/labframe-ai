@@ -1,5 +1,10 @@
-import WebApp from '@twa-dev/sdk';
+import TelegramSdk from '@twa-dev/sdk';
 import { TG_THEME } from '../constants';
+import { resolveTelegramSdk } from './sdk-interop';
+
+// Vite 8 uses Node CommonJS interop in production: the SDK's default export
+// can itself be a { default: WebApp } module. Never read identity off that wrapper.
+const WebApp = resolveTelegramSdk<typeof TelegramSdk>(TelegramSdk);
 
 let initialised = false;
 

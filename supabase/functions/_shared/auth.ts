@@ -1,4 +1,4 @@
-import { validate as refValidate } from 'npm:@telegram-apps/init-data-node@2.0.5';
+import { validate as refValidate } from 'npm:@telegram-apps/init-data-node@2.0.5/web';
 import { env } from './env.ts';
 
 export interface TgUser {
@@ -34,7 +34,9 @@ export async function verifyInitData(initData: string): Promise<TgUser> {
   // One standard validator. Diagnostic HMAC calculations must never authorize.
   try {
     await refValidate(initData, env.BOT_TOKEN.trim(), { expiresIn: 86400 });
-  } catch {
+  } catch (error) {
+    // Runtime diagnostics only: never log initData, hashes, identity or tokens.
+    console.warn('telegram_auth_validator_failed', error instanceof Error ? error.name : 'unknown');
     throw new AuthError('bad_signature');
   }
   try {
@@ -51,6 +53,7 @@ export async function authorize(req: Request): Promise<{ user: TgUser } | { resp
     return { user: await verifyInitData(req.headers.get('x-telegram-initdata') ?? '') };
   } catch (error) {
     const code = error instanceof AuthError ? error.code : 'bad_signature';
+    console.warn('telegram_auth_rejected', code);
     return { response: jsonResponse({ error: 'unauthorized', code }, { status: 401 }) };
   }
 }

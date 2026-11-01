@@ -43,7 +43,7 @@ function askToMessage() {
  */
 export function ScreenConsent() {
   const { reset, push } = useRouter();
-  const { giveConsent, user } = useApp();
+  const { giveConsent, user, onboarded } = useApp();
   const [pd, setPd] = useState(false);
   const [crossBorder, setCrossBorder] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -66,7 +66,7 @@ export function ScreenConsent() {
             return;
           }
           askToMessage();
-          reset('welcome');
+          reset(onboarded ? 'home' : 'welcome');
         })
         .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
         .finally(() => setBusy(false));

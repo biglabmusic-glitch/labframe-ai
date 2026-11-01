@@ -4,11 +4,12 @@ for (const name of ['SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'BOT_TOKEN
 }
 Deno.env.set('SUPABASE_URL', 'http://localhost');
 const { verifyInitData, AuthError } = await import('./auth.ts');
-async function signed(userId = 101, age = 0, reversed = false) {
+async function signed(userId = 101, age = 0, reversed = false, withSignature = false) {
   const pairs = [['auth_date', String(Math.floor(Date.now() / 1000) - age)], [
     'user',
     JSON.stringify({ id: userId, first_name: 'Test' }),
   ]];
+  if (withSignature) pairs.push(['signature', 'telegram-ed25519-fixture'], ['start_param', 'smile_fixture'], ['query_id', 'fixture']);
   const enc = new TextEncoder();
   const first = await crypto.subtle.importKey(
     'raw',
@@ -39,6 +40,7 @@ async function signed(userId = 101, age = 0, reversed = false) {
 }
 Deno.test('only the standard Telegram HMAC authenticates', async () => {
   assertEquals((await verifyInitData(await signed())).id, 101);
+  assertEquals((await verifyInitData(await signed(101, 0, false, true))).id, 101);
   await assertRejects(
     async () => verifyInitData(await signed(101, 0, true)),
     AuthError,

@@ -12,6 +12,7 @@ import type { BrandData, Draft, Job, User } from './types';
 import { WebApp, getStartParam } from '../telegram/webapp';
 import { api, isBackendReady, type SaveBrandInput } from '../api/client';
 import { PRIVACY_VERSION } from '../lib/privacy';
+import { isReturningAccount, startupFailure } from './startup';
 
 interface AppState {
   user: User;
@@ -44,6 +45,8 @@ interface AppContextValue extends AppState {
    * с полным счётом увидит «генерации закончились».
    */
   balanceKnown: boolean;
+  startupError: 'session' | 'connection' | null;
+  retryStartup: () => void;
   /** Когда принята политика обработки данных. null — не принимал, пускать нельзя. */
   consentAt: string | null;
   /**
@@ -168,6 +171,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [balanceKnown, setBalanceKnown] = useState<boolean>(false);
   const [consentAt, setConsentAt] = useState<string | null>(null);
   const [consentKnown, setConsentKnown] = useState<boolean>(false);
+  const [startupError, setStartupError] = useState<'session' | 'connection' | null>(null);
+  const [startupAttempt, setStartupAttempt] = useState(0);
+  const retryStartup = useCallback(() => setStartupAttempt((attempt) => attempt + 1), []);
   const lastHistoryRefresh=useRef(0);
   useEffect(()=>{
     if(!isBackendReady())return;
@@ -209,15 +215,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!isBackendReady()) { setBalanceLoaded(true); return; }
     let cancelled = false;
 
-    // Страховка на случай молчащего сервера.
-    //
-    // Роутер не монтируется, пока не загружен баланс, и зависший запрос
-    // оставлял после сплэша пустой экран — со стороны это выглядело как
-    // «приложение не грузится». Через несколько секунд пускаем внутрь в любом
-    // случае. Согласие при этом остаётся неизвестным, поэтому экраном согласия
-    // никого не запираем, а ответ, если всё же придёт, обновит баланс и ленту.
+    setStartupError(null);
+    // After six seconds show an honest retry screen, never a new-account route.
+    // A late successful response still restores the profile before router mount.
     const failsafe = setTimeout(() => {
-      if (!cancelled) setBalanceLoaded(true);
+      if (!cancelled) { setStartupError('connection'); setBalanceLoaded(true); }
     }, 6000);
 
     (async () => {
@@ -229,6 +231,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           api.listJobs(24).catch(() => ({ items: [] })),
         ]);
         if (cancelled) return;
+        if (!me?.user) throw new Error('Profile unavailable');
+        setStartupError(null);
 
         // Если зашли по реф-ссылке (start_param='ref_<CODE>') — тихо привязываемся.
         // Бэк сам отсечёт «не новый юзер»/самоприглашение. Награда — позже, при оплате.
@@ -263,6 +267,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }));
           // A dentist coming for the pilot does not need marketing-brand setup.
           if (sp.startsWith('smile_') && me.user.canSmilePreview) setOnboarded(true);
+          if (isReturningAccount(me, jobs.items.length)) setOnboarded(true);
         }
         if (me?.brand) {
           setBrandState((p) => ({ ...p, ...me.brand! }));
@@ -281,9 +286,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             captionMain: j.captionMain,
           })));
         }
-      } catch {
-        // молча — на iPhone мог быть кратковременный сетевой сбой,
-        // в следующий раз подтянется. Локальный кэш остаётся.
+      } catch (error) {
+        if (!cancelled) setStartupError(startupFailure(error));
       } finally {
         clearTimeout(failsafe);
         if (!cancelled) {
@@ -295,7 +299,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     })();
     return () => { cancelled = true; clearTimeout(failsafe); };
-  }, []);
+  }, [startupAttempt]);
 
   // Сохраняем то, что должно жить между сессиями
   useEffect(() => {
@@ -343,8 +347,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AppContextValue>(
-    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, balanceKnown, consentAt, consentKnown, giveConsent }),
-    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, balanceKnown, consentAt, consentKnown, giveConsent],
+    () => ({ user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, balanceKnown, startupError, retryStartup, consentAt, consentKnown, giveConsent }),
+    [user, brand, draft, history, onboarded, setUser, setBrand, setDraft, resetDraft, completeOnboarding, addToHistory, syncBrandToServer, syncing, balanceLoaded, balanceKnown, startupError, retryStartup, consentAt, consentKnown, giveConsent],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
