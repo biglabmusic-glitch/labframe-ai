@@ -1,23 +1,30 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Screen } from '../components/Screen';
-import { ScreenIntro } from '../components/ScreenIntro';
-import { SmileMaskEditor, type SmileSegmentPoint } from '../components/SmileMaskEditor';
-import type { SmileMaskSession } from '../lib/auto-smile-mask';
+import type { PreparedSmileCrop } from '../lib/smile-crop';
+import {
+  deleteSmileLocalSource, isSmileCropJob, loadSmileLocalSource,
+  markSmileCropJob, saveSmileLocalSource,
+} from '../lib/smile-local-source';
 import { useApp } from '../state/AppContext';
 import { useRouter } from '../router/Router';
 import { useBackButton } from '../telegram/useBackButton';
 import { useMainButton } from '../telegram/useMainButton';
 import {
-  UPPER_TEETH, SMILE_SHADES, deleteSmileJob, downloadSmilePng, generateSmilePreview, getSmileJobStatus, loadSmileResult,
+  UPPER_TEETH, SMILE_SHADES, deleteSmileJob, downloadSmilePng, generateSmilePreview, getSmileJobStatus, loadSmileResultBlob,
   isSmilePreviewReady, normalizeSmilePhoto, prepareSmileJob, readSmileJobId,
   rememberSmileJobId, smileErrorMessage, SmilePreviewError, uploadSmilePng,
-  type NormalizedSmilePhoto, type SmileSettings, type SmileShade, type SmileShape,
+  type NormalizedSmilePhoto, type SmileSettings, type SmileShade, type SmileShape, type SmileRehabilitationMode,
 } from '../lib/smile-preview';
 import '../styles/smile-preview.css';
 
 type Photo = NormalizedSmilePhoto & { url: string };
 type Phase = 'editing' | 'uploading' | 'processing' | 'pending' | 'prepared' | 'done' | 'failed';
+type LocalSource = { jobId: string; photo: NormalizedSmilePhoto; crop: PreparedSmileCrop };
 const POLL_LIMIT_MS = 12 * 60_000;
+const MODES: Array<{ id: SmileRehabilitationMode; label: string; description: string }> = [
+  { id: 'total', label: 'Тотальная реабилитация', description: 'Все видимые зубы сверху и снизу' },
+  { id: 'front', label: 'Фронтальная реабилитация', description: 'От клыка до клыка на обеих челюстях' },
+];
 const SHAPES: Array<{ id: SmileShape; label: string }> = [
   { id: 'original', label: 'Исходная' }, { id: 'square', label: 'Квадратная' },
   { id: 'triangular', label: 'Треугольная' }, { id: 'rounded', label: 'Округлая' },
@@ -45,6 +52,16 @@ function ShapeGlyph({ shape }: { shape: SmileShape }) {
   return <svg viewBox="0 0 46 46" width="44" height="44" aria-hidden="true"><path d={paths[shape]} fill="currentColor" /><path d="M16 14Q20 10 26 11" fill="none" stroke="var(--c-bg)" strokeOpacity=".12" strokeWidth="2" strokeLinecap="round" /></svg>;
 }
 
+function cropErrorMessage(error: unknown): string {
+  const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+  if (code === 'multiple_faces') return 'На фото несколько лиц. Выберите отдельный портрет человека с открытой улыбкой.';
+  if (code === 'no_face') return 'Не удалось найти улыбку. Выберите фронтальный портрет: лицо целиком, рот открыт, зубы хорошо видны.';
+  if (code === 'mouth_closed') return 'Зубы почти не видны. Выберите фото с открытой улыбкой.';
+  if (code === 'mouth_too_small') return 'Улыбка слишком мелкая. Выберите более крупное и чёткое фото.';
+  if (code === 'output_dimensions') return 'Размер ответа не совпал с фрагментом улыбки. Вклейка остановлена; исходное фото сохранено.';
+  return 'Не удалось подготовить фрагмент улыбки на этом устройстве. Повторите определение области или выберите другое фото.';
+}
+
 export function ScreenSmilePreview() {
   const { user, balanceLoaded } = useApp();
   const { history, back, reset } = useRouter();
@@ -54,30 +71,24 @@ export function ScreenSmilePreview() {
 
   const [photo, setPhoto] = useState<Photo | null>(null);
   const [normalizing, setNormalizing] = useState(false);
-  const [teeth, setTeeth] = useState<number[]>([...UPPER_TEETH]);
-  const [shades, setShades] = useState<Record<string, string>>(() => Object.fromEntries(UPPER_TEETH.map((id) => [id, 'BL1'])));
-  const [activeTooth, setActiveTooth] = useState(11);
-  const [rangeMode, setRangeMode] = useState(false);
-  const [rangeAnchor, setRangeAnchor] = useState<number | null>(null);
+  const [mode, setMode] = useState<SmileRehabilitationMode>('total');
+  const [shade, setShade] = useState<SmileShade>('BL1');
   const [shape, setShape] = useState<SmileShape>('original');
   const [translucency, setTranslucency] = useState<SmileSettings['translucency']>('natural');
   const [imageResolution, setImageResolution] = useState<'1K' | '2K'>('2K');
   const [zenithMode, setZenithMode] = useState<SmileSettings['zenithMode']>('preserve');
   const [zenithInstruction, setZenithInstruction] = useState('');
-  const [mask, setMask] = useState<Blob | null>(null);
-  const [autoMask, setAutoMask] = useState<{ mask: Blob; center: { x: number; y: number } } | null>(null);
-  const [autoState, setAutoState] = useState<'idle' | 'loading' | 'ready' | 'points' | 'manual'>('idle');
-  const [autoNote, setAutoNote] = useState('');
-  const [autoAttempt, setAutoAttempt] = useState(0);
-  const [segmentPoints, setSegmentPoints] = useState<SmileSegmentPoint[]>([]);
-  const [segmentAttempt, setSegmentAttempt] = useState(0);
-  const [segmentationPending, setSegmentationPending] = useState(false);
-  const [autoCenter, setAutoCenter] = useState<{ x: number; y: number }>();
-  const [maskConfirmed, setMaskConfirmed] = useState(false);
+  const [crop, setCrop] = useState<PreparedSmileCrop | null>(null);
+  const [cropPreviewUrl, setCropPreviewUrl] = useState('');
+  const [cropState, setCropState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [cropNote, setCropNote] = useState('');
+  const [cropAttempt, setCropAttempt] = useState(0);
   const [consent, setConsent] = useState(false);
   const [jobId, setJobId] = useState<string | null>(readSmileJobId);
   const [phase, setPhase] = useState<Phase>(() => readSmileJobId() ? 'processing' : 'editing');
   const [resultUrl, setResultUrl] = useState('');
+  const [cropOnlyResult, setCropOnlyResult] = useState(false);
+  const [localSourceSaved, setLocalSourceSaved] = useState(true);
   const [error, setError] = useState('');
   const [comparison, setComparison] = useState(50);
   const [downloading, setDownloading] = useState(false);
@@ -85,172 +96,37 @@ export function ScreenSmilePreview() {
   const fileInput = useRef<HTMLInputElement>(null);
   const submitController = useRef<AbortController | null>(null);
   const normalizingRevision = useRef(0);
-  const autoRevision = useRef(0);
-  const autoController = useRef<AbortController | null>(null);
-  const segmentSession = useRef<SmileMaskSession | null>(null);
-  const segmentPointsRef = useRef<SmileSegmentPoint[]>([]);
-  const seedCount = useRef(0);
-  const segmentRevision = useRef(0);
-  const segmentController = useRef<AbortController | null>(null);
-  const segmentChain = useRef<Promise<void>>(Promise.resolve());
-  const disposedSessions = useRef(new WeakSet<SmileMaskSession>());
+  const cropRevision = useRef(0);
+  const activeSource = useRef<LocalSource | null>(null);
   const submitting = useRef(false);
   const allowed = Boolean(user.canSmilePreview) && isSmilePreviewReady();
   const busy = phase === 'uploading' || phase === 'processing';
   const editing = phase === 'editing';
-  const selected = UPPER_TEETH.filter((id) => teeth.includes(id));
-  const chosenShade = (shades[activeTooth] ?? 'BL1') as SmileShade;
-  const maskKey = `${photo?.url ?? ''}:${selected.join('-')}:${zenithMode}`;
-  const autoEligible = selected.length === UPPER_TEETH.length && zenithMode === 'preserve';
-  const canRefineMask = Boolean(segmentSession.current) && autoEligible && autoState !== 'loading';
-  const canGenerate = allowed && editing && !normalizing && !deleting && autoState !== 'loading' && !segmentationPending && maskConfirmed && Boolean(photo && mask && selected.length && consent) &&
-    (zenithMode === 'preserve' || Boolean(zenithInstruction.trim()));
+  const canGenerate = allowed && editing && !normalizing && !deleting && cropState === 'ready' &&
+    Boolean(photo && crop && consent) && (zenithMode === 'preserve' || Boolean(zenithInstruction.trim()));
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
+  useEffect(() => () => { if (cropPreviewUrl) URL.revokeObjectURL(cropPreviewUrl); }, [cropPreviewUrl]);
   useEffect(() => () => { if (resultUrl) URL.revokeObjectURL(resultUrl); }, [resultUrl]);
   useEffect(() => () => { normalizingRevision.current++; submitController.current?.abort(); }, []);
-  useEffect(() => { setMask(null); setMaskConfirmed(false); }, [maskKey]);
-  const onMaskChange = useCallback((blob: Blob | null) => { setMask(blob); setMaskConfirmed(false); }, []);
-
-  function disposeSegmentSession(session: SmileMaskSession) {
-    if (disposedSessions.current.has(session)) return;
-    disposedSessions.current.add(session);
-    // Disposing immediately terminates the image worker and any native inference.
-    session.dispose();
-  }
-
-  const addSegmentPoint = useCallback((point: SmileSegmentPoint) => {
-    if (!segmentSession.current || busy || !editing) return;
-    if (segmentPointsRef.current.length >= 32) {
-      setAutoNote('Для этого снимка уже достаточно касаний. Уберите последнюю точку или уточните края кистью.');
-      return;
-    }
-    const next = [...segmentPointsRef.current, point];
-    segmentPointsRef.current = next; setSegmentPoints(next);
-    setMask(null); setMaskConfirmed(false);
-    if (!next.some((item) => item.label === 1)) {
-      setSegmentationPending(false); setAutoState('points');
-      setAutoNote('Сначала добавьте касание + на верхнем зубе. Затем можно исключить лишние участки касанием −.');
-      return;
-    }
-    setSegmentationPending(true);
-    setSegmentAttempt((value) => value + 1);
-  }, [busy, editing]);
-
-  function undoSegmentPoint() {
-    if (!segmentSession.current || segmentPointsRef.current.length <= seedCount.current) return;
-    const next = segmentPointsRef.current.slice(0, -1);
-    segmentPointsRef.current = next; setSegmentPoints(next);
-    setMask(null); setMaskConfirmed(false);
-    if (!next.some((item) => item.label === 1)) {
-      segmentRevision.current++; segmentController.current?.abort();
-      setSegmentAttempt(0); setSegmentationPending(false); setAutoMask(null); setAutoState('points');
-      setAutoNote('Коснитесь верхнего зуба в режиме «Добавить касанием», чтобы построить область заново.');
-      return;
-    }
-    setSegmentationPending(true);
-    setSegmentAttempt((value) => value + 1);
-  }
-
-  function resetSegmentPoints() {
-    if (!segmentSession.current || busy) return;
-    segmentRevision.current++; segmentController.current?.abort();
-    segmentPointsRef.current = []; seedCount.current = 0;
-    setSegmentPoints([]); setSegmentAttempt(0); setSegmentationPending(false);
-    setMask(null); setMaskConfirmed(false); setAutoMask(null); setAutoState('points');
-    setAutoNote('Все точки сброшены. Коснитесь верхнего зуба в режиме «Добавить касанием»; лишние участки исключите касанием −.');
-  }
-
-  function useManualMask() {
-    autoRevision.current++; autoController.current?.abort();
-    segmentRevision.current++; segmentController.current?.abort();
-    const session = segmentSession.current; segmentSession.current = null;
-    if (session) disposeSegmentSession(session);
-    segmentPointsRef.current = []; seedCount.current = 0;
-    setSegmentPoints([]); setSegmentationPending(false); setMaskConfirmed(false);
-    setAutoState('manual'); setAutoNote('Ручное уточнение включено. Увеличьте фото и выделите только разрешённые верхние зубы.');
-  }
 
   useEffect(() => {
     if (!photo || !editing) return;
-    segmentPointsRef.current = []; seedCount.current = 0;
-    setSegmentPoints([]); setSegmentAttempt(0); setSegmentationPending(false); setAutoCenter(undefined);
-    if (!autoEligible) {
-      setAutoMask(null); setAutoState('manual');
-      setAutoNote(zenithMode === 'allow' ? 'Для коррекции десны уточните разрешённую область вручную.'
-        : 'Для отдельных номеров зубов выделите область вручную: автоматика не определяет номера FDI.');
-      return;
-    }
-    const controller = new AbortController(), revision = ++autoRevision.current;
-    autoController.current = controller;
-    let ownedSession: SmileMaskSession | null = null;
-    setAutoMask(null); setMask(null); setMaskConfirmed(false); setAutoState('loading'); setAutoNote('Ищем область зубов на устройстве…');
-    let timer: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => { controller.abort(); reject(new Error('model_timeout')); }, 90_000);
-    });
-    void Promise.race([
-      import('../lib/auto-smile-mask').then((module) => module.prepareSmileMask(photo, controller.signal)).then((session) => {
-        if (controller.signal.aborted || autoRevision.current !== revision) { disposeSegmentSession(session); throw new Error('cancelled'); }
-        return session;
-      }), timeout,
-    ]).then((session) => {
-      if (controller.signal.aborted || autoRevision.current !== revision) { disposeSegmentSession(session); return; }
-      ownedSession = session; segmentSession.current = session;
-      segmentPointsRef.current = [...session.points]; seedCount.current = session.points.length;
-      setSegmentPoints([...session.points]); setAutoCenter(session.center);
-      setAutoMask(session.initial); setAutoState(session.initial ? 'ready' : 'points');
-      setAutoNote(session.initial
-        ? 'Предварительная область готова. Уточняйте её касаниями +/−, затем проверьте границы на увеличении.'
-        : 'Уверенно определить границы не удалось. Нажмите «Добавить касанием» и коснитесь верхних зубов; лишнее исключите касанием −.');
+    const controller = new AbortController(), revision = ++cropRevision.current;
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 45_000);
+    setCrop(null); setCropPreviewUrl(''); setCropState('loading');
+    setCropNote('Находим улыбку на устройстве. Полное фото никуда не отправляется.');
+    void import('../lib/smile-crop').then((module) => module.prepareSmileCrop(photo, controller.signal)).then((prepared) => {
+      if (controller.signal.aborted || cropRevision.current !== revision) return;
+      setCrop(prepared); setCropPreviewUrl(URL.createObjectURL(prepared.photo));
+      setCropState('ready'); setCropNote('');
     }).catch((err) => {
-      if (autoRevision.current !== revision) return;
-      setAutoState('manual');
-      setAutoNote(err?.code === 'no_face' ? 'Не найдено одно лицо с хорошо видимой улыбкой. Выделите зубы вручную на увеличенном фото.'
-        : err?.code === 'uncertain' ? 'Границы верхних зубов определились неуверенно. Увеличьте фото и выделите область вручную.'
-        : 'Автовыделение недоступно на этом снимке или устройстве. Ручное выделение и увеличение работают.');
+      if (cropRevision.current !== revision || (controller.signal.aborted && !timedOut)) return;
+      setCrop(null); setCropState('failed'); setCropNote(cropErrorMessage(err));
     }).finally(() => clearTimeout(timer));
-    return () => {
-      autoRevision.current++; controller.abort(); clearTimeout(timer);
-      segmentRevision.current++; segmentController.current?.abort();
-      if (segmentSession.current === ownedSession) segmentSession.current = null;
-      if (ownedSession) disposeSegmentSession(ownedSession);
-    };
-  }, [photo, editing, autoEligible, autoAttempt]);
-
-  useEffect(() => {
-    const session = segmentSession.current;
-    if (!session || !editing || segmentAttempt === 0) return;
-    const controller = new AbortController(), revision = ++segmentRevision.current;
-    segmentController.current = controller;
-    const points = [...segmentPointsRef.current];
-    if (!points.some((point) => point.label === 1)) return;
-    const timer = setTimeout(() => {
-      // Serialize actual inference even when a newer tap aborts delivery of the previous result.
-      segmentChain.current = segmentChain.current.catch(() => {}).then(async () => {
-        if (controller.signal.aborted || segmentSession.current !== session) return;
-        try {
-          const proposal = await session.refine(points, controller.signal);
-          if (controller.signal.aborted || segmentRevision.current !== revision || segmentSession.current !== session) return;
-          setAutoMask(proposal); setAutoCenter(proposal.center); setAutoState('ready');
-          setAutoNote('Область уточнена по касаниям. Проверьте, что выделены только нужные верхние зубы.');
-        } catch (error) {
-          if (controller.signal.aborted || segmentRevision.current !== revision || segmentSession.current !== session) return;
-          setMask(null); setMaskConfirmed(false); setAutoState('points');
-          if (error && typeof error === 'object' && 'code' in error && ['model_unavailable', 'disposed'].includes(String(error.code))) {
-            segmentSession.current = null; disposeSegmentSession(session);
-            segmentPointsRef.current = []; seedCount.current = 0; setSegmentPoints([]); setSegmentationPending(false);
-            setAutoState('manual'); setAutoNote('Локальная модель недоступна на этом устройстве или не успела ответить. Выделите зубы кистью либо повторите определение области.');
-            return;
-          }
-          setAutoNote('По этим точкам границы получились неуверенными. Добавьте касание + на зубе или − на лишнем участке; можно перейти к кисти.');
-        } finally {
-          if (!controller.signal.aborted && segmentRevision.current === revision && segmentSession.current === session) setSegmentationPending(false);
-        }
-      });
-    }, 250);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [segmentAttempt, photo, editing]);
+    return () => { cropRevision.current++; controller.abort(); clearTimeout(timer); };
+  }, [photo, editing, cropAttempt]);
 
   useEffect(() => {
     if (!allowed || phase !== 'processing' || !jobId) return;
@@ -265,9 +141,21 @@ export function ScreenSmilePreview() {
           const result = await getSmileJobStatus(jobId, controller.signal);
           if (controller.signal.aborted) return;
           if (result.status === 'done') {
-            const url = await loadSmileResult(result, controller.signal);
-            if (controller.signal.aborted) { URL.revokeObjectURL(url); return; }
-            setResultUrl(url); setError(''); setPhase('done'); return;
+            const edited = await loadSmileResultBlob(result, controller.signal);
+            const local = activeSource.current?.jobId === jobId ? activeSource.current : await loadSmileLocalSource(jobId);
+            controller.signal.throwIfAborted();
+            let image = edited;
+            if (local) {
+              const { compositeSmileCrop } = await import('../lib/smile-crop');
+              image = await compositeSmileCrop(local.photo, edited, local.crop, controller.signal);
+            }
+            controller.signal.throwIfAborted();
+            if (local) {
+              activeSource.current = { jobId, photo: local.photo, crop: local.crop };
+              setPhoto({ ...local.photo, url: URL.createObjectURL(local.photo.blob) });
+            }
+            setCropOnlyResult(!local && isSmileCropJob(jobId));
+            setResultUrl(URL.createObjectURL(image)); setError(''); setPhase('done'); return;
           }
           if (result.status === 'failed') {
             setError(smileErrorMessage(new SmilePreviewError(result.error ?? 'generation_failed')));
@@ -280,13 +168,15 @@ export function ScreenSmilePreview() {
           setError('');
         } catch (err) {
           if (controller.signal.aborted) return;
+          const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : '';
           if (err instanceof SmilePreviewError && err.status === 404) {
             setError(smileErrorMessage(err)); setPhase('failed'); return;
           }
-          if (err instanceof SmilePreviewError && [401, 403].includes(err.status)) {
-            setError(smileErrorMessage(err)); setPhase('pending'); return;
+          if (code === 'output_dimensions' || code === 'crop_unavailable') {
+            setError(cropErrorMessage(err)); setPhase('pending'); return;
           }
-          if (err instanceof SmilePreviewError && ['decryption_failed', 'missing_result', 'invalid_encrypted_image'].includes(err.code)) {
+          if (err instanceof SmilePreviewError && ([401, 403].includes(err.status) ||
+            ['decryption_failed', 'missing_result', 'invalid_encrypted_image'].includes(err.code))) {
             setError(smileErrorMessage(err)); setPhase('pending'); return;
           }
           setError('Связь с сервером прервалась. Продолжаем проверять эту же примерку.');
@@ -301,25 +191,6 @@ export function ScreenSmilePreview() {
     return () => { controller.abort(); clearTimeout(wake); stopWait?.(); };
   }, [allowed, phase, jobId]);
 
-  function changeSelection(next: number[]) {
-    const ordered: number[] = UPPER_TEETH.filter((id) => next.includes(id));
-    setTeeth(ordered);
-    if (!ordered.includes(activeTooth)) setActiveTooth(ordered[0] ?? 11);
-  }
-
-  function selectTooth(tooth: number) {
-    if (rangeMode) {
-      if (rangeAnchor === null) { setRangeAnchor(tooth); return; }
-      const start = UPPER_TEETH.findIndex((id) => id === rangeAnchor);
-      const end = UPPER_TEETH.findIndex((id) => id === tooth);
-      changeSelection(UPPER_TEETH.slice(Math.min(start, end), Math.max(start, end) + 1));
-      setRangeAnchor(null); setRangeMode(false);
-    } else {
-      changeSelection(teeth.includes(tooth) ? teeth.filter((id) => id !== tooth) : [...teeth, tooth]);
-      if (!teeth.includes(tooth)) setActiveTooth(tooth);
-    }
-  }
-
   async function pickPhoto(file: File | undefined) {
     if (!file || busy) return;
     const revision = ++normalizingRevision.current;
@@ -328,7 +199,8 @@ export function ScreenSmilePreview() {
       const normalized = await normalizeSmilePhoto(file);
       if (revision !== normalizingRevision.current) return;
       setPhoto({ ...normalized, url: URL.createObjectURL(normalized.blob) });
-      setMask(null); setConsent(false); setResultUrl('');
+      setCrop(null); setConsent(false); setResultUrl(''); setCropOnlyResult(false);
+      setLocalSourceSaved(true); activeSource.current = null;
       rememberSmileJobId(null); setJobId(null); setPhase('editing');
     } catch (err) {
       if (revision === normalizingRevision.current) setError(smileErrorMessage(err));
@@ -338,33 +210,44 @@ export function ScreenSmilePreview() {
   }
 
   async function generate() {
-    if (!canGenerate || !photo || !mask || submitting.current) return;
+    if (!canGenerate || !photo || !crop || submitting.current) return;
     submitting.current = true;
     const controller = new AbortController();
     submitController.current = controller;
+    // Lower FDI IDs also make an older server fail explicitly instead of silently editing only the upper row.
+    const teeth = mode === 'front' ? [13, 12, 11, 21, 22, 23, 43, 42, 41, 31, 32, 33]
+      : [...UPPER_TEETH, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36];
     const settings: SmileSettings = {
-      teeth: [...selected],
-      shades: Object.fromEntries(selected.map((id) => [String(id), shades[id] ?? 'BL1'])),
+      rehabilitationMode: mode, shade, teeth,
+      shades: Object.fromEntries(teeth.map((id) => [String(id), shade])),
       shape, translucency, zenithMode, imageResolution,
       ...(zenithMode === 'allow' ? { zenithInstruction: zenithInstruction.trim() } : {}),
     };
+    const source = { photo: { blob: photo.blob, width: photo.width, height: photo.height }, crop };
     setError(''); setPhase('uploading');
     let preparedId: string | null = null;
     try {
-      const prepared = await prepareSmileJob(controller.signal,user.smileProvider??'polza');
+      const prepared = await prepareSmileJob(controller.signal, user.smileProvider ?? 'polza');
+      if (!prepared.rehabilitationModes?.includes(mode)) {
+        await deleteSmileJob(prepared.jobId, controller.signal).catch(() => {});
+        throw new SmilePreviewError('smile_update_required');
+      }
       preparedId = prepared.jobId;
+      activeSource.current = { jobId: preparedId, ...source };
+      markSmileCropJob(preparedId);
       rememberSmileJobId(preparedId); setJobId(preparedId);
+      setLocalSourceSaved(await saveSmileLocalSource(preparedId, source));
+      controller.signal.throwIfAborted();
       await Promise.all([
-        uploadSmilePng(prepared.photo.uploadUrl, photo.blob, prepared.encryption, preparedId, 'photo', controller.signal),
-        uploadSmilePng(prepared.mask.uploadUrl, mask, prepared.encryption, preparedId, 'mask', controller.signal),
+        uploadSmilePng(prepared.photo.uploadUrl, crop.photo, prepared.encryption, preparedId, 'photo', controller.signal),
+        uploadSmilePng(prepared.mask.uploadUrl, crop.mask, prepared.encryption, preparedId, 'mask', controller.signal),
       ]);
       await generateSmilePreview(preparedId, settings, controller.signal);
       if (!controller.signal.aborted) setPhase('processing');
     } catch (err) {
       if (!controller.signal.aborted) {
         setError(smileErrorMessage(err));
-        // The server may have accepted generate before the connection failed.
-        // Keep its ID and offer status checking, never repeat generate automatically.
+        // Keep the same task after ambiguous submission; never create a second paid generation automatically.
         setPhase(preparedId ? 'pending' : 'editing');
         controller.abort();
       }
@@ -381,14 +264,13 @@ export function ScreenSmilePreview() {
     try {
       if (jobId) {
         try { await deleteSmileJob(jobId, controller.signal); }
-        catch (err) {
-          if (!(err instanceof SmilePreviewError && err.status === 404)) throw err;
-        }
+        catch (err) { if (!(err instanceof SmilePreviewError && err.status === 404)) throw err; }
+        await deleteSmileLocalSource(jobId);
       }
       if (controller.signal.aborted) return;
       rememberSmileJobId(null); setJobId(null); setPhase('editing');
-      setResultUrl(''); setMask(null); setConsent(false);
-      if (!keepPhoto) setPhoto(null);
+      activeSource.current = null; setResultUrl(''); setConsent(false); setCropOnlyResult(false);
+      if (!keepPhoto) { setPhoto(null); setCrop(null); setCropPreviewUrl(''); setCropState('idle'); }
     } catch (err) {
       if (!controller.signal.aborted) setError(smileErrorMessage(err));
     } finally {
@@ -396,9 +278,7 @@ export function ScreenSmilePreview() {
     }
   }
 
-  function newPreview() {
-    void removePreview(true);
-  }
+  function newPreview() { void removePreview(true); }
 
   async function download() {
     if (!resultUrl || !jobId || downloading) return;
@@ -410,100 +290,87 @@ export function ScreenSmilePreview() {
 
   return <Screen>
     <div className="smile-page">
-      <div className="smile-topline"><button type="button" className="smile-text-button" onClick={goBack}>← Назад</button><span className="smile-pilot mono">Закрытый тест</span></div>
-      <ScreenIntro eyebrow="LabFrame · Smile preview" title="Примерить улыбку" sub="Выберите зубы и задайте эстетику. Лицо и остальные области фото сохранятся без изменений." style={{ padding: '12px 0 20px' }} />
-      <p className="smile-disclaimer">Визуальная примерка. Не клинический план и не гарантия результата лечения.</p>
+      <div className="smile-topline"><button type="button" className="smile-back" onClick={goBack}><span aria-hidden="true">←</span> В студию</button><span className="smile-pilot mono">ДЕМО · ПО ПРИГЛАШЕНИЮ</span></div>
+      <header className="smile-hero">
+        <span className="smile-eyebrow mono">LABFRAME · SMILE STUDIO</span>
+        <h1>Примерить <span>улыбку</span></h1>
+        <p>Выберите вариант реабилитации, форму и оттенок. Область улыбки подготовится автоматически.</p>
+      </header>
+      <p className="smile-disclaimer"><span aria-hidden="true">i</span>Визуальная примерка. Не клинический план и не гарантия результата лечения.</p>
 
       {!balanceLoaded ? <div className="smile-status" role="status">Проверяем доступ…</div> : !allowed ?
         <div className="smile-status"><h2>Закрытый тест</h2><p>{!isSmilePreviewReady() ? 'Для примерки нужно подключение к серверу. Откройте рабочее мини-приложение в Telegram.' : 'Доступ к примерке выдаёт администратор. После приглашения откройте приложение заново.'}</p><button type="button" className="smile-secondary" onClick={() => reset('home')}>На главную</button></div> : <>
         {error && <div className="smile-error" role="alert">{error}</div>}
+        {!localSourceSaved && <p className="smile-error" role="status">Браузер не сохранил исходник для возврата к примерке. Не закрывайте эту страницу до скачивания полного фото.</p>}
 
-        {busy && <div className="smile-status" role="status" aria-live="polite"><span className="smile-spinner" /><h2>{phase === 'uploading' ? 'Шифруем и загружаем фото' : 'Создаём вариант улыбки'}</h2><p>{phase === 'uploading' ? 'Фото и маска шифруются на устройстве перед загрузкой.' : 'Внешний AI обрабатывает только фрагмент улыбки. Можно вернуться позже — проверим ту же задачу.'}</p><p className="smile-hint">{phase === 'processing' ? 'Проверяем готовность без повторного запуска. Большая примерка может занять несколько минут.' : 'Параметры отправляются один раз.'}</p></div>}
+        {busy && <div className="smile-status" role="status" aria-live="polite"><span className="smile-spinner" /><h2>{phase === 'uploading' ? 'Подготавливаем фрагмент улыбки' : 'Создаём вариант улыбки'}</h2><p>{phase === 'uploading' ? 'Шифруем и загружаем только область рта. Полное фото остаётся на устройстве.' : 'AI обрабатывает фрагмент улыбки. Готовый результат вклеим в исходное фото на этом устройстве.'}</p><p className="smile-hint">{phase === 'processing' ? 'Проверяем готовность той же задачи без повторного запуска.' : 'Параметры отправляются один раз.'}</p></div>}
 
-        {(phase === 'pending' || phase === 'prepared' || phase === 'failed') && <div className="smile-status"><h2>{phase === 'failed' ? 'Примерка не завершилась' : phase === 'prepared' ? 'Загрузка не завершена' : 'Проверим текущую примерку'}</h2><p>Идентификатор задачи сохранён в этой сессии. Фото и маска не записываются в хранилище браузера.</p><div className="smile-actions">
+        {(phase === 'pending' || phase === 'prepared' || phase === 'failed') && <div className="smile-status"><h2>{phase === 'failed' ? 'Примерка не завершилась' : phase === 'prepared' ? 'Загрузка не завершена' : 'Проверим текущую примерку'}</h2><p>Задача сохранена. Если исходник доступен в браузере этого устройства, результат будет вклеен в полное фото.</p><div className="smile-actions">
           {phase === 'pending' && <button type="button" className="smile-primary" disabled={deleting} onClick={() => { setError(''); setPhase('processing'); }}>Проверить статус</button>}
           {phase !== 'pending' && <button type="button" className="smile-secondary" disabled={deleting} onClick={newPreview}>Подготовить новую примерку</button>}
-          <button type="button" className="smile-text-button" disabled={deleting} onClick={() => void removePreview()}>{deleting ? 'Удаляем…' : 'Удалить фото и результат из LabFrame'}</button>
+          <button type="button" className="smile-text-button" disabled={deleting} onClick={() => void removePreview()}>{deleting ? 'Удаляем…' : 'Удалить примерку'}</button>
         </div></div>}
 
         {phase === 'done' && resultUrl && <section className="smile-section smile-result">
-          <div className="smile-section-heading"><span className="smile-step">✓</span><h2>Примерка готова</h2></div>
-          <div className="smile-comparison" style={{ aspectRatio: photo ? `${photo.width} / ${photo.height}` : undefined }}>
-            <img src={resultUrl} alt="Вариант улыбки после визуальной примерки" className="smile-after-image" />
-            {photo && <><img src={photo.url} alt="Исходное фото до примерки" className="smile-before-image" style={{ clipPath: `inset(0 ${100 - comparison}% 0 0)` }} /><span className="smile-comparison-divider" style={{ left: `${comparison}%` }} /><span className="smile-image-label smile-label-before">До</span><span className="smile-image-label smile-label-after">После</span></>}
+          <div className="smile-section-heading"><span className="smile-step">✓</span><h2>{cropOnlyResult ? 'Фрагмент улыбки готов' : 'Примерка готова'}</h2></div>
+          <div className="smile-comparison" style={{ aspectRatio: photo && !cropOnlyResult ? String(photo.width) + ' / ' + photo.height : undefined }}>
+            <img src={resultUrl} alt={cropOnlyResult ? 'Обработанный фрагмент улыбки' : 'Вариант улыбки после визуальной примерки'} className="smile-after-image" />
+            {photo && !cropOnlyResult && <><img src={photo.url} alt="Исходное фото до примерки" className="smile-before-image" style={{ clipPath: 'inset(0 ' + (100 - comparison) + '% 0 0)' }} /><span className="smile-comparison-divider" style={{ left: comparison + '%' }} /><span className="smile-image-label smile-label-before">До</span><span className="smile-image-label smile-label-after">После</span></>}
           </div>
-          {photo ? <label className="smile-comparison-control">До <input type="range" min="0" max="100" value={comparison} onChange={(event) => setComparison(Number(event.target.value))} aria-label="Граница сравнения до и после" /> После</label> : <p className="smile-hint">Исходное фото не сохраняется в браузере после перезапуска, поэтому сейчас показан только результат.</p>}
-          <p className="smile-hint">Результат расшифрован только в памяти этого устройства. Перед использованием проверьте его вручную.</p>
-          <div className="smile-actions"><button type="button" className="smile-primary" onClick={() => void download()} disabled={downloading || deleting}>{downloading ? 'Скачиваем…' : 'Скачать PNG'}</button><button type="button" className="smile-secondary" disabled={deleting} onClick={newPreview}>Настроить новую примерку</button><button type="button" className="smile-text-button" disabled={deleting} onClick={() => void removePreview()}>{deleting ? 'Удаляем…' : 'Удалить фото и результат из LabFrame'}</button></div>
-          <p className="smile-micro">Новая примерка удалит предыдущую с сервера LabFrame. Удаление не распространяется на фрагмент у внешнего AI.</p>
+          {photo && !cropOnlyResult && <label className="smile-comparison-control">До <input type="range" min="0" max="100" value={comparison} onChange={(event) => setComparison(Number(event.target.value))} aria-label="Граница сравнения до и после" /> После</label>}
+          {cropOnlyResult && <p className="smile-hint">Исходник больше недоступен на этом устройстве, поэтому показан только фрагмент. Полное фото на сервер не отправлялось.</p>}
+          <p className="smile-hint">Перед использованием проверьте форму, цвет и границы зубов.</p>
+          <div className="smile-actions"><button type="button" className="smile-primary" onClick={() => void download()} disabled={downloading || deleting}>{downloading ? 'Скачиваем…' : cropOnlyResult ? 'Скачать фрагмент PNG' : 'Скачать PNG'}</button><button type="button" className="smile-secondary" disabled={deleting} onClick={newPreview}>Настроить новую примерку</button><button type="button" className="smile-text-button" disabled={deleting} onClick={() => void removePreview()}>{deleting ? 'Удаляем…' : 'Удалить примерку'}</button></div>
+          <p className="smile-micro">Удаление очищает файлы LabFrame и локальный исходник этой примерки. Оно не распространяется на фрагмент у внешнего AI.</p>
         </section>}
 
         {editing && <>
-          <FormSection step="01" title="Фото пациента" hint="Портрет с открытой улыбкой или крупный снимок зубов. Подготовим PNG до 1600 px по длинной стороне, сохранив пропорции.">
+          <ol className="smile-journey" aria-label="Этапы примерки">
+            <li className={photo ? 'is-done' : 'is-current'}><span>01</span>Фото</li>
+            <li className={photo ? 'is-current' : ''}><span>02</span>Улыбка</li>
+            <li className={cropState === 'ready' && consent ? 'is-current' : ''}><span>03</span>Создание</li>
+          </ol>
+          <FormSection step="01" title="Начнём с фотографии" hint="Фронтальный портрет с открытой улыбкой. Зубы обеих челюстей должны быть хорошо видны.">
             <input ref={fileInput} className="smile-file-input" type="file" accept="image/*" onChange={(event) => { void pickPhoto(event.target.files?.[0]); event.target.value = ''; }} disabled={normalizing} aria-label="Выбрать фотографию пациента" />
-            <button type="button" className={`smile-upload${photo ? ' has-photo' : ''}`} onClick={() => fileInput.current?.click()} disabled={normalizing}>
-              {photo ? <><img src={photo.url} alt="Выбранное исходное фото пациента" /><span className="smile-upload-overlay">Заменить фото</span></> : <><span className="smile-upload-icon" aria-hidden="true">＋</span><strong>{normalizing ? 'Подготавливаем фото…' : 'Выбрать фото'}</strong><span>JPEG, PNG или другой доступный формат · до 20 МБ</span></>}
+            <button type="button" className={'smile-upload' + (photo ? ' has-photo' : '')} onClick={() => fileInput.current?.click()} disabled={normalizing}>
+              {photo ? <><img src={photo.url} alt="Исходное фото, которое остаётся на устройстве" /><span className="smile-upload-overlay">Заменить фото ↗</span></> : <><span className="smile-upload-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="5" stroke="currentColor" strokeWidth="1.5" /><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" /><path d="m4 17 5-5 4 4 3-3 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span><strong>{normalizing ? 'Подготавливаем фото…' : 'Выбрать фотографию'}</strong><span>Открытая улыбка, хороший свет, зубы в фокусе</span><span className="smile-upload-formats mono">JPEG / PNG · до 20 МБ</span></>}
             </button>
             {photo && <p className="smile-photo-meta mono">PNG · {photo.width} × {photo.height} · {(photo.blob.size / 1024 / 1024).toFixed(1)} МБ</p>}
+            {!photo && <p className="smile-micro">Полное фото остаётся на устройстве. Для AI автоматически подготовим только область рта.</p>}
           </FormSection>
 
           {photo && <>
-            <FormSection step="02" title="Верхние зубы" hint="Нумерация FDI. Нажмите зубы, которые разрешено изменить.">
-              <div className="smile-selection-tools"><button type="button" onClick={() => { changeSelection([...UPPER_TEETH]); setRangeMode(false); setRangeAnchor(null); }}>Весь видимый ряд</button><button type="button" onClick={() => { changeSelection([]); setRangeMode(false); setRangeAnchor(null); }}>Сбросить</button><button type="button" className={rangeMode ? 'is-active' : ''} aria-pressed={rangeMode} onClick={() => { setRangeMode(!rangeMode); setRangeAnchor(null); }}>Диапазон</button></div>
-              {rangeMode && <p className="smile-range-hint" role="status">{rangeAnchor === null ? 'Нажмите первый зуб диапазона.' : `Начало — ${rangeAnchor}. Нажмите последний зуб.`}</p>}
-              <div className="smile-orientation"><span>Правая сторона пациента</span><span>Левая сторона пациента</span></div>
-              <div className="smile-teeth-scroll"><div className="smile-teeth" role="group" aria-label="Выбор верхних зубов справа налево у пациента">{UPPER_TEETH.map((id) => <button type="button" key={id} className={`smile-tooth${teeth.includes(id) ? ' is-selected' : ''}${id === rangeAnchor ? ' is-anchor' : ''}${id === 21 ? ' smile-midline' : ''}`} aria-pressed={teeth.includes(id)} aria-label={`Зуб ${id}${teeth.includes(id) ? `, оттенок ${shades[id] ?? 'BL1'}` : ''}`} onClick={() => selectTooth(id)}><span className="mono">{id}</span><span className="smile-tooth-glyph" aria-hidden="true" /><small>{teeth.includes(id) ? shades[id] : '—'}</small></button>)}</div></div>
-              <div className="smile-shade-heading"><h3>Индивидуальные оттенки</h3><span className="mono">{selected.length} / 12</span></div>
-              {selected.length ? <>
-                <p className="smile-hint">Сначала выберите номер, затем оттенок для этого зуба.</p>
-                <div className="smile-tooth-tabs" role="group" aria-label="Зуб для назначения оттенка">{selected.map((id) => <button type="button" key={id} className={activeTooth === id ? 'is-active' : ''} aria-pressed={activeTooth === id} onClick={() => setActiveTooth(id)}><strong>{id}</strong><span>{shades[id]}</span></button>)}</div>
-                <div className="smile-palette" role="group" aria-label={`Оттенок зуба ${activeTooth}`}>{SMILE_SHADES.map((shade, index) => <button type="button" key={shade} className={chosenShade === shade ? 'is-selected' : ''} aria-pressed={chosenShade === shade} onClick={() => setShades((previous) => ({ ...previous, [activeTooth]: shade }))}><span className="smile-swatch" style={{ background: SHADE_COLORS[index] }} aria-hidden="true" /><span>{shade}</span></button>)}</div>
-                <button type="button" className="smile-text-button smile-apply-shade" onClick={() => setShades((previous) => ({ ...previous, ...Object.fromEntries(selected.map((id) => [id, chosenShade])) }))}>Назначить {chosenShade} всем выбранным</button>
-                <p className="smile-micro">Цветовые образцы на экране условны.</p>
-              </> : <p className="smile-hint">Выберите хотя бы один верхний зуб.</p>}
-            </FormSection>
-
-            <FormSection step="03" title="Форма и детали">
-              <h3>Детализация</h3>
-              <div className="smile-segmented" role="group" aria-label="Детализация генерации">
-                {(['1K', '2K'] as const).map((resolution) => <button type="button" key={resolution} className={imageResolution === resolution ? 'is-selected' : ''} aria-pressed={imageResolution === resolution} onClick={() => setImageResolution(resolution)}>{resolution === '2K' ? '2K · подробнее' : '1K · сравнить'}</button>)}
-              </div>
-              <p className="smile-micro">2K запрашивает больше деталей и может обрабатываться дольше. Для сравнения используйте одинаковые фото, область и настройки.</p>
-              <div className="smile-shapes" role="group" aria-label="Форма выбранных зубов">{SHAPES.map((option) => <button type="button" key={option.id} className={shape === option.id ? 'is-selected' : ''} aria-pressed={shape === option.id} onClick={() => setShape(option.id)}><ShapeGlyph shape={option.id} /><span>{option.label}</span></button>)}</div>
+            <FormSection step="02" title="Вариант улыбки">
+              <div className="smile-modes" role="group" aria-label="Вариант реабилитации">{MODES.map((option) => <button type="button" key={option.id} className={mode === option.id ? 'is-selected' : ''} aria-pressed={mode === option.id} onClick={() => setMode(option.id)}><strong>{option.label}</strong><span>{option.description}</span></button>)}</div>
+              {mode === 'front' && <p className="smile-micro">Меняем передние зубы и клыки. Жевательные зубы просим AI сохранить.</p>}
+              <h3>Цвет зубов</h3>
+              <div className="smile-palette" role="group" aria-label="Общий оттенок зубов">{SMILE_SHADES.map((option, index) => <button type="button" key={option} className={shade === option ? 'is-selected' : ''} aria-pressed={shade === option} onClick={() => setShade(option)}><span className="smile-swatch" style={{ background: SHADE_COLORS[index] }} aria-hidden="true" /><span>{option}</span></button>)}</div>
+              <p className="smile-micro">Один оттенок для всех изменяемых зубов. Образцы на экране условны.</p>
+              <h3>Форма зубов</h3>
+              <div className="smile-shapes" role="group" aria-label="Форма зубов">{SHAPES.map((option) => <button type="button" key={option.id} className={shape === option.id ? 'is-selected' : ''} aria-pressed={shape === option.id} onClick={() => setShape(option.id)}><ShapeGlyph shape={option.id} /><span>{option.label}</span></button>)}</div>
               <h3>Прозрачность режущего края</h3><div className="smile-segmented" role="group" aria-label="Прозрачность режущего края"><button type="button" className={translucency === 'none' ? 'is-selected' : ''} aria-pressed={translucency === 'none'} onClick={() => setTranslucency('none')}>Без прозрачности</button><button type="button" className={translucency === 'natural' ? 'is-selected' : ''} aria-pressed={translucency === 'natural'} onClick={() => setTranslucency('natural')}>Естественная</button></div>
-              <h3>Десневые зениты</h3><div className="smile-segmented" role="group" aria-label="Коррекция десневых зенитов"><button type="button" className={zenithMode === 'preserve' ? 'is-selected' : ''} aria-pressed={zenithMode === 'preserve'} onClick={() => setZenithMode('preserve')}>Сохранить</button><button type="button" className={zenithMode === 'allow' ? 'is-selected' : ''} aria-pressed={zenithMode === 'allow'} onClick={() => setZenithMode('allow')}>Разрешить коррекцию</button></div>
-              {zenithMode === 'allow' && <label className="smile-instruction">Точное указание для выбранных зубов<textarea maxLength={160} rows={3} value={zenithInstruction} onChange={(event) => setZenithInstruction(event.target.value)} placeholder="Укажите номера зубов и требуемое изменение контура" required /><span className="smile-micro">{zenithInstruction.length} / 160 · Без указания запуск недоступен.</span></label>}
+              <details className="smile-details"><summary>Дополнительные настройки</summary>
+                <h3>Детализация</h3><div className="smile-segmented" role="group" aria-label="Детализация генерации"><button type="button" className={imageResolution === '1K' ? 'is-selected' : ''} aria-pressed={imageResolution === '1K'} onClick={() => setImageResolution('1K')}>1K</button><button type="button" className={imageResolution === '2K' ? 'is-selected' : ''} aria-pressed={imageResolution === '2K'} onClick={() => setImageResolution('2K')}>2K</button></div>
+                <h3>Десневые зениты</h3><div className="smile-segmented" role="group" aria-label="Коррекция десневых зенитов"><button type="button" className={zenithMode === 'preserve' ? 'is-selected' : ''} aria-pressed={zenithMode === 'preserve'} onClick={() => setZenithMode('preserve')}>Сохранить</button><button type="button" className={zenithMode === 'allow' ? 'is-selected' : ''} aria-pressed={zenithMode === 'allow'} onClick={() => setZenithMode('allow')}>Разрешить коррекцию</button></div>
+                {zenithMode === 'allow' && <label className="smile-instruction">Точное указание для области улыбки<textarea maxLength={160} rows={3} value={zenithInstruction} onChange={(event) => setZenithInstruction(event.target.value)} placeholder="Опишите требуемое изменение десневого контура" required /><span className="smile-micro">{zenithInstruction.length} / 160</span></label>}
+              </details>
             </FormSection>
 
-            <FormSection step="04" title="Область улыбки" hint="Предварительная автообласть строится на устройстве. Проверьте её: губы, нижние зубы и защищённая десна должны остаться вне выделения.">
-              <p role="status" aria-live="polite" className="smile-hint">{autoState === 'loading' ? 'Готовим локальное выделение… При первом запуске загружаются модель и компоненты обработки; это может занять до 90 секунд. Фото не отправляется.' : autoNote}</p>
-              {autoState === 'loading' && <button type="button" className="smile-secondary" onClick={useManualMask}>Не ждать · выделить кистью</button>}
-              {autoEligible && autoState !== 'loading' && <div className="smile-mask-actions">
-                <button type="button" className="smile-text-button" disabled={busy || segmentationPending} onClick={() => setAutoAttempt((n) => n + 1)}>Определить область заново</button>
-                {canRefineMask && <button type="button" className="smile-text-button" disabled={busy} onClick={useManualMask}>Перейти к ручной кисти</button>}
-              </div>}
-              {selected.length ? <SmileMaskEditor key={maskKey} imageUrl={photo.url} width={photo.width} height={photo.height}
-                onChange={onMaskChange} initialMask={autoMask?.mask} focusPoint={autoMask?.center ?? autoCenter}
-                onSegmentPoint={canRefineMask ? addSegmentPoint : undefined} points={segmentPoints} segmentationPending={segmentationPending}
-                disabled={busy || autoState === 'loading'} allowGumline={zenithMode === 'allow'} /> : <p className="smile-hint">Сначала выберите зубы на шаге 02.</p>}
-              {canRefineMask && <>
-                <div className="smile-mask-actions">
-                  <button type="button" className="smile-text-button" disabled={busy || segmentPoints.length <= seedCount.current} onClick={undoSegmentPoint}>Убрать последнее касание</button>
-                  <button type="button" className="smile-text-button" disabled={busy || segmentPoints.length === 0} onClick={resetSegmentPoints}>Сбросить все точки</button>
-                </div>
-                <p className="smile-micro">Зелёные точки добавляют область, красные убирают. Новый пересчёт по касаниям заменяет правки кистью. Если автоматика ошиблась, сбросьте все точки и начните с верхнего зуба.</p>
-              </>}
-              <p className={`smile-mask-note${mask ? ' is-ready' : ''}`}>{mask ? '✓ Маска подготовлена' : 'Маска обязательна для запуска'}</p><p className="smile-micro">После смены зубов или разрешения на коррекцию десны проверьте область заново.</p>
-              <label className="smile-consent"><input type="checkbox" checked={maskConfirmed} disabled={!mask || autoState === 'loading' || segmentationPending} onChange={(event) => setMaskConfirmed(event.target.checked)} /><span>Проверил область: выделены только те зубы и участки, которые разрешено менять.</span></label>
+            <FormSection step="03" title="Фрагмент для AI" hint="Внешняя модель получит только этот фрагмент. Готовую улыбку вклеим в исходное фото на устройстве.">
+              {cropState === 'loading' && <p role="status" aria-live="polite" className="smile-hint">{cropNote}</p>}
+              {cropState === 'failed' && <p role="alert" className="smile-hint">{cropNote}</p>}
+              {cropPreviewUrl && <img className="smile-crop-preview" src={cropPreviewUrl} alt="Только эта область рта будет отправлена AI" />}
+              {cropState !== 'loading' && <button type="button" className="smile-text-button" onClick={() => setCropAttempt((n) => n + 1)}>Определить область заново</button>}
+              {cropState === 'ready' && <p className="smile-mask-note is-ready">✓ Фрагмент улыбки подготовлен автоматически</p>}
             </FormSection>
 
-            <FormSection step="05" title="Проверка и запуск">
-              <div className="smile-summary"><span>Зубы</span><strong>{selected.join(', ') || 'Не выбраны'}</strong><span>Форма</span><strong>{SHAPES.find((option) => option.id === shape)?.label}</strong><span>Зениты</span><strong>{zenithMode === 'preserve' ? 'Сохранить' : 'По точному указанию'}</strong></div>
-              <div className="smile-privacy"><strong>Защита фотографий</strong><p>Исходное фото и результат хранятся в LabFrame зашифрованными. Внешний AI получает только фрагмент улыбки; у него собственные условия хранения. {user.smileProvider==='fal'?'Сервис обработки — fal.ai. Для файлов запрашивается удаление через час; у поставщика модели собственные условия обработки.':'Сервис обработки — Polza.ai. По его документации результаты хранятся 7 дней.'}</p><p>Для пилота используйте учебные или собственные тестовые фото с разрешением на обработку. Хранилище LabFrame пока размещено вне РФ. Кнопка удаления удаляет файлы LabFrame.</p></div>
-              <label className="smile-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>У меня есть разрешение использовать это фото для примерки и передать фрагмент улыбки внешнему AI с указанными условиями хранения.</span></label>
+            <FormSection step="04" title="Создание примерки">
+              <div className="smile-summary"><span>Режим</span><strong>{MODES.find((option) => option.id === mode)?.label}</strong><span>Челюсти</span><strong>Верхняя и нижняя · только видимые зубы</strong><span>Цвет</span><strong>{shade}</strong><span>Форма</span><strong>{SHAPES.find((option) => option.id === shape)?.label}</strong></div>
+              <div className="smile-privacy"><strong>На сервер — только область рта</strong><p>Для возврата к задаче исходник сохраняется только в браузере этого устройства. Он доступен для вклейки 24 часа; после этого очищается при следующем обращении к примерке. Удаление примерки очищает его сразу.</p><p>Фрагмент и результат хранятся в LabFrame зашифрованными. Внешний AI видит фрагмент; он может оставаться узнаваемым. {user.smileProvider === 'fal' ? 'Обработка — fal.ai.' : 'Обработка — Polza.ai.'} У внешнего сервиса свои условия хранения и удаления.</p></div>
+              <label className="smile-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>У меня есть разрешение использовать это фото и передать показанный фрагмент улыбки внешнему AI.</span></label>
               <p className="smile-cost-note">В закрытом тесте примерки не списываются с вашего баланса генераций.</p>
               <button type="button" className="smile-primary smile-generate" disabled={!canGenerate} onClick={() => void generate()}>Создать примерку <span aria-hidden="true">↗</span></button>
-              {(!mask || !maskConfirmed) && <p className="smile-micro">Проверьте и подтвердите выделенную область на шаге 04.</p>}
+              {cropState !== 'ready' && <p className="smile-micro">Для запуска нужен автоматически подготовленный фрагмент улыбки.</p>}
             </FormSection>
           </>}
         </>}

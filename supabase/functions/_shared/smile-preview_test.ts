@@ -1,10 +1,10 @@
 import { assert, assertEquals, assertRejects, assertThrows } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { Image } from 'https://deno.land/x/imagescript@1.2.17/mod.ts';
 import {
-  compositeSmile, decodeSmileInputs, pngDimensions, recoverSmileManifest, requestSmileEdit,
+  buildSmilePrompt, compositeSmile, decodeSmileInputs, pngDimensions, recoverSmileManifest, requestSmileEdit,
   safeSmileError, SmileError, smilePaths, smilePilotAllowed, smileProviderInputs, validateSmileSettings,
   SMILE_PREPARED_TTL_MS, SMILE_STALE_MS, type SmileManifest, type SmileSettings,
-  SMILE_TEETH,
+  SMILE_BOTH_ARCH_TEETH, SMILE_FRONT_TEETH, SMILE_TEETH,
 } from './smile-preview.ts';
 
 const JOB = '12121212-1234-4123-8123-123456789abc';
@@ -64,6 +64,58 @@ Deno.test('smile: параметры зубов/оттенков проверя�
 Deno.test('smile: весь верхний ряд проходит проверку параметров', () => {
   const settings = { ...SETTINGS, teeth: [...SMILE_TEETH], shades: Object.fromEntries(SMILE_TEETH.map((id) => [id, 'A1'])) };
   assertEquals(validateSmileSettings(settings).teeth, [...SMILE_TEETH]);
+});
+
+Deno.test('smile crop: two semantic modes derive both arches and one shade, without trusting legacy tooth maps', () => {
+  const { teeth: _teeth, shades: _shades, ...common } = SETTINGS;
+  for (const rehabilitationMode of ['total', 'front'] as const) {
+    const settings = validateSmileSettings({
+      ...common, rehabilitationMode, shade: 'A2',
+      teeth: [11], shades: { '11': 'BL1' },
+    });
+    const expected = [...(rehabilitationMode === 'front' ? SMILE_FRONT_TEETH : SMILE_BOTH_ARCH_TEETH)];
+    assertEquals(settings.teeth, expected);
+    assertEquals(settings.shades, Object.fromEntries(expected.map((tooth) => [String(tooth), 'A2'])));
+    assertEquals(settings.shade, 'A2');
+    assertEquals(settings.rehabilitationMode, rehabilitationMode);
+    assert(settings.teeth.includes(31));
+    assert(settings.teeth.includes(43));
+    assertEquals(settings.teeth.includes(36), rehabilitationMode === 'total');
+    assertEquals(validateSmileSettings({ ...common, rehabilitationMode, shade: 'A2' }), settings);
+  }
+  for (const invalid of [
+    { rehabilitationMode: 'upper', shade: 'A2' },
+    { rehabilitationMode: ['total'], shade: 'A2' },
+    { rehabilitationMode: null, shade: 'A2' },
+    { rehabilitationMode: 'front' },
+    { rehabilitationMode: 'front', shade: 'WHITE' },
+  ]) assertThrows(() => validateSmileSettings({ ...common, ...invalid }), SmileError);
+  // Legacy requests still cannot introduce the lower arch without the explicit new mode.
+  assertThrows(() => validateSmileSettings({ ...SETTINGS, teeth: [31], shades: { '31': 'A2' } }), SmileError);
+});
+
+Deno.test('smile crop: prompts cover both jaws and protect posterior teeth in frontal mode', () => {
+  for (const rehabilitationMode of ['total', 'front'] as const) {
+    const prompt = buildSmilePrompt(validateSmileSettings({ ...SETTINGS, rehabilitationMode, shade: 'BL2' }));
+    assert(prompt.includes('BOTH the UPPER and LOWER jaws'));
+    assert(prompt.includes('COMMON SHADE: BL2'));
+    assert(prompt.includes('GINGIVA LOCKED'));
+    assert(!prompt.includes('Leave the lower teeth'));
+    assert(!prompt.includes('PER-TOOTH SHADE MAP'));
+    assert(!prompt.includes('SECOND image'));
+    if (rehabilitationMode === 'front') {
+      assert(prompt.includes('from canine to canine inclusive'));
+      assert(prompt.includes('ALL premolars and molars on BOTH sides of BOTH jaws'));
+      assert(prompt.includes('must keep their original shade, shape, texture and positions'));
+    } else {
+      assert(prompt.includes('change ALL already visible teeth'));
+      assert(prompt.includes('including visible posterior premolars and molars'));
+    }
+  }
+  const legacy = buildSmilePrompt(SETTINGS);
+  assert(legacy.includes('Leave the lower teeth'));
+  assert(legacy.includes('PER-TOOTH SHADE MAP'));
+  assert(legacy.includes('SECOND image'));
 });
 
 Deno.test('smile: JPEG ответа провайдера конвертируется в защищённый PNG', async () => {
@@ -214,6 +266,33 @@ Deno.test('smile: provider контракт запрещает исходные 
     ...common, photoData: 'data:image/png;base64,YQ==', maskData: 'data:image/png;base64,YQ==',
     fetcher: (() => Promise.resolve(Response.json({ data: { url: 'http://127.0.0.1/private' } }))) as typeof fetch,
   }), SmileError);
+});
+
+Deno.test('smile crop: Polza receives one mouth image and semantic scope, never a second tooth mask', async () => {
+  const { sourceBytes, maskBytes } = await fixture();
+  const inputs = await decodeSmileInputs(sourceBytes, maskBytes);
+  const provider = await smileProviderInputs(inputs);
+  const output = await new Image(inputs.frame.width, inputs.frame.height).fill(0xffffffff).encode();
+  const responseData = `data:image/png;base64,${btoa(String.fromCharCode(...output))}`;
+  for (const rehabilitationMode of ['total', 'front'] as const) {
+    let calls = 0;
+    const settings = validateSmileSettings({ ...SETTINGS, rehabilitationMode, shade: 'A1' });
+    const result = await requestSmileEdit({
+      photoData: provider.photo, maskData: provider.mask, settings,
+      apiKey: 'fixture-secret', model: 'fixture-model', signal: AbortSignal.timeout(2000),
+      fetcher: ((_url: string | URL | Request, init?: RequestInit) => {
+        calls++;
+        const payload = JSON.parse(String(init?.body));
+        assertEquals(payload.input.images, [{ type: 'base64', data: provider.photo }]);
+        assertEquals(payload.provider.allow_fallbacks, false);
+        assertEquals(payload.async, true);
+        assertEquals(payload.input.prompt, buildSmilePrompt(settings));
+        return Promise.resolve(Response.json({ data: { url: responseData } }));
+      }) as typeof fetch,
+    });
+    assertEquals(calls, 1);
+    assertEquals(result, output);
+  }
 });
 
 Deno.test('smile: ошибки не раскрывают URL, текст врача или ответ провайдера', () => {

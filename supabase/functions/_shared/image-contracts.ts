@@ -5,5 +5,7 @@ export interface ImageInput {
   format: FormatId;
   prompt: string;
   referenceImages?: string[];
+  /** Native inpainting mask: white edits, black protects. Never infer from references. */
+  maskUrl?: string;
   aspectRatio?: '16:9';
 }

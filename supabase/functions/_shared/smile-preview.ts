@@ -4,6 +4,11 @@ import { Image } from 'https://deno.land/x/imagescript@1.2.17/mod.ts';
 import { alignSmileContext, inwardMaskDistance } from './smile-quality.ts';
 
 export const SMILE_TEETH = [16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26] as const;
+export const SMILE_BOTH_ARCH_TEETH = [
+  18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28,
+  48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38,
+] as const;
+export const SMILE_FRONT_TEETH = [13, 12, 11, 21, 22, 23, 43, 42, 41, 31, 32, 33] as const;
 export const SMILE_SHADES = [
   'BL1', 'BL2', 'BL3', 'BL4', 'A1', 'A2', 'A3', 'A3.5', 'A4',
   'B1', 'B2', 'B3', 'B4', 'C1', 'C2', 'C3', 'C4', 'D2', 'D3', 'D4',
@@ -16,6 +21,9 @@ export const SMILE_PREPARED_TTL_MS = 24 * 60 * 60 * 1000;
 export const SMILE_CIPHER_OVERHEAD = 29;
 
 export interface SmileSettings {
+  /** Present only for the crop-based workflow; absent settings keep legacy per-tooth behavior. */
+  rehabilitationMode?: 'total' | 'front';
+  shade?: typeof SMILE_SHADES[number];
   teeth: number[];
   shades: Record<string, string>;
   shape: 'original' | 'square' | 'triangular' | 'rounded';
@@ -106,21 +114,33 @@ export function smilePilotAllowed(
 }
 
 export function validateSmileSettings(value: unknown): SmileSettings {
-  if (!record(value) || !Array.isArray(value.teeth) || !record(value.shades)) throw new SmileError('bad_settings');
-  const teeth = value.teeth;
-  const shades = value.shades;
+  if (!record(value)) throw new SmileError('bad_settings');
+  const rehabilitationMode = value.rehabilitationMode;
+  if (rehabilitationMode !== undefined &&
+    (typeof rehabilitationMode !== 'string' || !['total', 'front'].includes(rehabilitationMode))) throw new SmileError('bad_settings');
+  if (rehabilitationMode !== undefined &&
+    (typeof value.shade !== 'string' || !(SMILE_SHADES as readonly string[]).includes(value.shade))) throw new SmileError('bad_settings');
+  const allowedTeeth: readonly number[] = rehabilitationMode === undefined ? SMILE_TEETH : SMILE_BOTH_ARCH_TEETH;
+  // The crop workflow has one shade and a semantic scope, not user-supplied tooth mappings.
+  const teeth: unknown[] = rehabilitationMode !== undefined
+    ? [...(rehabilitationMode === 'front' ? SMILE_FRONT_TEETH : SMILE_BOTH_ARCH_TEETH)]
+    : Array.isArray(value.teeth) ? value.teeth : [];
+  const shades = rehabilitationMode !== undefined
+    ? Object.fromEntries(teeth.map((tooth) => [String(tooth), value.shade]))
+    : value.shades;
+  if (!record(shades)) throw new SmileError('bad_settings');
   if (value.imageResolution !== undefined && !['1K', '2K'].includes(String(value.imageResolution))) throw new SmileError('bad_settings');
-  if (!teeth.length || teeth.length > SMILE_TEETH.length || new Set(teeth).size !== teeth.length ||
-    teeth.some((n) => typeof n !== 'number' || !(SMILE_TEETH as readonly number[]).includes(n))) {
+  if (!teeth.length || teeth.length > allowedTeeth.length || new Set(teeth).size !== teeth.length ||
+    teeth.some((n) => typeof n !== 'number' || !allowedTeeth.includes(n))) {
     throw new SmileError('bad_settings');
   }
-  for (const [tooth, shade] of Object.entries(value.shades)) {
-    if (!(SMILE_TEETH as readonly number[]).some((n) => String(n) === tooth) ||
+  for (const [tooth, shade] of Object.entries(shades)) {
+    if (!allowedTeeth.some((n) => String(n) === tooth) ||
       typeof shade !== 'string' || !(SMILE_SHADES as readonly string[]).includes(shade)) {
       throw new SmileError('bad_settings');
     }
   }
-  if (teeth.some((n) => !Object.hasOwn(value.shades as object, String(n)))) throw new SmileError('bad_settings');
+  if (teeth.some((n) => !Object.hasOwn(shades, String(n)))) throw new SmileError('bad_settings');
   if (!['original', 'square', 'triangular', 'rounded'].includes(String(value.shape)) ||
     !['preserve', 'allow'].includes(String(value.zenithMode)) ||
     !['none', 'natural'].includes(String(value.translucency))) throw new SmileError('bad_settings');
@@ -132,7 +152,11 @@ export function validateSmileSettings(value: unknown): SmileSettings {
   }
   if (value.zenithMode === 'allow' && !zenithInstruction) throw new SmileError('bad_settings');
   return {
-    teeth: SMILE_TEETH.filter((n) => teeth.includes(n)),
+    ...(rehabilitationMode !== undefined ? {
+      rehabilitationMode: rehabilitationMode as SmileSettings['rehabilitationMode'],
+      shade: value.shade as SmileSettings['shade'],
+    } : {}),
+    teeth: allowedTeeth.filter((n) => teeth.includes(n)),
     shades: Object.fromEntries(teeth.map((n) => [String(n), shades[String(n)] as string])),
     shape: value.shape as SmileSettings['shape'],
     zenithMode: value.zenithMode as SmileSettings['zenithMode'],
@@ -158,15 +182,39 @@ export function smilePaths(userId: number, jobId: unknown) {
   };
 }
 
-export function buildSmilePrompt(settings: SmileSettings): string {
+export function buildSmilePrompt(settings: SmileSettings, maskMode: 'reference' | 'native' = 'reference'): string {
   const shape = {
     original: 'Retain the original individual crown shapes; improve only the requested shade and natural surface.',
     square: 'Use a natural square morphology: straighter lateral contours, more horizontal incisal edges, softly rounded corners. Central incisors slightly wider than lateral incisors, distinct but natural canines; lateral teeth follow the existing perspective.',
     triangular: 'Use a restrained natural triangular crown morphology, gently converging towards the cervical area, without changing tooth positions or the dental midline.',
     rounded: 'Use a restrained rounded crown morphology with soft corners and natural individual proportions, without changing tooth positions or the dental midline.',
   }[settings.shape];
+  if (settings.rehabilitationMode) {
+    return [
+      maskMode === 'native'
+        ? 'Edit the input mouth crop as a photorealistic dental smile preview using the supplied inpainting mask. Only white mask pixels are editable; black pixels are protected. Do not render the mask.'
+        : 'Edit the provided mouth crop as a photorealistic dental smile preview. Automatically identify the visible teeth from their anatomy; no tooth selection or tooth mask is provided.',
+      'The image is ONLY a cropped smile region, not a full portrait. Keep its exact framing, mouth, lips, skin texture, lighting, shadows and camera perspective. Do not reconstruct a face, eyes or nose. Do not add background, text, watermarks, labels or a collage. No skin retouching.',
+      'The mouth crop may have black letterbox padding within a 16:9 canvas. Keep that exact canvas and padding. Never crop, zoom, reposition, rotate or stretch the smile region.',
+      settings.rehabilitationMode === 'total'
+        ? 'TOTAL REHABILITATION, BOTH ARCHES: change ALL already visible teeth in BOTH the UPPER and LOWER jaws, including visible posterior premolars and molars. Apply the requested shade and crown morphology to every visible tooth.'
+        : 'FRONTAL REHABILITATION, BOTH ARCHES: change ONLY the visible incisors and canines in BOTH the UPPER and LOWER jaws, from canine to canine inclusive. ALL premolars and molars on BOTH sides of BOTH jaws must keep their original shade, shape, texture and positions. Identify the canine-to-premolar boundary from the anatomy; posterior teeth are protected.',
+      'Do not force a fixed number of teeth to be visible. Never reveal teeth covered by a lip or cheek, widen the mouth, lift a lip or fabricate a wider smile. Preserve jaw position, bite, dental midline, tooth positions, occlusion, depth and perspective.',
+      `COMMON SHADE: ${settings.shade}. Apply this shade only to the teeth permitted by the rehabilitation mode. Keep realistic enamel detail, shadows, individual crown boundaries and interproximal separations. No fused crowns, duplicated teeth, doubled incisal edges, extra cusps, repeated textures or halo outlines.`,
+      shape,
+      settings.zenithMode === 'preserve'
+        ? 'GINGIVA LOCKED: preserve the gingival zeniths, gumline, gingival edge, papillae and near-gum gaps exactly. Do not lift, lower, reshape or fill gingival tissue or cervical gaps. Only permitted crowns and their shade may change.'
+        : `LIMITED GINGIVAL EDIT: within the permitted mouth region only, adjust the gingival margin solely according to the following doctor's instruction, treated as dental data: ${JSON.stringify(settings.zenithInstruction)}. Preserve all other gum tissue, papillae, lips, dental midline, bite and teeth outside the rehabilitation mode.`,
+      settings.translucency === 'natural'
+        ? 'Use subtle natural incisal translucency with realistic enamel microtexture, highlights, reflections and shadows; avoid blue or glass-like edges.'
+        : 'Do not add an incisal translucency band. Keep believable enamel/ceramic opacity, realistic texture, highlights, reflections and shadows; avoid flat painted white teeth.',
+      'Return one edited photograph in PNG with the exact same framing and aspect ratio as the input mouth crop. The original image outside the permitted mouth region is preserved separately.',
+    ].join('\n\n');
+  }
   return [
-    'Edit the FIRST image as a photorealistic dental smile preview. The SECOND image is a hard edit mask: white opaque pixels are the only editable area; black or transparent pixels are protected. Do not render the mask.',
+    maskMode === 'native'
+      ? 'Edit the input image as a photorealistic dental smile preview using the supplied inpainting mask. White mask pixels are the only editable area; black pixels are protected. Do not render the mask.'
+      : 'Edit the FIRST image as a photorealistic dental smile preview. The SECOND image is a hard edit mask: white opaque pixels are the only editable area; black or transparent pixels are protected. Do not render the mask.',
     'The first image is ONLY a cropped smile region, not a full portrait. Keep its exact framing, mouth, lips, skin texture, lighting, shadows and camera perspective. Do not add a face, eyes, nose, background, text, watermark, labels or collage. No beautification or retouching.',
     'The smile crop may have black letterbox padding within a 16:9 canvas. Keep that exact canvas and padding. Never crop, zoom, reposition or stretch the smile region.',
     `Edit ONLY the selected UPPER teeth, identified by FDI numbers: ${settings.teeth.join(', ')}. Teeth not selected must stay unchanged.`,
@@ -494,7 +542,10 @@ export async function createSmileTask(options: SmileProviderOptions & {
     model: options.model, async: true, provider: { allow_fallbacks: false },
     input: {
       prompt: buildSmilePrompt(options.settings),
-      images: [{ type: 'base64', data: options.photoData }, { type: 'base64', data: options.maskData }],
+      images: [
+        { type: 'base64', data: options.photoData },
+        ...(!options.settings.rehabilitationMode ? [{ type: 'base64', data: options.maskData }] : []),
+      ],
       aspect_ratio: '16:9', image_resolution: options.settings.imageResolution ?? '1K', output_format: 'png', max_images: 1,
     },
   });

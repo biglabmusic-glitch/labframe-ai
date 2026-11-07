@@ -9,7 +9,10 @@ export const SMILE_SHADES = [
 
 export type SmileShade = typeof SMILE_SHADES[number];
 export type SmileShape = 'original' | 'square' | 'triangular' | 'rounded';
+export type SmileRehabilitationMode = 'total' | 'front';
 export interface SmileSettings {
+  rehabilitationMode?: SmileRehabilitationMode;
+  shade?: SmileShade;
   teeth: number[];
   shades: Record<string, string>;
   shape: SmileShape;
@@ -28,6 +31,7 @@ export interface SmilePreparedJob {
   photo: { uploadUrl: string; path: string };
   mask: { uploadUrl: string; path: string };
   encryption: SmileEncryption;
+  rehabilitationModes?: SmileRehabilitationMode[];
 }
 export interface SmileJobStatus {
   jobId: string;
@@ -56,7 +60,8 @@ export function readSmileJobId(): string | null {
   }
 }
 
-/** Only an opaque job ID is persisted. Patient images and links stay in memory. */
+/** This session key contains only an opaque ID. Local reconstruction images
+ * are managed separately by smile-local-source, never by this API client. */
 export function rememberSmileJobId(id: string | null): void {
   try {
     if (id && UUID.test(id)) sessionStorage.setItem(JOB_STORAGE_KEY, id);
@@ -143,6 +148,11 @@ export async function uploadSmilePng(
 
 /** Download ciphertext without application credentials; show decrypted pixels from an in-memory Blob. */
 export async function loadSmileResult(result: SmileJobStatus, signal?: AbortSignal): Promise<string> {
+  return URL.createObjectURL(await loadSmileResultBlob(result, signal));
+}
+
+/** A crop job is restored into the original locally, after this existing decryption step. */
+export async function loadSmileResultBlob(result: SmileJobStatus, signal?: AbortSignal): Promise<Blob> {
   if (!result.resultUrl || !result.encryption) throw new SmilePreviewError('missing_result');
   const response = await timedFetch(result.resultUrl, { method: 'GET' }, signal, 60_000);
   if (!response.ok) throw new SmilePreviewError('download_failed', response.status);
@@ -151,13 +161,13 @@ export async function loadSmileResult(result: SmileJobStatus, signal?: AbortSign
   try {
     const image = await decryptSmileImage(ciphertext, result.encryption, result.jobId, 'result');
     signal?.throwIfAborted();
-    return URL.createObjectURL(image);
+    return image;
   } catch {
     throw new SmilePreviewError('decryption_failed');
   }
 }
 
-/** The mask editor uses these exact pixels, after orientation and resizing. */
+/** Local cropping and final composition use these exact pixels, after orientation and resizing. */
 export async function normalizeSmilePhoto(file: File): Promise<NormalizedSmilePhoto> {
   if (file.size > 20 * 1024 * 1024) throw new SmilePreviewError('photo_too_large');
   if (file.type && !file.type.startsWith('image/')) throw new SmilePreviewError('unsupported_image');
@@ -218,6 +228,7 @@ export function smileErrorMessage(error: unknown): string {
     if (error.code === 'encryption_unavailable') return 'Браузер не смог зашифровать фото. Обновите Telegram или откройте приложение на другом устройстве.';
     if (/decryption|encrypted_image/.test(error.code)) return 'Не удалось расшифровать результат. Проверьте статус примерки ещё раз.';
     if (error.code === 'processor_changed') return 'Сервис обработки изменился. Откройте примерку заново и проверьте условия перед согласием.';
+    if (error.code === 'smile_update_required') return 'Новые режимы примерки ещё не включены на сервере. Попробуйте позже; фото не отправлено.';
     if (error.code === 'job_processing' || error.status === 409) return 'Примерка ещё обрабатывается. Дождитесь завершения, затем удалите её.';
     if (error.code === 'download_failed') return 'Не удалось скачать PNG. Обновите временную ссылку и попробуйте ещё раз.';
     if (error.code === 'timeout') return 'Время ожидания модели истекло. Проверьте статус этой примерки перед новой попыткой.';

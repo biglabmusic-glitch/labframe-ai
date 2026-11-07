@@ -46,6 +46,7 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
   let permissionsFail = false, bucketPublic = false, providerCalls = 0;
   let providerReady = false, providerReadFail = false;
   let providerOutput = '';
+  const providerRequests: { input: { images: { type: string; data: string }[]; prompt: string } }[] = [];
   let beforeObjectInsert: ((path: string, bytes: Uint8Array) => Promise<void>) | undefined;
   const work: Promise<unknown>[] = [];
   const runtime = globalThis as unknown as { EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void } };
@@ -100,6 +101,7 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
     if (url.hostname === 'polza.ai' && url.pathname === '/api/v1/media') {
       providerCalls++;
       const payload = await request.json();
+      providerRequests.push(payload);
       assertEquals(payload.async, true);
       assert(!JSON.stringify(payload).includes(origin));
       assert(!JSON.stringify(payload).includes(environment.SMILE_ENCRYPTION_KEY));
@@ -136,12 +138,13 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
       assertEquals(providerCalls, 0);
       assertEquals(objects.size, 0);
     });
-    let prepared: { jobId: string; photo: { path: string }; mask: { path: string }; encryption: { algorithm: 'AES-GCM'; key: string } };
+    let prepared: { jobId: string; photo: { path: string }; mask: { path: string }; rehabilitationModes: string[]; encryption: { algorithm: 'AES-GCM'; key: string } };
     await test.step('an invited tester prepares an encrypted private job', async () => {
       const response = await call(102, { action: 'prepare', consent: true });
       assertEquals(response.status, 200);
       assertEquals(response.headers.get('cache-control'), 'no-store');
       prepared = await response.json();
+      assertEquals(prepared.rehabilitationModes, ['total', 'front']);
       assert(prepared.photo.path.endsWith('/source.enc'));
       assert(prepared.mask.path.endsWith('/mask.enc'));
       assertEquals(atob(prepared.encryption.key).length, 32);
@@ -182,6 +185,8 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
       const status = await statusResponse.json();
       assertEquals(status.status, 'done');
       assertEquals(providerCalls, 1);
+      assertEquals(providerRequests[0].input.images.length, 2, 'legacy jobs retain their photo and mask contract');
+      assert(providerRequests[0].input.prompt.includes('Leave the lower teeth'));
       const resultPath = `${prepared.photo.path.slice(0, -'source.enc'.length)}result.enc`;
       const cipher = objects.get(resultPath);
       assert(cipher);
@@ -266,6 +271,56 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
       const remaining = [...objects.keys()].filter((path) => path.startsWith(`102/smile-pilot/${job.jobId}/`));
       assertEquals(remaining, [`102/smile-pilot/${job.jobId}/running.json`]);
       assertEquals(providerCalls, 2);
+    });
+    await test.step('crop modes advertise support and process both arches with one provider photo', async () => {
+      for (const rehabilitationMode of ['total', 'front'] as const) {
+        const response = await call(102, { action: 'prepare', consent: true });
+        assertEquals(response.status, 200);
+        const job = await response.json();
+        assertEquals(job.rehabilitationModes, ['total', 'front']);
+        const source = new Image(64, 64).fill(0xaabbccff);
+        const mask = new Image(64, 64).fill(0x000000ff);
+        for (let y = 36; y < 40; y++) for (let x = 22; x < 34; x++) mask.setPixelAt(x + 1, y + 1, 0xffffffff);
+        for (let y = 44; y < 48; y++) for (let x = 23; x < 33; x++) mask.setPixelAt(x + 1, y + 1, 0xffffffff);
+        for (const [kind, image, path] of [['photo', source, job.photo.path], ['mask', mask, job.mask.path]] as const) {
+          const encrypted = await encryptSmileImage(new Blob([copiedBuffer(await image.encode())]), job.encryption, job.jobId, kind);
+          objects.set(path, new Uint8Array(await encrypted.arrayBuffer()));
+        }
+        const callsBefore = providerCalls;
+        const baseSettings = { rehabilitationMode, shape: 'rounded', zenithMode: 'preserve', translucency: 'natural' };
+        const invalid = await call(102, { action: 'generate', jobId: job.jobId, settings: baseSettings });
+        assertEquals(invalid.status, 400, 'a missing shared shade must fail before a paid request');
+        assertEquals(providerCalls, callsBefore);
+        const generated = await call(102, { action: 'generate', jobId: job.jobId, settings: { ...baseSettings, shade: 'A1' } });
+        assertEquals(generated.status, 200);
+        await Promise.all(work);
+        assertEquals(providerCalls, callsBefore + 1);
+        const request = providerRequests.at(-1)!;
+        assertEquals(request.input.images.length, 1);
+        assertEquals(request.input.images[0].type, 'base64');
+        assert(request.input.prompt.includes('BOTH the UPPER and LOWER jaws'));
+        assert(request.input.prompt.includes('COMMON SHADE: A1'));
+        assert(!request.input.prompt.includes('Leave the lower teeth'));
+        assert(!request.input.prompt.includes('SECOND image'));
+        if (rehabilitationMode === 'front') {
+          assert(request.input.prompt.includes('from canine to canine inclusive'));
+          assert(request.input.prompt.includes('ALL premolars and molars on BOTH sides of BOTH jaws'));
+        } else assert(request.input.prompt.includes('change ALL already visible teeth'));
+        const status = await (await call(102, { action: 'status', jobId: job.jobId })).json();
+        assertEquals(status.status, 'done');
+        const resultPath = `${job.photo.path.slice(0, -'source.enc'.length)}result.enc`;
+        const encryptedResult = objects.get(resultPath);
+        assert(encryptedResult);
+        const plain = await decryptSmileImage(new Blob([copiedBuffer(encryptedResult)]), status.encryption, job.jobId, 'result');
+        const result = await Image.decode(new Uint8Array(await plain.arrayBuffer()));
+        assertEquals(result.getPixelAt(28, 39), 0x112233ff, 'upper interior uses generated pixels');
+        assertEquals(result.getPixelAt(28, 47), 0x112233ff, 'lower interior uses generated pixels');
+        assertEquals(result.getPixelAt(1, 1), source.getPixelAt(1, 1));
+        assertEquals((await (await call(102, { action: 'generate', jobId: job.jobId })).json()).status, 'done');
+        assertEquals(providerCalls, callsBefore + 1, 'status and repeat clicks cannot generate twice');
+        assertEquals((await call(102, { action: 'delete', jobId: job.jobId })).status, 200);
+        assertEquals((await call(102, { action: 'status', jobId: job.jobId })).status, 404);
+      }
     });
   } finally {
     globalThis.fetch = originalFetch;

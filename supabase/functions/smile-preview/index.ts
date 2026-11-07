@@ -197,7 +197,7 @@ async function runJob(paths: Paths, manifest: SmileManifest, settings: SmileSett
     const loaded = await loadJobInputs(paths, manifest, signal);
     const cropped = await withSmileSignal(smileProviderInputs(loaded.inputs), signal);
     submitted=true;
-    const task = manifest.providerName==='fal' ? await createFalSmileTask({photoData:cropped.photo,maskData:cropped.mask,settings,signal}) : await createSmileTask({
+    const task = manifest.providerName==='fal' ? await createFalSmileTask({photoData:cropped.photo,maskData:cropped.mask,settings,signal,model:manifest.providerModel}) : await createSmileTask({
       photoData: cropped.photo, maskData: cropped.mask, settings,
       apiKey: Deno.env.get('POLZA_API_KEY')!,
       model: manifest.providerModel || Deno.env.get('POLZA_SMILE_MODEL') || Deno.env.get('POLZA_IMAGE_MODEL') || 'google/gemini-3.1-flash-image-preview',
@@ -223,7 +223,7 @@ async function resumeJob(paths: Paths, manifest: SmileManifest): Promise<SmileMa
   if (manifest.status !== 'processing' || !manifest.providerId) return manifest;
   try {
     const signal = AbortSignal.timeout(20_000);
-    const task = manifest.providerName==='fal' ? await pollFalSmileTask(manifest.providerId,signal) : await pollSmileTask({
+    const task = manifest.providerName==='fal' ? await pollFalSmileTask(manifest.providerId,signal,manifest.providerModel) : await pollSmileTask({
       id: manifest.providerId, apiKey: Deno.env.get('POLZA_API_KEY')!,
       baseUrl: Deno.env.get('POLZA_MEDIA_BASE_URL') || undefined, signal,
     });
@@ -269,7 +269,7 @@ Deno.serve(async (req) => {
         io(db.storage.from(BUCKET).createSignedUploadUrl(paths.mask, { upsert: false })),
       ]);
       if (photo.error || mask.error || !photo.data || !mask.data) throw new SmileError('storage_error', 503);
-      return privateJson({ jobId, encryption, photo: { uploadUrl: photo.data.signedUrl, path: paths.photo }, mask: { uploadUrl: mask.data.signedUrl, path: paths.mask } });
+      return privateJson({ jobId, encryption, rehabilitationModes: ['total', 'front'], photo: { uploadUrl: photo.data.signedUrl, path: paths.photo }, mask: { uploadUrl: mask.data.signedUrl, path: paths.mask } });
     }
 
     const paths = smilePaths(userId, body.jobId);
