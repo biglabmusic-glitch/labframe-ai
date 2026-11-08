@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertThrows } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
-  compositeSmileCropPixels, locateSmileCrop, smileCropMask, SmileCropError,
+  compositeSmileCropPixels, locateManualSmileCrop, locateSmileCrop, smileCropMask, SmileCropError,
   type SmileCropGeometry, type SmileCropPoint,
 } from '../app/src/lib/smile-crop-geometry.ts';
 
@@ -19,6 +19,30 @@ function face(): SmileCropPoint[] {
   }
   return points;
 }
+
+Deno.test('already-cropped smile needs no face and its confirmed contour fits the existing server mask limits', () => {
+  for (const [width, height] of [[600, 400], [1600, 128], [1280, 1600]]) {
+    const points = Array.from({ length: 8 }, (_, i) => ({
+      x: width * (0.5 + 0.32 * Math.cos(Math.PI + i * Math.PI / 4)),
+      y: height * (0.52 + 0.18 * Math.sin(Math.PI + i * Math.PI / 4)),
+    }));
+    const g = locateManualSmileCrop(width, height, points), mask = smileCropMask(g);
+    const selected = mask.reduce((count, p) => count + Number(p !== 0), 0);
+    assert(selected > 16 && selected / mask.length <= 0.45);
+    assert(g.region.width < width || g.region.height < height);
+    assert((Math.max(...points.map((p) => p.y)) - Math.min(...points.map((p) => p.y)) + 1) / g.height <= 0.55);
+    assertEquals(g.sourceWidth, width); assertEquals(g.sourceHeight, height);
+  }
+});
+
+Deno.test('cropped-smile confirmation rejects crossed, folded, out-of-frame and tiny contours', () => {
+  const box = [{ x: 100, y: 100 }, { x: 300, y: 100 }, { x: 300, y: 180 }, { x: 100, y: 180 }];
+  for (const points of [[], [box[0], box[2], box[1], box[3]], box.map((p) => ({ ...p, x: p.x - 200 })),
+    box.map((p) => ({ ...p, y: 100 })), box.map((p) => ({ ...p, x: p.x / 10 })),
+    [box[0], { x: NaN, y: 140 }, box[2]]]) assertThrows(() => locateManualSmileCrop(600, 400, points), SmileCropError);
+  const star = Array.from({ length: 5 }, (_, i) => ({ x: 300 + 120 * Math.cos(i * Math.PI * 4 / 5), y: 200 + 65 * Math.sin(i * Math.PI * 4 / 5) }));
+  assertThrows(() => locateManualSmileCrop(600, 400, star), SmileCropError);
+});
 
 Deno.test('mouth crop excludes portrait eyes/nose and uses black padding for server mask limits', () => {
   const g = locateSmileCrop(1000, 1000, [face()]), mask = smileCropMask(g);

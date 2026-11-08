@@ -1,6 +1,6 @@
 import {
-  compositeSmileCropPixels, locateSmileCrop, smileCropMask, SmileCropError,
-  type SmileCropGeometry,
+  compositeSmileCropPixels, locateManualSmileCrop, locateSmileCrop, smileCropMask, SmileCropError,
+  type SmileCropGeometry, type SmileCropPoint,
 } from './smile-crop-geometry';
 export { SmileCropError } from './smile-crop-geometry';
 export type { SmileCropGeometry } from './smile-crop-geometry';
@@ -40,6 +40,37 @@ async function png(image: HTMLCanvasElement, signal?: AbortSignal) {
   return blob;
 }
 
+async function rasterizeCrop(bitmap: ImageBitmap, geometry: SmileCropGeometry, signal?: AbortSignal): Promise<PreparedSmileCrop> {
+  const binary = smileCropMask(geometry), { width, height, region, offsetX, offsetY } = geometry;
+  const crop = canvas(width, height); crop.context.fillStyle = '#000'; crop.context.fillRect(0, 0, width, height);
+  crop.context.drawImage(bitmap, region.x, region.y, region.width, region.height, offsetX, offsetY, region.width, region.height);
+  const mask = canvas(width, height), rgba = new Uint8ClampedArray(width * height * 4);
+  for (let p = 0; p < binary.length; p++) {
+    rgba[p * 4] = rgba[p * 4 + 1] = rgba[p * 4 + 2] = binary[p]; rgba[p * 4 + 3] = 255;
+  }
+  mask.context.putImageData(new ImageData(rgba, width, height), 0, 0);
+  const [photoBlob, maskBlob] = await Promise.all([png(crop.image, signal), png(mask.image, signal)]);
+  signal?.throwIfAborted();
+  return { ...geometry, photo: photoBlob, mask: maskBlob };
+}
+
+/** The cropped-smile path never loads MediaPipe and never requires eyes/nose. */
+export async function prepareManualSmileCrop(photo: SmileCropPhoto, boundary: readonly SmileCropPoint[],
+  signal?: AbortSignal): Promise<PreparedSmileCrop> {
+  signal?.throwIfAborted();
+  let bitmap: ImageBitmap | undefined;
+  try {
+    const geometry = locateManualSmileCrop(photo.width, photo.height, boundary);
+    bitmap = await createImageBitmap(photo.blob); signal?.throwIfAborted();
+    if (bitmap.width !== photo.width || bitmap.height !== photo.height) throw new SmileCropError('crop_unavailable');
+    return await rasterizeCrop(bitmap, geometry, signal);
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof SmileCropError) throw error;
+    throw new SmileCropError('crop_unavailable');
+  } finally { bitmap?.close(); }
+}
+
 /** Local face landmarks locate the mouth. No SAM, tooth numbering or external
  * analysis service is loaded. A failed detection never releases the original. */
 export async function prepareSmileCrop(photo: SmileCropPhoto, signal?: AbortSignal): Promise<PreparedSmileCrop> {
@@ -56,17 +87,7 @@ export async function prepareSmileCrop(photo: SmileCropPhoto, signal?: AbortSign
     await new Promise<void>((resolve) => setTimeout(resolve, 0)); signal?.throwIfAborted();
     const result = model.detect(analysis.image); signal?.throwIfAborted();
     const geometry = locateSmileCrop(photo.width, photo.height, result.faceLandmarks);
-    const binary = smileCropMask(geometry), { width, height, region, offsetX, offsetY } = geometry;
-    const crop = canvas(width, height); crop.context.fillStyle = '#000'; crop.context.fillRect(0, 0, width, height);
-    crop.context.drawImage(bitmap, region.x, region.y, region.width, region.height, offsetX, offsetY, region.width, region.height);
-    const mask = canvas(width, height), rgba = new Uint8ClampedArray(width * height * 4);
-    for (let p = 0; p < binary.length; p++) {
-      rgba[p * 4] = rgba[p * 4 + 1] = rgba[p * 4 + 2] = binary[p]; rgba[p * 4 + 3] = 255;
-    }
-    mask.context.putImageData(new ImageData(rgba, width, height), 0, 0);
-    const [photoBlob, maskBlob] = await Promise.all([png(crop.image, signal), png(mask.image, signal)]);
-    signal?.throwIfAborted();
-    return { ...geometry, photo: photoBlob, mask: maskBlob };
+    return await rasterizeCrop(bitmap, geometry, signal);
   } catch (error) {
     signal?.throwIfAborted();
     if (error instanceof SmileCropError) throw error;

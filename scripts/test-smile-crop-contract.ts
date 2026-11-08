@@ -1,6 +1,6 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { Image } from 'https://deno.land/x/imagescript@1.2.17/mod.ts';
-import { compositeSmileCropPixels, locateSmileCrop, smileCropMask, type SmileCropPoint } from '../app/src/lib/smile-crop-geometry.ts';
+import { compositeSmileCropPixels, locateManualSmileCrop, locateSmileCrop, smileCropMask, type SmileCropPoint } from '../app/src/lib/smile-crop-geometry.ts';
 import { compositeSmile, decodeSmileInputs, smileProviderInputs } from '../supabase/functions/_shared/smile-preview.ts';
 
 /** Synthetic pixels and fixed approximate lip landmarks isolate the raster
@@ -31,7 +31,8 @@ Deno.test('synthetic fixture: mouth-only upload survives real backend framing/co
     source.bitmap.set([x % 200, y % 200, (x + y) % 200, 255], p);
   }
   assertEquals([source.width, source.height], [600, 400]);
-  const g = locateSmileCrop(source.width, source.height, [fixtureLandmarks()]);
+  const boundary = Array.from({ length: 8 }, (_, i) => ({ x: 313 + 119 * Math.cos(i * Math.PI / 4), y: 216 + 54 * Math.sin(i * Math.PI / 4) }));
+  for (const g of [locateSmileCrop(source.width, source.height, [fixtureLandmarks()]), locateManualSmileCrop(source.width, source.height, boundary)]) {
   assert(g.region.y > 100 && g.region.y + g.region.height < 340);
   assert(g.region.width < source.width && g.region.height < source.height);
   const binary = smileCropMask(g), upload = new Image(g.width, g.height).fill(0x000000ff);
@@ -65,4 +66,5 @@ Deno.test('synthetic fixture: mouth-only upload survives real backend framing/co
   }
   assert(protectedPixels > source.width * source.height * 0.8);
   assert(changedMouthPixels > 100 && upperChanges > 100 && lowerChanges > 100);
+  }
 });

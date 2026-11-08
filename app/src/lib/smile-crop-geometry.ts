@@ -33,6 +33,45 @@ function bounds(points: readonly SmileCropPoint[]) {
     right: Math.max(...points.map((p) => p.x)), bottom: Math.max(...points.map((p) => p.y)) };
 }
 
+/** An explicit mouth contour works with an already-cropped smile, without a face model.
+ * Points use original image pixels and are confirmed locally before any upload. */
+export function locateManualSmileCrop(width: number, height: number,
+  boundary: readonly SmileCropPoint[]): SmileCropGeometry {
+  if (!dimensions(width, height) || boundary.length < 3 || boundary.length > 32 ||
+    boundary.some((p) => !Number.isFinite(p.x + p.y) || p.x < 0 || p.y < 0 || p.x > width || p.y > height)) {
+    throw new SmileCropError('crop_unavailable');
+  }
+  const cross = (a: SmileCropPoint, b: SmileCropPoint, c: SmileCropPoint) =>
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  for (let i = 0; i < boundary.length; i++) for (let j = i + 2; j < boundary.length; j++) {
+    if (i === 0 && j === boundary.length - 1) continue;
+    const a = boundary[i], b = boundary[(i + 1) % boundary.length], c = boundary[j], d = boundary[(j + 1) % boundary.length];
+    if (Math.max(a.x, b.x) >= Math.min(c.x, d.x) && Math.max(c.x, d.x) >= Math.min(a.x, b.x) &&
+      Math.max(a.y, b.y) >= Math.min(c.y, d.y) && Math.max(c.y, d.y) >= Math.min(a.y, b.y) &&
+      cross(a, b, c) * cross(a, b, d) <= 0 && cross(c, d, a) * cross(c, d, b) <= 0) throw new SmileCropError('crop_unavailable');
+  }
+  // The editor uses a convex inner-lip contour. Crossed or folded handles must
+  // never silently create a different edit area from the one the user sees.
+  const turns = boundary.map((p, i) => cross(p, boundary[(i + 1) % boundary.length], boundary[(i + 2) % boundary.length]));
+  if (turns.some((n) => n < 0) && turns.some((n) => n > 0)) throw new SmileCropError('crop_unavailable');
+  const b = bounds(boundary), mouthWidth = b.right - b.left, mouthHeight = b.bottom - b.top;
+  if (mouthWidth < 64) throw new SmileCropError('mouth_too_small');
+  if (mouthHeight < 5) throw new SmileCropError('mouth_closed');
+  if (mouthHeight > mouthWidth || turns.every((n) => n === 0)) throw new SmileCropError('crop_unavailable');
+  const x = Math.max(0, Math.floor(b.left - mouthWidth * 0.12));
+  const y = Math.max(0, Math.floor(b.top - mouthWidth * 0.08));
+  const right = Math.min(width, Math.ceil(b.right + mouthWidth * 0.12));
+  const bottom = Math.min(height, Math.ceil(b.bottom + mouthWidth * 0.08));
+  const region = { x, y, width: right - x, height: bottom - y };
+  const frameHeight = Math.max(64, region.height, Math.ceil((mouthHeight + 2) / 0.5));
+  const frameWidth = Math.max(64, region.width,
+    Math.ceil((mouthWidth + 2) * (mouthHeight + 2) / (frameHeight * 0.4)));
+  if (!dimensions(frameWidth, frameHeight)) throw new SmileCropError('crop_unavailable');
+  const offsetX = Math.floor((frameWidth - region.width) / 2), offsetY = Math.floor((frameHeight - region.height) / 2);
+  return { sourceWidth: width, sourceHeight: height, width: frameWidth, height: frameHeight, region, offsetX, offsetY,
+    polygon: boundary.map((p) => ({ x: p.x - x + offsetX, y: p.y - y + offsetY })) };
+}
+
 /** A missing/ambiguous face abstains; it never falls back to uploading the photo. */
 export function locateSmileCrop(width: number, height: number,
   faces: readonly (readonly SmileCropPoint[])[]): SmileCropGeometry {

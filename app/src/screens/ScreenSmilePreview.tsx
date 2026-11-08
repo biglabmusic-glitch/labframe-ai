@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Screen } from '../components/Screen';
+import { SmileCropBoundary } from '../components/SmileCropBoundary';
 import type { PreparedSmileCrop } from '../lib/smile-crop';
+import type { SmileCropPoint } from '../lib/smile-crop-geometry';
 import {
   deleteSmileLocalSource, isSmileCropJob, loadSmileLocalSource,
   markSmileCropJob, saveSmileLocalSource,
@@ -55,7 +57,7 @@ function ShapeGlyph({ shape }: { shape: SmileShape }) {
 function cropErrorMessage(error: unknown): string {
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
   if (code === 'multiple_faces') return 'На фото несколько лиц. Выберите отдельный портрет человека с открытой улыбкой.';
-  if (code === 'no_face') return 'Не удалось найти улыбку. Выберите фронтальный портрет: лицо целиком, рот открыт, зубы хорошо видны.';
+  if (code === 'no_face') return 'Не удалось найти улыбку автоматически. Если на фото только рот, выберите «Обрезанная улыбка» и подтвердите область.';
   if (code === 'mouth_closed') return 'Зубы почти не видны. Выберите фото с открытой улыбкой.';
   if (code === 'mouth_too_small') return 'Улыбка слишком мелкая. Выберите более крупное и чёткое фото.';
   if (code === 'output_dimensions') return 'Размер ответа не совпал с фрагментом улыбки. Вклейка остановлена; исходное фото сохранено.';
@@ -71,6 +73,8 @@ export function ScreenSmilePreview() {
 
   const [photo, setPhoto] = useState<Photo | null>(null);
   const [normalizing, setNormalizing] = useState(false);
+  const [photoKind, setPhotoKind] = useState<'portrait' | 'cropped'>('portrait');
+  const [manualBoundary, setManualBoundary] = useState<SmileCropPoint[] | null>(null);
   const [mode, setMode] = useState<SmileRehabilitationMode>('total');
   const [shade, setShade] = useState<SmileShade>('BL1');
   const [shape, setShape] = useState<SmileShape>('original');
@@ -112,12 +116,19 @@ export function ScreenSmilePreview() {
 
   useEffect(() => {
     if (!photo || !editing) return;
+    if (photoKind === 'cropped' && !manualBoundary) {
+      setCrop(null); setCropPreviewUrl(''); setCropState('idle');
+      setCropNote('Подтвердите область улыбки на обрезанном снимке.');
+      return;
+    }
     const controller = new AbortController(), revision = ++cropRevision.current;
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 45_000);
     setCrop(null); setCropPreviewUrl(''); setCropState('loading');
-    setCropNote('Находим улыбку на устройстве. Полное фото никуда не отправляется.');
-    void import('../lib/smile-crop').then((module) => module.prepareSmileCrop(photo, controller.signal)).then((prepared) => {
+    setCropNote(photoKind === 'cropped' ? 'Готовим подтверждённый фрагмент улыбки на устройстве.' : 'Находим улыбку на устройстве. Полное фото никуда не отправляется.');
+    void import('../lib/smile-crop').then((module) => photoKind === 'cropped' && manualBoundary
+      ? module.prepareManualSmileCrop(photo, manualBoundary, controller.signal)
+      : module.prepareSmileCrop(photo, controller.signal)).then((prepared) => {
       if (controller.signal.aborted || cropRevision.current !== revision) return;
       setCrop(prepared); setCropPreviewUrl(URL.createObjectURL(prepared.photo));
       setCropState('ready'); setCropNote('');
@@ -126,7 +137,7 @@ export function ScreenSmilePreview() {
       setCrop(null); setCropState('failed'); setCropNote(cropErrorMessage(err));
     }).finally(() => clearTimeout(timer));
     return () => { cropRevision.current++; controller.abort(); clearTimeout(timer); };
-  }, [photo, editing, cropAttempt]);
+  }, [photo, editing, cropAttempt, photoKind, manualBoundary]);
 
   useEffect(() => {
     if (!allowed || phase !== 'processing' || !jobId) return;
@@ -200,6 +211,7 @@ export function ScreenSmilePreview() {
       if (revision !== normalizingRevision.current) return;
       setPhoto({ ...normalized, url: URL.createObjectURL(normalized.blob) });
       setCrop(null); setConsent(false); setResultUrl(''); setCropOnlyResult(false);
+      setManualBoundary(null);
       setLocalSourceSaved(true); activeSource.current = null;
       rememberSmileJobId(null); setJobId(null); setPhase('editing');
     } catch (err) {
@@ -207,6 +219,16 @@ export function ScreenSmilePreview() {
     } finally {
       if (revision === normalizingRevision.current) setNormalizing(false);
     }
+  }
+
+  function changePhotoKind(next: 'portrait' | 'cropped') {
+    if (next === photoKind) return;
+    setPhotoKind(next); setManualBoundary(null); setCrop(null); setCropPreviewUrl('');
+    setCropState('idle'); setCropNote(''); setConsent(false);
+  }
+
+  function changeBoundary() {
+    setManualBoundary(null); setCrop(null); setCropPreviewUrl(''); setCropState('idle'); setConsent(false);
   }
 
   async function generate() {
@@ -270,6 +292,7 @@ export function ScreenSmilePreview() {
       if (controller.signal.aborted) return;
       rememberSmileJobId(null); setJobId(null); setPhase('editing');
       activeSource.current = null; setResultUrl(''); setConsent(false); setCropOnlyResult(false);
+      setManualBoundary(null); setCrop(null); setCropPreviewUrl(''); setCropState('idle');
       if (!keepPhoto) { setPhoto(null); setCrop(null); setCropPreviewUrl(''); setCropState('idle'); }
     } catch (err) {
       if (!controller.signal.aborted) setError(smileErrorMessage(err));
@@ -294,7 +317,7 @@ export function ScreenSmilePreview() {
       <header className="smile-hero">
         <span className="smile-eyebrow mono">LABFRAME · SMILE STUDIO</span>
         <h1>Примерить <span>улыбку</span></h1>
-        <p>Выберите вариант реабилитации, форму и оттенок. Область улыбки подготовится автоматически.</p>
+        <p>Выберите вариант реабилитации, форму и оттенок. Можно загрузить портрет или обрезанную улыбку.</p>
       </header>
       <p className="smile-disclaimer"><span aria-hidden="true">i</span>Визуальная примерка. Не клинический план и не гарантия результата лечения.</p>
 
@@ -330,13 +353,17 @@ export function ScreenSmilePreview() {
             <li className={photo ? 'is-current' : ''}><span>02</span>Улыбка</li>
             <li className={cropState === 'ready' && consent ? 'is-current' : ''}><span>03</span>Создание</li>
           </ol>
-          <FormSection step="01" title="Начнём с фотографии" hint="Фронтальный портрет с открытой улыбкой. Зубы обеих челюстей должны быть хорошо видны.">
+          <FormSection step="01" title="Начнём с фотографии" hint="Подойдёт портрет или уже обрезанное фото улыбки. Видимые зубы должны быть чёткими.">
+            <div className="smile-photo-kinds" role="group" aria-label="Вид фотографии">
+              <button type="button" className={photoKind === 'portrait' ? 'is-selected' : ''} aria-pressed={photoKind === 'portrait'} onClick={() => changePhotoKind('portrait')}><strong>Портрет</strong><span>Найдём рот автоматически на устройстве</span></button>
+              <button type="button" className={photoKind === 'cropped' ? 'is-selected' : ''} aria-pressed={photoKind === 'cropped'} onClick={() => changePhotoKind('cropped')}><strong>Обрезанная улыбка</strong><span>Фото рта без полного лица</span></button>
+            </div>
             <input ref={fileInput} className="smile-file-input" type="file" accept="image/*" onChange={(event) => { void pickPhoto(event.target.files?.[0]); event.target.value = ''; }} disabled={normalizing} aria-label="Выбрать фотографию пациента" />
             <button type="button" className={'smile-upload' + (photo ? ' has-photo' : '')} onClick={() => fileInput.current?.click()} disabled={normalizing}>
               {photo ? <><img src={photo.url} alt="Исходное фото, которое остаётся на устройстве" /><span className="smile-upload-overlay">Заменить фото ↗</span></> : <><span className="smile-upload-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="5" stroke="currentColor" strokeWidth="1.5" /><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" /><path d="m4 17 5-5 4 4 3-3 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span><strong>{normalizing ? 'Подготавливаем фото…' : 'Выбрать фотографию'}</strong><span>Открытая улыбка, хороший свет, зубы в фокусе</span><span className="smile-upload-formats mono">JPEG / PNG · до 20 МБ</span></>}
             </button>
             {photo && <p className="smile-photo-meta mono">PNG · {photo.width} × {photo.height} · {(photo.blob.size / 1024 / 1024).toFixed(1)} МБ</p>}
-            {!photo && <p className="smile-micro">Полное фото остаётся на устройстве. Для AI автоматически подготовим только область рта.</p>}
+            {!photo && <p className="smile-micro">{photoKind === 'portrait' ? 'Полное фото остаётся на устройстве. Для AI автоматически подготовим только область рта.' : 'Полное лицо не требуется. После загрузки подтвердите область улыбки.'}</p>}
           </FormSection>
 
           {photo && <>
@@ -357,11 +384,14 @@ export function ScreenSmilePreview() {
             </FormSection>
 
             <FormSection step="03" title="Фрагмент для AI" hint="Внешняя модель получит только этот фрагмент. Готовую улыбку вклеим в исходное фото на устройстве.">
+              {photoKind === 'cropped' && <SmileCropBoundary key={photo.url} url={photo.url} width={photo.width} height={photo.height}
+                preparing={cropState === 'loading'} onChange={changeBoundary} onConfirm={(points) => { setConsent(false); setManualBoundary(points); }} />}
               {cropState === 'loading' && <p role="status" aria-live="polite" className="smile-hint">{cropNote}</p>}
               {cropState === 'failed' && <p role="alert" className="smile-hint">{cropNote}</p>}
               {cropPreviewUrl && <img className="smile-crop-preview" src={cropPreviewUrl} alt="Только эта область рта будет отправлена AI" />}
-              {cropState !== 'loading' && <button type="button" className="smile-text-button" onClick={() => setCropAttempt((n) => n + 1)}>Определить область заново</button>}
-              {cropState === 'ready' && <p className="smile-mask-note is-ready">✓ Фрагмент улыбки подготовлен автоматически</p>}
+              {photoKind === 'portrait' && cropState !== 'loading' && <button type="button" className="smile-text-button" onClick={() => { setConsent(false); setCropAttempt((n) => n + 1); }}>Определить область заново</button>}
+              {photoKind === 'portrait' && cropState === 'failed' && <button type="button" className="smile-secondary" onClick={() => changePhotoKind('cropped')}>Продолжить с обрезанной улыбкой</button>}
+              {cropState === 'ready' && <p className="smile-mask-note is-ready">{photoKind === 'portrait' ? '✓ Фрагмент улыбки подготовлен автоматически' : '✓ Подтверждённый фрагмент улыбки готов'}</p>}
             </FormSection>
 
             <FormSection step="04" title="Создание примерки">
@@ -370,7 +400,8 @@ export function ScreenSmilePreview() {
               <label className="smile-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>У меня есть разрешение использовать это фото и передать показанный фрагмент улыбки внешнему AI.</span></label>
               <p className="smile-cost-note">В закрытом тесте примерки не списываются с вашего баланса генераций.</p>
               <button type="button" className="smile-primary smile-generate" disabled={!canGenerate} onClick={() => void generate()}>Создать примерку <span aria-hidden="true">↗</span></button>
-              {cropState !== 'ready' && <p className="smile-micro">Для запуска нужен автоматически подготовленный фрагмент улыбки.</p>}
+              {cropState !== 'ready' && <p className="smile-micro" role="status">{cropState === 'loading' ? cropNote : cropState === 'failed' ? cropNote : photoKind === 'cropped' ? 'В разделе «Фрагмент для AI» подтвердите область улыбки.' : 'Для запуска подготовьте фрагмент улыбки в разделе выше.'}</p>}
+              {cropState === 'ready' && !consent && <p className="smile-micro">Для запуска отметьте согласие на обработку фото.</p>}
             </FormSection>
           </>}
         </>}

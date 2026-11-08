@@ -35,6 +35,15 @@
 .smile-page input:focus-visible,
 .smile-page textarea:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 3px; }
 .smile-page button:disabled { cursor: default; opacity: .42; }
+.smile-photo-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.smile-photo-kinds button { display: flex; flex-direction: column; gap: 7px; min-height: 90px; padding: 12px; border: 1px solid var(--c-line); border-radius: 14px; background: var(--c-bg-2); color: var(--c-on-dark-2); text-align: left; }
+.smile-photo-kinds strong { font-size: 12px; line-height: 1.5; }
+.smile-photo-kinds span { color: var(--smile-muted); font-size: 11px; line-height: 1.5; }
+.smile-photo-kinds .is-selected { border-color: var(--c-accent); background: rgba(147,213,225,.09); color: var(--c-accent); }
+.smile-boundary-editor { margin-bottom: 16px; }
+.smile-boundary-editor svg { display: block; width: 100%; height: auto; border-radius: 14px; background: #000; touch-action: none; user-select: none; }
+.smile-boundary-editor [data-point] { cursor: grab; }
+.smile-boundary-editor .smile-secondary { margin-top: 12px; }
 .smile-modes { display: grid; grid-template-columns: 1fr; gap: 9px; }
 .smile-modes button { display: flex; flex-direction: column; gap: 7px; min-height: 82px; padding: 16px; border: 1px solid var(--c-line); border-radius: 14px; background: var(--c-bg-2); color: var(--c-on-dark-2); text-align: left; }
 .smile-modes button strong { font-size: 14px; font-weight: 600; line-height: 1.4; }
