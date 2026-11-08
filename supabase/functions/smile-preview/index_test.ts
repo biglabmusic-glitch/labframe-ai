@@ -45,6 +45,7 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
   let handler: ((request: Request) => Promise<Response>) | undefined;
   let permissionsFail = false, bucketPublic = false, providerCalls = 0;
   let providerReady = false, providerReadFail = false;
+  let providerSubmissionMode: 'pending' | 'inline' | 'rejected' | 'unknown' = 'pending';
   let providerOutput = '';
   const providerRequests: { input: { images: { type: string; data: string }[]; prompt: string } }[] = [];
   let beforeObjectInsert: ((path: string, bytes: Uint8Array) => Promise<void>) | undefined;
@@ -100,6 +101,8 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
     }
     if (url.hostname === 'polza.ai' && url.pathname === '/api/v1/media') {
       providerCalls++;
+      if (providerSubmissionMode === 'rejected') return new Response(null, { status: 422 });
+      if (providerSubmissionMode === 'unknown') throw new TypeError('fixture lost submission response');
       const payload = await request.json();
       providerRequests.push(payload);
       assertEquals(payload.async, true);
@@ -109,8 +112,11 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
       assert(image.width < 64 && image.height < 64, 'the provider receives only the selected crop');
       image.fill(0x112233ff);
       providerOutput = `data:image/png;base64,${asBase64(await image.encode())}`;
-      return Response.json({ id: 'aig_fixture', status: 'pending' });
+      return Response.json(providerSubmissionMode === 'inline'
+        ? { id: 'aig_fixture', status: 'completed', data: { url: 'https://polza.ai/fixture-result.png' } }
+        : { id: 'aig_fixture', status: 'pending' });
     }
+    if (url.hostname === 'polza.ai' && url.pathname === '/fixture-result.png') return new Response(null, { status: 503 });
     if (url.hostname === 'polza.ai' && url.pathname === '/api/v1/media/aig_fixture') {
       if (providerReadFail) return Response.json({ error: 'unavailable' }, { status: 503 });
       return Response.json(providerReady ? { status: 'completed', data: { url: providerOutput } }
@@ -321,6 +327,41 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
         assertEquals((await call(102, { action: 'delete', jobId: job.jobId })).status, 200);
         assertEquals((await call(102, { action: 'status', jobId: job.jobId })).status, 404);
       }
+    });
+    await test.step('download recovery retains provider ID; rejected and unacknowledged submissions remain distinct', async () => {
+      for (const submissionMode of ['inline', 'rejected', 'unknown'] as const) {
+        providerSubmissionMode = submissionMode;
+        const job = await (await call(102, { action: 'prepare', consent: true })).json();
+        const photo = new Image(64, 64).fill(0xaabbccff), mask = new Image(64, 64).fill(0x000000ff);
+        for (let y = 40; y < 46; y++) for (let x = 20; x < 32; x++) mask.setPixelAt(x + 1, y + 1, 0xffffffff);
+        for (const [kind, image, path] of [['photo', photo, job.photo.path], ['mask', mask, job.mask.path]] as const) {
+          const cipher = await encryptSmileImage(new Blob([copiedBuffer(await image.encode())]), job.encryption, job.jobId, kind);
+          objects.set(path, new Uint8Array(await cipher.arrayBuffer()));
+        }
+        const callsBefore = providerCalls;
+        await call(102, { action: 'generate', jobId: job.jobId, settings: {
+          teeth: [11], shades: { '11': 'BL1' }, shape: 'original', zenithMode: 'preserve', translucency: 'natural',
+        } });
+        await Promise.all(work);
+        const path = job.photo.path.replace('source.enc', 'manifest.json');
+        const manifest = JSON.parse(new TextDecoder().decode(objects.get(path)));
+        if (submissionMode === 'inline') {
+          assertEquals(manifest.providerId, 'aig_fixture'); assertEquals(manifest.status, 'processing');
+          providerReady = true;
+          assertEquals((await (await call(102, { action: 'status', jobId: job.jobId })).json()).status, 'done');
+        } else if (submissionMode === 'rejected') {
+          assertEquals(manifest.status, 'failed'); assertEquals(manifest.errorCode, 'provider_rejected');
+        } else {
+          assertEquals(manifest.status, 'processing'); assertEquals(manifest.providerId, undefined);
+          manifest.startedAt = Date.now() - 120_000;
+          objects.set(path, new TextEncoder().encode(JSON.stringify(manifest)));
+          objects.set(job.photo.path.replace('source.enc', 'running.json'), new TextEncoder().encode(JSON.stringify({ startedAt: manifest.startedAt })));
+          const status = await (await call(102, { action: 'status', jobId: job.jobId })).json();
+          assertEquals(status.status, 'processing'); assertEquals(status.stage, 'confirmation_pending');
+        }
+        assertEquals(providerCalls, callsBefore + 1, 'recovery never creates a second generation');
+      }
+      providerSubmissionMode = 'pending';
     });
   } finally {
     globalThis.fetch = originalFetch;

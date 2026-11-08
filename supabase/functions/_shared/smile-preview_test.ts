@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertRejects, assertThrows } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { Image } from 'https://deno.land/x/imagescript@1.2.17/mod.ts';
 import {
-  buildSmilePrompt, compositeSmile, decodeSmileInputs, pngDimensions, recoverSmileManifest, requestSmileEdit,
+  buildSmilePrompt, compositeSmile, createSmileTask, decodeSmileInputs, pngDimensions, recoverSmileManifest, requestSmileEdit,
   safeSmileError, SmileError, smilePaths, smilePilotAllowed, smileProviderInputs, validateSmileSettings,
   SMILE_PREPARED_TTL_MS, SMILE_STALE_MS, type SmileManifest, type SmileSettings,
   SMILE_BOTH_ARCH_TEETH, SMILE_FRONT_TEETH, SMILE_TEETH,
@@ -292,6 +292,40 @@ Deno.test('smile crop: Polza receives one mouth image and semantic scope, never 
     });
     assertEquals(calls, 1);
     assertEquals(result, output);
+  }
+});
+
+Deno.test('smile: acknowledgement is persisted before a failing result download, without resubmission', async () => {
+  let acknowledged = '', submissions = 0, downloads = 0;
+  await assertRejects(() => createSmileTask({
+    apiKey: 'fixture', model: 'fixture', settings: SETTINGS, signal: AbortSignal.timeout(2000),
+    photoData: 'data:image/png;base64,YQ==', maskData: 'data:image/png;base64,YQ==',
+    onAccepted: (id) => { acknowledged = id; return Promise.resolve(); },
+    fetcher: ((url, init) => {
+      if (init?.method === 'POST') {
+        submissions++;
+        return Promise.resolve(Response.json({ id: 'aig_saved', status: 'completed', data: { url: 'https://s3.polza.ai/result.png' } }));
+      }
+      downloads++;
+      assertEquals(acknowledged, 'aig_saved');
+      assertEquals(String(url), 'https://s3.polza.ai/result.png');
+      return Promise.resolve(new Response(null, { status: 503 }));
+    }) as typeof fetch,
+  }), SmileError);
+  assertEquals(acknowledged, 'aig_saved'); assertEquals(submissions, 1); assertEquals(downloads, 1);
+});
+
+Deno.test('smile: explicit provider rejection differs from an unacknowledged network failure', async () => {
+  for (const status of [400, 401, 402, 403, 422, 429, 503]) {
+    let calls = 0;
+    const error = await assertRejects(() => createSmileTask({
+      apiKey: 'fixture', model: 'fixture', settings: SETTINGS, signal: AbortSignal.timeout(2000),
+      photoData: 'data:image/png;base64,YQ==', maskData: 'data:image/png;base64,YQ==',
+      fetcher: (() => { calls++; return Promise.resolve(new Response('private provider response', { status })); }) as typeof fetch,
+    }), SmileError);
+    assertEquals(error.code, status < 500 ? 'provider_rejected' : 'provider_unavailable');
+    assertEquals(error.providerStatus, status); assertEquals(calls, 1);
+    assert(!JSON.stringify(safeSmileError(error)).includes('private provider response'));
   }
 });
 

@@ -36,6 +36,7 @@ export interface SmilePreparedJob {
 export interface SmileJobStatus {
   jobId: string;
   status: 'prepared' | 'processing' | 'done' | 'failed';
+  stage?: 'submitting' | 'processing' | 'confirmation_pending';
   resultUrl?: string;
   encryption?: SmileEncryption;
   error?: string;
@@ -129,6 +130,7 @@ export function deleteSmileJob(jobId: string, signal?: AbortSignal): Promise<{ d
 
 export async function uploadSmilePng(
   url: string, blob: Blob, encryption: SmileEncryption, jobId: string, kind: SmileImageKind, signal?: AbortSignal,
+  onProgress?: (fraction: number) => void,
 ): Promise<void> {
   let ciphertext: Blob;
   try {
@@ -138,6 +140,35 @@ export async function uploadSmilePng(
   }
   signal?.throwIfAborted();
   // A signed storage URL carries its own scoped permission; do not send Telegram or API credentials.
+  if (onProgress) {
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let settled = false;
+      const abort = () => xhr.abort();
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', abort);
+        xhr.onload = xhr.onerror = xhr.ontimeout = xhr.onabort = null;
+        xhr.upload.onprogress = null;
+        if (error) reject(error); else { onProgress(1); resolve(); }
+      };
+      xhr.open('PUT', url);
+      xhr.timeout = 60_000;
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0 && !signal?.aborted) onProgress(Math.min(0.99, event.loaded / event.total));
+      };
+      xhr.onload = () => finish(xhr.status >= 200 && xhr.status < 300 ? undefined : new SmilePreviewError('upload_failed', xhr.status));
+      xhr.onerror = xhr.ontimeout = () => finish(new SmilePreviewError('upload_failed'));
+      xhr.onabort = () => finish(new DOMException('Aborted', 'AbortError'));
+      signal?.addEventListener('abort', abort, { once: true });
+      try { onProgress(0); xhr.send(ciphertext); } catch (error) {
+        finish(error instanceof Error ? error : new SmilePreviewError('upload_failed'));
+      }
+    });
+    return;
+  }
   const response = await timedFetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/octet-stream' },
@@ -168,17 +199,19 @@ export async function loadSmileResultBlob(result: SmileJobStatus, signal?: Abort
 }
 
 /** Local cropping and final composition use these exact pixels, after orientation and resizing. */
-export async function normalizeSmilePhoto(file: File): Promise<NormalizedSmilePhoto> {
+export async function normalizeSmilePhoto(file: File, onProgress?: (value: number) => void): Promise<NormalizedSmilePhoto> {
   if (file.size > 20 * 1024 * 1024) throw new SmilePreviewError('photo_too_large');
   if (file.type && !file.type.startsWith('image/')) throw new SmilePreviewError('unsupported_image');
   const url = URL.createObjectURL(file);
   try {
+    onProgress?.(10);
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
       img.onerror = () => reject(new SmilePreviewError('unsupported_image'));
       img.src = url;
     });
+    onProgress?.(45);
     if (!image.naturalWidth || !image.naturalHeight) throw new SmilePreviewError('unsupported_image');
     const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight));
     const width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -192,9 +225,11 @@ export async function normalizeSmilePhoto(file: File): Promise<NormalizedSmilePh
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, width, height);
     context.drawImage(image, 0, 0, width, height);
+    onProgress?.(75);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) throw new SmilePreviewError('canvas_unavailable');
     if (blob.size > 20 * 1024 * 1024) throw new SmilePreviewError('photo_too_large');
+    onProgress?.(100);
     return { blob, width, height };
   } finally {
     URL.revokeObjectURL(url);
@@ -233,6 +268,7 @@ export function smileErrorMessage(error: unknown): string {
     if (error.code === 'download_failed') return 'Не удалось скачать PNG. Обновите временную ссылку и попробуйте ещё раз.';
     if (error.code === 'timeout') return 'Время ожидания модели истекло. Проверьте статус этой примерки перед новой попыткой.';
     if (error.code === 'provider_failed') return 'AI не смог обработать снимок. Попробуйте другую фотографию.';
+    if (error.code === 'provider_rejected') return 'Сервис AI отклонил запрос. Попробуйте позже или обратитесь к администратору.';
     if (error.code === 'provider_response' || error.code === 'processing_failed') return 'Не удалось применить ответ AI. Изображение не изменено; можно создать новую примерку.';
     if (error.code === 'provider_unavailable') return 'AI временно недоступен. Позже проверьте статус этой же примерки.';
     if (error.code === 'output_dimensions') return 'AI изменил пропорции фрагмента. Результат не применён, чтобы не исказить фото.';

@@ -76,6 +76,7 @@ const MESSAGES: Record<string, string> = {
   timeout: 'Модель не успела ответить. Для повторной попытки создайте новую примерку.',
   expired: 'Эта заготовка устарела. Создайте новую примерку.',
   provider_failed: 'Модель не смогла выполнить примерку. Создайте новую попытку.',
+  provider_rejected: 'Сервис AI отклонил запрос. Попробуйте позже или обратитесь к администратору.',
   provider_unavailable: 'Сервис обработки временно недоступен. Проверьте статус этой же примерки позже.',
   provider_response: 'Модель не вернула подходящее изображение. Создайте новую попытку.',
   result_missing: 'Результат больше недоступен. Создайте новую примерку.',
@@ -85,7 +86,7 @@ const MESSAGES: Record<string, string> = {
 };
 
 export class SmileError extends Error {
-  constructor(public code: string, public status = 400) {
+  constructor(public code: string, public status = 400, public providerStatus?: number) {
     super(MESSAGES[code] ?? MESSAGES.processing_failed);
   }
 }
@@ -479,6 +480,8 @@ export function smileMediaLocation(value: unknown): string | null {
 
 export interface SmileProviderOptions {
   apiKey: string; baseUrl?: string; signal: AbortSignal; fetcher?: typeof fetch;
+  /** Persist acknowledgement before attempting to fetch a potentially slow result. */
+  onAccepted?: (id: string) => Promise<void>;
 }
 export type SmileProviderTask = { status: 'processing'; id: string } | { status: 'done'; image: Uint8Array; id?: string };
 
@@ -492,7 +495,10 @@ async function smileProviderRequest(options: SmileProviderOptions, mediaId?: str
     let response: Response;
     try { response = await fetcher(url, { ...init, headers, signal: options.signal, redirect: 'error' }); }
     catch { throw new SmileError(options.signal.aborted ? 'timeout' : 'provider_unavailable', 503); }
-    if (!response.ok) throw new SmileError('provider_unavailable', 503);
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {});
+      throw new SmileError(response.status >= 400 && response.status < 500 ? 'provider_rejected' : 'provider_unavailable', 503, response.status);
+    }
     const bytes = await readSmileBytes(response, 30 * 1024 * 1024, options.signal);
     try {
       const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
@@ -506,6 +512,7 @@ async function smileProviderRequest(options: SmileProviderOptions, mediaId?: str
     if (data.error || data.status === 'failed') throw new SmileError('provider_failed', 502);
     const location = smileMediaLocation(data);
     const taskId=typeof data.id==='string' && /^[a-zA-Z0-9_-]{1,128}$/.test(data.id) ? {id:data.id}:{};
+    if (taskId.id) await options.onAccepted?.(taskId.id);
     if (location) {
       const dataPrefix = location.match(/^data:image\/(png|jpeg|jpg);base64,/);
       if (dataPrefix) {

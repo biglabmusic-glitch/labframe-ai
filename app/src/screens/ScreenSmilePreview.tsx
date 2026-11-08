@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Screen } from '../components/Screen';
 import { SmileCropBoundary } from '../components/SmileCropBoundary';
+import { SmileProgress } from '../components/SmileProgress';
 import type { PreparedSmileCrop } from '../lib/smile-crop';
 import type { SmileCropPoint } from '../lib/smile-crop-geometry';
 import {
@@ -23,6 +24,7 @@ type Photo = NormalizedSmilePhoto & { url: string };
 type Phase = 'editing' | 'uploading' | 'processing' | 'pending' | 'prepared' | 'done' | 'failed';
 type LocalSource = { jobId: string; photo: NormalizedSmilePhoto; crop: PreparedSmileCrop };
 const POLL_LIMIT_MS = 12 * 60_000;
+const PROGRESS_STAGES = ['Подготовка и загрузка', 'Обработка улыбки', 'Сохранение результата'];
 const MODES: Array<{ id: SmileRehabilitationMode; label: string; description: string }> = [
   { id: 'total', label: 'Тотальная реабилитация', description: 'Все видимые зубы сверху и снизу' },
   { id: 'front', label: 'Фронтальная реабилитация', description: 'От клыка до клыка на обеих челюстях' },
@@ -73,6 +75,10 @@ export function ScreenSmilePreview() {
 
   const [photo, setPhoto] = useState<Photo | null>(null);
   const [normalizing, setNormalizing] = useState(false);
+  const [photoProgress, setPhotoProgress] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [finishing, setFinishing] = useState(false);
+  const [processingStage, setProcessingStage] = useState<'submitting' | 'processing'>('submitting');
   const [photoKind, setPhotoKind] = useState<'portrait' | 'cropped'>('portrait');
   const [manualBoundary, setManualBoundary] = useState<SmileCropPoint[] | null>(null);
   const [mode, setMode] = useState<SmileRehabilitationMode>('total');
@@ -152,6 +158,7 @@ export function ScreenSmilePreview() {
           const result = await getSmileJobStatus(jobId, controller.signal);
           if (controller.signal.aborted) return;
           if (result.status === 'done') {
+            setFinishing(true);
             const edited = await loadSmileResultBlob(result, controller.signal);
             const local = activeSource.current?.jobId === jobId ? activeSource.current : await loadSmileLocalSource(jobId);
             controller.signal.throwIfAborted();
@@ -176,6 +183,11 @@ export function ScreenSmilePreview() {
             setError('Отправка не завершена: сервер ещё не запустил обработку. Можно подготовить новую примерку.');
             setPhase('prepared'); return;
           }
+          if (result.stage === 'confirmation_pending') {
+            setError('AI пока не подтвердил приём запроса. Задача сохранена: проверьте её статус позже, без повторного запуска.');
+            setPhase('pending'); return;
+          }
+          setProcessingStage(result.stage === 'submitting' ? 'submitting' : 'processing');
           setError('');
         } catch (err) {
           if (controller.signal.aborted) return;
@@ -205,9 +217,11 @@ export function ScreenSmilePreview() {
   async function pickPhoto(file: File | undefined) {
     if (!file || busy) return;
     const revision = ++normalizingRevision.current;
-    setNormalizing(true); setError('');
+    setNormalizing(true); setPhotoProgress(0); setError('');
     try {
-      const normalized = await normalizeSmilePhoto(file);
+      const normalized = await normalizeSmilePhoto(file, (value) => {
+        if (revision === normalizingRevision.current) setPhotoProgress(value);
+      });
       if (revision !== normalizingRevision.current) return;
       setPhoto({ ...normalized, url: URL.createObjectURL(normalized.blob) });
       setCrop(null); setConsent(false); setResultUrl(''); setCropOnlyResult(false);
@@ -246,7 +260,7 @@ export function ScreenSmilePreview() {
       ...(zenithMode === 'allow' ? { zenithInstruction: zenithInstruction.trim() } : {}),
     };
     const source = { photo: { blob: photo.blob, width: photo.width, height: photo.height }, crop };
-    setError(''); setPhase('uploading');
+    setError(''); setUploadProgress(5); setFinishing(false); setProcessingStage('submitting'); setPhase('uploading');
     let preparedId: string | null = null;
     try {
       const prepared = await prepareSmileJob(controller.signal, user.smileProvider ?? 'polza');
@@ -260,9 +274,17 @@ export function ScreenSmilePreview() {
       rememberSmileJobId(preparedId); setJobId(preparedId);
       setLocalSourceSaved(await saveSmileLocalSource(preparedId, source));
       controller.signal.throwIfAborted();
+      setUploadProgress(15);
+      const fractions = { photo: 0, mask: 0 };
+      const reportUpload = (kind: 'photo' | 'mask', fraction: number) => {
+        if (controller.signal.aborted) return;
+        fractions[kind] = fraction;
+        const transferred = (crop.photo.size + 29) * fractions.photo + (crop.mask.size + 29) * fractions.mask;
+        setUploadProgress(15 + Math.round(18 * transferred / (crop.photo.size + crop.mask.size + 58)));
+      };
       await Promise.all([
-        uploadSmilePng(prepared.photo.uploadUrl, crop.photo, prepared.encryption, preparedId, 'photo', controller.signal),
-        uploadSmilePng(prepared.mask.uploadUrl, crop.mask, prepared.encryption, preparedId, 'mask', controller.signal),
+        uploadSmilePng(prepared.photo.uploadUrl, crop.photo, prepared.encryption, preparedId, 'photo', controller.signal, (fraction) => reportUpload('photo', fraction)),
+        uploadSmilePng(prepared.mask.uploadUrl, crop.mask, prepared.encryption, preparedId, 'mask', controller.signal, (fraction) => reportUpload('mask', fraction)),
       ]);
       await generateSmilePreview(preparedId, settings, controller.signal);
       if (!controller.signal.aborted) setPhase('processing');
@@ -326,7 +348,14 @@ export function ScreenSmilePreview() {
         {error && <div className="smile-error" role="alert">{error}</div>}
         {!localSourceSaved && <p className="smile-error" role="status">Браузер не сохранил исходник для возврата к примерке. Не закрывайте эту страницу до скачивания полного фото.</p>}
 
-        {busy && <div className="smile-status" role="status" aria-live="polite"><span className="smile-spinner" /><h2>{phase === 'uploading' ? 'Подготавливаем фрагмент улыбки' : 'Создаём вариант улыбки'}</h2><p>{phase === 'uploading' ? 'Шифруем и загружаем только область рта. Полное фото остаётся на устройстве.' : 'AI обрабатывает фрагмент улыбки. Готовый результат вклеим в исходное фото на этом устройстве.'}</p><p className="smile-hint">{phase === 'processing' ? 'Проверяем готовность той же задачи без повторного запуска.' : 'Параметры отправляются один раз.'}</p></div>}
+        {busy && <div className="smile-status" role="status" aria-live="polite">
+          <SmileProgress value={phase === 'uploading' ? uploadProgress : finishing ? 95 : processingStage === 'submitting' ? 33 : 67}
+            label={phase === 'uploading' ? 'Загрузка' : finishing ? 'Сохранение' : processingStage === 'submitting' ? 'Запуск AI' : 'Обработка AI'} stages={PROGRESS_STAGES}
+            activeStage={phase === 'uploading' ? 0 : finishing ? 2 : 1} />
+          <h2>{phase === 'uploading' ? 'Загружаем фрагмент улыбки' : finishing ? 'Сохраняем готовую улыбку' : processingStage === 'submitting' ? 'Передаём запрос в AI' : 'Создаём вариант улыбки'}</h2>
+          <p>{phase === 'uploading' ? 'Шифруем и загружаем только область рта. Полное фото остаётся на устройстве.' : finishing ? 'Получаем результат и вклеиваем его в исходное фото на этом устройстве.' : 'AI обрабатывает фрагмент улыбки. Процент показывает текущий этап работы.'}</p>
+          <p className="smile-hint">{phase === 'processing' ? 'Проверяем готовность той же задачи без повторного запуска.' : 'Параметры отправляются один раз.'}</p>
+        </div>}
 
         {(phase === 'pending' || phase === 'prepared' || phase === 'failed') && <div className="smile-status"><h2>{phase === 'failed' ? 'Примерка не завершилась' : phase === 'prepared' ? 'Загрузка не завершена' : 'Проверим текущую примерку'}</h2><p>Задача сохранена. Если исходник доступен в браузере этого устройства, результат будет вклеен в полное фото.</p><div className="smile-actions">
           {phase === 'pending' && <button type="button" className="smile-primary" disabled={deleting} onClick={() => { setError(''); setPhase('processing'); }}>Проверить статус</button>}
@@ -335,6 +364,7 @@ export function ScreenSmilePreview() {
         </div></div>}
 
         {phase === 'done' && resultUrl && <section className="smile-section smile-result">
+          <p className="smile-complete mono">✓ 100% · Готово</p>
           <div className="smile-section-heading"><span className="smile-step">✓</span><h2>{cropOnlyResult ? 'Фрагмент улыбки готов' : 'Примерка готова'}</h2></div>
           <div className="smile-comparison" style={{ aspectRatio: photo && !cropOnlyResult ? String(photo.width) + ' / ' + photo.height : undefined }}>
             <img src={resultUrl} alt={cropOnlyResult ? 'Обработанный фрагмент улыбки' : 'Вариант улыбки после визуальной примерки'} className="smile-after-image" />
@@ -359,6 +389,7 @@ export function ScreenSmilePreview() {
               <button type="button" className={photoKind === 'cropped' ? 'is-selected' : ''} aria-pressed={photoKind === 'cropped'} onClick={() => changePhotoKind('cropped')}><strong>Обрезанная улыбка</strong><span>Фото рта без полного лица</span></button>
             </div>
             <input ref={fileInput} className="smile-file-input" type="file" accept="image/*" onChange={(event) => { void pickPhoto(event.target.files?.[0]); event.target.value = ''; }} disabled={normalizing} aria-label="Выбрать фотографию пациента" />
+            {normalizing && <div className="smile-photo-progress" role="status"><SmileProgress value={photoProgress} label="Подготовка фото" /></div>}
             <button type="button" className={'smile-upload' + (photo ? ' has-photo' : '')} onClick={() => fileInput.current?.click()} disabled={normalizing}>
               {photo ? <><img src={photo.url} alt="Исходное фото, которое остаётся на устройстве" /><span className="smile-upload-overlay">Заменить фото ↗</span></> : <><span className="smile-upload-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="5" stroke="currentColor" strokeWidth="1.5" /><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" /><path d="m4 17 5-5 4 4 3-3 5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span><strong>{normalizing ? 'Подготавливаем фото…' : 'Выбрать фотографию'}</strong><span>Открытая улыбка, хороший свет, зубы в фокусе</span><span className="smile-upload-formats mono">JPEG / PNG · до 20 МБ</span></>}
             </button>

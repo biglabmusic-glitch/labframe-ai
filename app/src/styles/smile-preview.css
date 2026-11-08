@@ -136,6 +136,28 @@
 .smile-status h2 { margin-bottom: 12px; }
 .smile-status p { margin: 0 0 14px; color: var(--c-on-dark-2); font-size: 12px; line-height: 1.6; }
 .smile-status .smile-hint { font-size: 10px; color: var(--c-on-dark-3); }
+.smile-progress { margin-bottom: 24px; }
+.smile-progress-ring { position: relative; width: 180px; height: 180px; margin: 0 auto 24px; }
+.smile-progress-ring svg { display: block; transform: rotate(-90deg); }
+.smile-progress-ring circle { fill: none; stroke-width: 10px; }
+.smile-progress-track { stroke: rgba(239,243,255,.06); }
+.smile-progress-fill { stroke: var(--c-accent); stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+.smile-progress-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+.smile-progress-center strong { font-size: 38px; font-weight: 600; letter-spacing: -1.5px; color: var(--c-on-dark); }
+.smile-progress-center strong span { margin-left: 2px; font-size: 18px; opacity: .5; }
+.smile-progress-center > span { max-width: 130px; font-size: 9px; line-height: 1.5; text-transform: uppercase; letter-spacing: .6px; color: var(--c-on-dark-3); }
+.smile-progress-stages { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; text-align: left; }
+.smile-progress-stages li { display: flex; align-items: center; gap: 12px; color: var(--c-on-dark-3); font-size: 12px; }
+.smile-progress-dot { display: grid; place-items: center; flex: 0 0 22px; height: 22px; border: 1.5px solid rgba(239,243,255,.15); border-radius: 50%; }
+.smile-progress-stages .is-active { color: var(--c-on-dark); font-weight: 600; }
+.smile-progress-stages .is-active .smile-progress-dot { border-color: var(--c-accent); }
+.smile-progress-stages .is-active .smile-progress-dot::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--c-accent); }
+.smile-progress-stages .is-done { color: var(--c-on-dark); }
+.smile-progress-stages .is-done .smile-progress-dot { border-color: var(--c-accent); background: var(--c-accent); color: var(--c-ink); }
+.smile-progress-stages .mono { margin-left: auto; color: var(--c-accent); font-size: 10px; white-space: nowrap; }
+.smile-photo-progress { margin: 16px 0; text-align: center; }
+.smile-photo-progress .smile-progress, .smile-photo-progress .smile-progress-ring { margin-bottom: 0; }
+.smile-complete { margin: 0 0 12px; color: var(--c-accent); font-size: 12px; }
 .smile-error { padding: 13px 15px; margin-bottom: 16px; border: 1px solid rgba(238, 163, 151, .3); border-radius: 12px; background: rgba(238, 163, 151, .07); color: #efb2a8; font-size: 12px; line-height: 1.6; }
 .smile-actions { display: flex; flex-direction: column; gap: 9px; margin-top: 16px; }
 .smile-actions .smile-text-button { text-align: center; }
@@ -175,7 +197,7 @@
 .smile-primary:active { background: var(--c-accent-2); }
 
 @keyframes smile-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .smile-spinner { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .smile-spinner { animation: none; } .smile-progress-fill { transition: none; } }
 @media (min-width: 460px) {
   .smile-page { padding-right: 22px; padding-left: 22px; }
   .smile-section { padding: 22px; }

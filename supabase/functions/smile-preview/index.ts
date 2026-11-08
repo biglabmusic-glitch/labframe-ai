@@ -102,6 +102,8 @@ async function statusResponse(paths: Paths, manifest: SmileManifest): Promise<Re
   return privateJson({
     jobId: manifest.jobId,
     status: manifest.status,
+    ...(manifest.status === 'processing' ? { stage: manifest.providerId ? 'processing' :
+      Date.now() - (manifest.startedAt ?? manifest.createdAt) > SMILE_TIMEOUT_MS ? 'confirmation_pending' : 'submitting' } : {}),
     ...(manifest.status === 'failed' ? {
       error: safeSmileError(new SmileError(manifest.errorCode ?? 'processing_failed')).code,
       message: safeSmileError(new SmileError(manifest.errorCode ?? 'processing_failed')).message,
@@ -203,16 +205,25 @@ async function runJob(paths: Paths, manifest: SmileManifest, settings: SmileSett
       model: manifest.providerModel || Deno.env.get('POLZA_SMILE_MODEL') || Deno.env.get('POLZA_IMAGE_MODEL') || 'google/gemini-3.1-flash-image-preview',
       baseUrl: Deno.env.get('POLZA_MEDIA_BASE_URL') || undefined,
       signal,
+      onAccepted: async (id) => {
+        const accepted = { ...manifest, providerId: id, updatedAt: Date.now() };
+        await saveManifest(paths, accepted);
+        manifest = accepted;
+      },
     });
-    if(task.id){
+    if(task.id && manifest.providerId !== task.id){
       const accepted={...manifest,providerId:task.id,updatedAt:Date.now()};
       await saveManifest(paths,accepted);
       manifest=accepted;
     }
     if (task.status === 'done') await completeJob(paths, manifest, task.image, signal, loaded);
   } catch (error) {
-    if(submitted && !manifest.providerId && ['provider_unavailable','provider_response','timeout','storage_error'].includes(safeSmileError(error).code)){
-      // An unacknowledged POST may already be paid. Keep its lock until the deadline.
+    const code = safeSmileError(error).code;
+    if(submitted && ['provider_unavailable','provider_response','timeout','storage_error'].includes(code)){
+      // Resume acknowledged tasks by ID; an unacknowledged POST may already be
+      // paid as well. Neither download failures nor timeouts can resubmit it.
+      console.warn('smile-preview waiting:', manifest.providerId ? 'accepted-task' : 'submission-unconfirmed', code,
+        error instanceof SmileError ? error.providerStatus ?? 0 : 0);
       return;
     }
     await failJob(paths, manifest, error);
