@@ -353,7 +353,13 @@ Deno.test('smile API: real auth, closed access, encrypted upload → crop → en
           assertEquals(manifest.status, 'failed'); assertEquals(manifest.errorCode, 'provider_rejected');
         } else {
           assertEquals(manifest.status, 'processing'); assertEquals(manifest.providerId, undefined);
-          manifest.startedAt = Date.now() - 120_000;
+          manifest.startedAt = Date.now() - 75_000;
+          objects.set(path, new TextEncoder().encode(JSON.stringify(manifest)));
+          const runningPath = job.photo.path.replace('source.enc', 'running.json');
+          objects.set(runningPath, new TextEncoder().encode(JSON.stringify({ startedAt: manifest.startedAt })));
+          const stillSubmitting = await (await call(102, { action: 'status', jobId: job.jobId })).json();
+          assertEquals(stillSubmitting.status, 'processing'); assertEquals(stillSubmitting.stage, 'submitting');
+          manifest.startedAt = Date.now() - 180_000;
           objects.set(path, new TextEncoder().encode(JSON.stringify(manifest)));
           objects.set(job.photo.path.replace('source.enc', 'running.json'), new TextEncoder().encode(JSON.stringify({ startedAt: manifest.startedAt })));
           const status = await (await call(102, { action: 'status', jobId: job.jobId })).json();

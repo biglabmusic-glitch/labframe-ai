@@ -9,6 +9,10 @@
 
 .smile-back { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 0; border: 0; background: transparent; color: var(--smile-muted); font-size: 12px; }
 .smile-back > span { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--c-line); border-radius: 50%; color: var(--c-on-dark); font-size: 16px; }
+.smile-wizard-step { margin-top: 12px; }
+.smile-wizard-step + .smile-hero { padding-top: 18px; }
+.smile-hero h1:focus { outline: none; }
+.smile-page .smile-crop-preview { max-height: 190px; object-fit: contain; }
 .smile-hero { position: relative; padding: 24px 2px 22px; }
 .smile-eyebrow { color: var(--smile-muted); font-size: 9px; letter-spacing: 1.2px; }
 .smile-hero h1 { margin: 14px 0 0; font-size: clamp(30px,8vw,38px); line-height: 1.1; font-weight: 600; letter-spacing: -1.1px; text-wrap: balance; }

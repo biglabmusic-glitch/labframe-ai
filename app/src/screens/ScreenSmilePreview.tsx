@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Screen } from '../components/Screen';
 import { SmileCropBoundary } from '../components/SmileCropBoundary';
 import { SmileProgress } from '../components/SmileProgress';
+import { StepBadge } from '../components/StepBadge';
 import type { PreparedSmileCrop } from '../lib/smile-crop';
 import type { SmileCropPoint } from '../lib/smile-crop-geometry';
 import {
@@ -25,6 +26,13 @@ type Phase = 'editing' | 'uploading' | 'processing' | 'pending' | 'prepared' | '
 type LocalSource = { jobId: string; photo: NormalizedSmilePhoto; crop: PreparedSmileCrop };
 const POLL_LIMIT_MS = 12 * 60_000;
 const PROGRESS_STAGES = ['Подготовка и загрузка', 'Обработка улыбки', 'Сохранение результата'];
+const FORM_STEPS = [
+  { title: 'Фото улыбки', hint: 'Загрузите портрет или обрезанную улыбку. Подготовим область рта сразу на устройстве.' },
+  { title: 'Вариант реабилитации', hint: 'Режим уже выбран. Можно продолжить или изменить его.' },
+  { title: 'Цвет зубов', hint: 'Один оттенок для всех изменяемых зубов обеих челюстей.' },
+  { title: 'Форма зубов', hint: 'Выберите форму и прозрачность режущего края.' },
+  { title: 'Проверка и запуск', hint: 'Проверьте настройки и фрагмент улыбки, затем создайте примерку.' },
+];
 const MODES: Array<{ id: SmileRehabilitationMode; label: string; description: string }> = [
   { id: 'total', label: 'Тотальная реабилитация', description: 'Все видимые зубы сверху и снизу' },
   { id: 'front', label: 'Фронтальная реабилитация', description: 'От клыка до клыка на обеих челюстях' },
@@ -69,11 +77,11 @@ function cropErrorMessage(error: unknown): string {
 export function ScreenSmilePreview() {
   const { user, balanceLoaded } = useApp();
   const { history, back, reset } = useRouter();
-  const goBack = useCallback(() => history.length > 1 ? back() : reset('home'), [history.length, back, reset]);
-  useBackButton(goBack);
-  useMainButton(null);
+  const leaveStudio = useCallback(() => history.length > 1 ? back() : reset('home'), [history.length, back, reset]);
 
   const [photo, setPhoto] = useState<Photo | null>(null);
+  const [formStep, setFormStep] = useState(0);
+  const stepHeading = useRef<HTMLHeadingElement>(null);
   const [normalizing, setNormalizing] = useState(false);
   const [photoProgress, setPhotoProgress] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -114,6 +122,29 @@ export function ScreenSmilePreview() {
   const editing = phase === 'editing';
   const canGenerate = allowed && editing && !normalizing && !deleting && cropState === 'ready' &&
     Boolean(photo && crop && consent) && (zenithMode === 'preserve' || Boolean(zenithInstruction.trim()));
+  const canContinue = !normalizing && !deleting && (formStep === 0 ? Boolean(photo && crop && cropState === 'ready') :
+    formStep === 3 ? zenithMode === 'preserve' || Boolean(zenithInstruction.trim()) : true);
+  const goBack = useCallback(() => {
+    if (editing && formStep > 0) setFormStep((step) => step - 1);
+    else leaveStudio();
+  }, [editing, formStep, leaveStudio]);
+  useBackButton(goBack);
+  useMainButton(balanceLoaded && allowed && editing ? {
+    text: formStep === FORM_STEPS.length - 1 ? 'Создать примерку' : normalizing ? 'Подготавливаем фото…' :
+      formStep === 0 && cropState === 'loading' ? 'Подготавливаем область…' : 'Далее',
+    enabled: formStep === FORM_STEPS.length - 1 ? canGenerate : canContinue,
+    progress: normalizing || (formStep === 0 && cropState === 'loading'),
+    onClick: () => {
+      if (formStep === FORM_STEPS.length - 1) { void generate(); return; }
+      if (canContinue) setFormStep((step) => Math.min(FORM_STEPS.length - 1, step + 1));
+    },
+  } : null);
+
+  useEffect(() => {
+    if (!editing) return;
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    stepHeading.current?.focus({ preventScroll: true });
+  }, [formStep, editing]);
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
   useEffect(() => () => { if (cropPreviewUrl) URL.revokeObjectURL(cropPreviewUrl); }, [cropPreviewUrl]);
@@ -184,7 +215,7 @@ export function ScreenSmilePreview() {
             setPhase('prepared'); return;
           }
           if (result.stage === 'confirmation_pending') {
-            setError('AI пока не подтвердил приём запроса. Задача сохранена: проверьте её статус позже, без повторного запуска.');
+            setError('Сервис обработки не ответил вовремя. Примерка сохранена — проверьте её статус позже. Повторно отправлять фото не нужно.');
             setPhase('pending'); return;
           }
           setProcessingStage(result.stage === 'submitting' ? 'submitting' : 'processing');
@@ -228,6 +259,7 @@ export function ScreenSmilePreview() {
       setManualBoundary(null);
       setLocalSourceSaved(true); activeSource.current = null;
       rememberSmileJobId(null); setJobId(null); setPhase('editing');
+      setFormStep(0);
     } catch (err) {
       if (revision === normalizingRevision.current) setError(smileErrorMessage(err));
     } finally {
@@ -237,7 +269,7 @@ export function ScreenSmilePreview() {
 
   function changePhotoKind(next: 'portrait' | 'cropped') {
     if (next === photoKind) return;
-    setPhotoKind(next); setManualBoundary(null); setCrop(null); setCropPreviewUrl('');
+    setPhotoKind(next); setManualBoundary(null); setCrop(null); setCropPreviewUrl(''); setFormStep(0);
     setCropState('idle'); setCropNote(''); setConsent(false);
   }
 
@@ -313,6 +345,7 @@ export function ScreenSmilePreview() {
       }
       if (controller.signal.aborted) return;
       rememberSmileJobId(null); setJobId(null); setPhase('editing');
+      setFormStep(0);
       activeSource.current = null; setResultUrl(''); setConsent(false); setCropOnlyResult(false);
       setManualBoundary(null); setCrop(null); setCropPreviewUrl(''); setCropState('idle');
       if (!keepPhoto) { setPhoto(null); setCrop(null); setCropPreviewUrl(''); setCropState('idle'); }
@@ -335,13 +368,14 @@ export function ScreenSmilePreview() {
 
   return <Screen>
     <div className="smile-page">
-      <div className="smile-topline"><button type="button" className="smile-back" onClick={goBack}><span aria-hidden="true">←</span> В студию</button><span className="smile-pilot mono">ДЕМО · ПО ПРИГЛАШЕНИЮ</span></div>
+      <div className="smile-topline"><button type="button" className="smile-back" onClick={goBack}><span aria-hidden="true">←</span>{editing && formStep > 0 ? 'Назад' : 'В студию'}</button><span className="smile-pilot mono">ДЕМО · ПО ПРИГЛАШЕНИЮ</span></div>
+      {allowed && editing && <div className="smile-wizard-step"><StepBadge n={formStep + 1} total={FORM_STEPS.length} /></div>}
       <header className="smile-hero">
         <span className="smile-eyebrow mono">LABFRAME · SMILE STUDIO</span>
-        <h1>Примерить <span>улыбку</span></h1>
-        <p>Выберите вариант реабилитации, форму и оттенок. Можно загрузить портрет или обрезанную улыбку.</p>
+        <h1 ref={stepHeading} tabIndex={-1}>{allowed && editing ? FORM_STEPS[formStep].title : <>Примерить <span>улыбку</span></>}</h1>
+        <p>{allowed && editing ? FORM_STEPS[formStep].hint : 'Выберите вариант реабилитации, форму и оттенок. Можно загрузить портрет или обрезанную улыбку.'}</p>
       </header>
-      <p className="smile-disclaimer"><span aria-hidden="true">i</span>Визуальная примерка. Не клинический план и не гарантия результата лечения.</p>
+      {(!editing || formStep === FORM_STEPS.length - 1) && <p className="smile-disclaimer"><span aria-hidden="true">i</span>Визуальная примерка. Не клинический план и не гарантия результата лечения.</p>}
 
       {!balanceLoaded ? <div className="smile-status" role="status">Проверяем доступ…</div> : !allowed ?
         <div className="smile-status"><h2>Закрытый тест</h2><p>{!isSmilePreviewReady() ? 'Для примерки нужно подключение к серверу. Откройте рабочее мини-приложение в Telegram.' : 'Доступ к примерке выдаёт администратор. После приглашения откройте приложение заново.'}</p><button type="button" className="smile-secondary" onClick={() => reset('home')}>На главную</button></div> : <>
@@ -378,11 +412,7 @@ export function ScreenSmilePreview() {
         </section>}
 
         {editing && <>
-          <ol className="smile-journey" aria-label="Этапы примерки">
-            <li className={photo ? 'is-done' : 'is-current'}><span>01</span>Фото</li>
-            <li className={photo ? 'is-current' : ''}><span>02</span>Улыбка</li>
-            <li className={cropState === 'ready' && consent ? 'is-current' : ''}><span>03</span>Создание</li>
-          </ol>
+          {formStep === 0 && <>
           <FormSection step="01" title="Начнём с фотографии" hint="Подойдёт портрет или уже обрезанное фото улыбки. Видимые зубы должны быть чёткими.">
             <div className="smile-photo-kinds" role="group" aria-label="Вид фотографии">
               <button type="button" className={photoKind === 'portrait' ? 'is-selected' : ''} aria-pressed={photoKind === 'portrait'} onClick={() => changePhotoKind('portrait')}><strong>Портрет</strong><span>Найдём рот автоматически на устройстве</span></button>
@@ -397,14 +427,32 @@ export function ScreenSmilePreview() {
             {!photo && <p className="smile-micro">{photoKind === 'portrait' ? 'Полное фото остаётся на устройстве. Для AI автоматически подготовим только область рта.' : 'Полное лицо не требуется. После загрузки подтвердите область улыбки.'}</p>}
           </FormSection>
 
-          {photo && <>
+          {photo && <FormSection step="01" title="Область улыбки" hint="Подготовка начинается сразу после загрузки, независимо от режима реабилитации.">
+            {photoKind === 'cropped' && <SmileCropBoundary key={photo.url} url={photo.url} width={photo.width} height={photo.height}
+              initialBoundary={manualBoundary} preparing={cropState === 'loading'} onChange={changeBoundary} onConfirm={(points) => { setConsent(false); setManualBoundary(points); }} />}
+            {cropState === 'loading' && <p role="status" aria-live="polite" className="smile-hint">{cropNote}</p>}
+            {cropState === 'failed' && <p role="alert" className="smile-hint">{cropNote}</p>}
+            {photoKind === 'portrait' && cropState !== 'loading' && <button type="button" className="smile-text-button" onClick={() => { setConsent(false); setCropAttempt((n) => n + 1); }}>Определить область заново</button>}
+            {photoKind === 'portrait' && cropState === 'failed' && <button type="button" className="smile-secondary" onClick={() => changePhotoKind('cropped')}>Продолжить с обрезанной улыбкой</button>}
+            {cropState === 'ready' && <p className="smile-mask-note is-ready">{photoKind === 'portrait' ? '✓ Фрагмент улыбки подготовлен автоматически' : '✓ Подтверждённый фрагмент улыбки готов'}</p>}
+            {photoKind === 'cropped' && cropState === 'idle' && <p className="smile-micro">Подтвердите область улыбки, затем нажмите «Далее».</p>}
+          </FormSection>}
+          </>}
+
+          {photo && formStep === 1 && <>
             <FormSection step="02" title="Вариант улыбки">
               <div className="smile-modes" role="group" aria-label="Вариант реабилитации">{MODES.map((option) => <button type="button" key={option.id} className={mode === option.id ? 'is-selected' : ''} aria-pressed={mode === option.id} onClick={() => setMode(option.id)}><strong>{option.label}</strong><span>{option.description}</span></button>)}</div>
               {mode === 'front' && <p className="smile-micro">Меняем передние зубы и клыки. Жевательные зубы просим AI сохранить.</p>}
-              <h3>Цвет зубов</h3>
+            </FormSection>
+          </>}
+          {photo && formStep === 2 && <>
+            <FormSection step="03" title="Оттенок зубов">
               <div className="smile-palette" role="group" aria-label="Общий оттенок зубов">{SMILE_SHADES.map((option, index) => <button type="button" key={option} className={shade === option ? 'is-selected' : ''} aria-pressed={shade === option} onClick={() => setShade(option)}><span className="smile-swatch" style={{ background: SHADE_COLORS[index] }} aria-hidden="true" /><span>{option}</span></button>)}</div>
               <p className="smile-micro">Один оттенок для всех изменяемых зубов. Образцы на экране условны.</p>
-              <h3>Форма зубов</h3>
+            </FormSection>
+          </>}
+          {photo && formStep === 3 && <>
+            <FormSection step="04" title="Форма и прозрачность">
               <div className="smile-shapes" role="group" aria-label="Форма зубов">{SHAPES.map((option) => <button type="button" key={option.id} className={shape === option.id ? 'is-selected' : ''} aria-pressed={shape === option.id} onClick={() => setShape(option.id)}><ShapeGlyph shape={option.id} /><span>{option.label}</span></button>)}</div>
               <h3>Прозрачность режущего края</h3><div className="smile-segmented" role="group" aria-label="Прозрачность режущего края"><button type="button" className={translucency === 'none' ? 'is-selected' : ''} aria-pressed={translucency === 'none'} onClick={() => setTranslucency('none')}>Без прозрачности</button><button type="button" className={translucency === 'natural' ? 'is-selected' : ''} aria-pressed={translucency === 'natural'} onClick={() => setTranslucency('natural')}>Естественная</button></div>
               <details className="smile-details"><summary>Дополнительные настройки</summary>
@@ -413,25 +461,15 @@ export function ScreenSmilePreview() {
                 {zenithMode === 'allow' && <label className="smile-instruction">Точное указание для области улыбки<textarea maxLength={160} rows={3} value={zenithInstruction} onChange={(event) => setZenithInstruction(event.target.value)} placeholder="Опишите требуемое изменение десневого контура" required /><span className="smile-micro">{zenithInstruction.length} / 160</span></label>}
               </details>
             </FormSection>
-
-            <FormSection step="03" title="Фрагмент для AI" hint="Внешняя модель получит только этот фрагмент. Готовую улыбку вклеим в исходное фото на устройстве.">
-              {photoKind === 'cropped' && <SmileCropBoundary key={photo.url} url={photo.url} width={photo.width} height={photo.height}
-                preparing={cropState === 'loading'} onChange={changeBoundary} onConfirm={(points) => { setConsent(false); setManualBoundary(points); }} />}
-              {cropState === 'loading' && <p role="status" aria-live="polite" className="smile-hint">{cropNote}</p>}
-              {cropState === 'failed' && <p role="alert" className="smile-hint">{cropNote}</p>}
+          </>}
+          {photo && formStep === 4 && <>
+            <FormSection step="05" title="Создание примерки">
               {cropPreviewUrl && <img className="smile-crop-preview" src={cropPreviewUrl} alt="Только эта область рта будет отправлена AI" />}
-              {photoKind === 'portrait' && cropState !== 'loading' && <button type="button" className="smile-text-button" onClick={() => { setConsent(false); setCropAttempt((n) => n + 1); }}>Определить область заново</button>}
-              {photoKind === 'portrait' && cropState === 'failed' && <button type="button" className="smile-secondary" onClick={() => changePhotoKind('cropped')}>Продолжить с обрезанной улыбкой</button>}
-              {cropState === 'ready' && <p className="smile-mask-note is-ready">{photoKind === 'portrait' ? '✓ Фрагмент улыбки подготовлен автоматически' : '✓ Подтверждённый фрагмент улыбки готов'}</p>}
-            </FormSection>
-
-            <FormSection step="04" title="Создание примерки">
               <div className="smile-summary"><span>Режим</span><strong>{MODES.find((option) => option.id === mode)?.label}</strong><span>Челюсти</span><strong>Верхняя и нижняя · только видимые зубы</strong><span>Цвет</span><strong>{shade}</strong><span>Форма</span><strong>{SHAPES.find((option) => option.id === shape)?.label}</strong></div>
-              <div className="smile-privacy"><strong>На сервер — только область рта</strong><p>Для возврата к задаче исходник сохраняется только в браузере этого устройства. Он доступен для вклейки 24 часа; после этого очищается при следующем обращении к примерке. Удаление примерки очищает его сразу.</p><p>Фрагмент и результат хранятся в LabFrame зашифрованными. Внешний AI видит фрагмент; он может оставаться узнаваемым. {user.smileProvider === 'fal' ? 'Обработка — fal.ai.' : 'Обработка — Polza.ai.'} У внешнего сервиса свои условия хранения и удаления.</p></div>
+              <details className="smile-details smile-privacy"><summary>На сервер — только область рта</summary><p>Для возврата к задаче исходник сохраняется только в браузере этого устройства. Он доступен для вклейки 24 часа; после этого очищается при следующем обращении к примерке. Удаление примерки очищает его сразу.</p><p>Фрагмент и результат хранятся в LabFrame зашифрованными. Внешний AI видит фрагмент; он может оставаться узнаваемым. {user.smileProvider === 'fal' ? 'Обработка — fal.ai.' : 'Обработка — Polza.ai.'} У внешнего сервиса свои условия хранения и удаления.</p></details>
               <label className="smile-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>У меня есть разрешение использовать это фото и передать показанный фрагмент улыбки внешнему AI.</span></label>
               <p className="smile-cost-note">В закрытом тесте примерки не списываются с вашего баланса генераций.</p>
-              <button type="button" className="smile-primary smile-generate" disabled={!canGenerate} onClick={() => void generate()}>Создать примерку <span aria-hidden="true">↗</span></button>
-              {cropState !== 'ready' && <p className="smile-micro" role="status">{cropState === 'loading' ? cropNote : cropState === 'failed' ? cropNote : photoKind === 'cropped' ? 'В разделе «Фрагмент для AI» подтвердите область улыбки.' : 'Для запуска подготовьте фрагмент улыбки в разделе выше.'}</p>}
+              {cropState !== 'ready' && <p className="smile-micro" role="status">Вернитесь на шаг «Фото улыбки» и подготовьте область рта.</p>}
               {cropState === 'ready' && !consent && <p className="smile-micro">Для запуска отметьте согласие на обработку фото.</p>}
             </FormSection>
           </>}

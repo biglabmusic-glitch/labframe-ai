@@ -3,13 +3,14 @@ import { locateManualSmileCrop, type SmileCropPoint } from '../lib/smile-crop-ge
 
 interface Props {
   url: string; width: number; height: number; preparing: boolean;
+  initialBoundary?: readonly SmileCropPoint[] | null;
   onChange: () => void; onConfirm: (points: SmileCropPoint[]) => void;
 }
 const LABELS = ['Левый край', 'Верхний левый край', 'Верхний центр', 'Верхний правый край',
   'Правый край', 'Нижний правый край', 'Нижний центр', 'Нижний левый край'];
 
-export function SmileCropBoundary({ url, width, height, preparing, onChange, onConfirm }: Props) {
-  const [points, setPoints] = useState<SmileCropPoint[]>(() => Array.from({ length: 8 }, (_, i) => {
+export function SmileCropBoundary({ url, width, height, preparing, initialBoundary, onChange, onConfirm }: Props) {
+  const [points, setPoints] = useState<SmileCropPoint[]>(() => initialBoundary?.map((p) => ({ ...p })) ?? Array.from({ length: 8 }, (_, i) => {
     const angle = Math.PI + i * Math.PI / 4;
     return { x: width * (0.5 + 0.32 * Math.cos(angle)), y: height * (0.52 + 0.18 * Math.sin(angle)) };
   }));

@@ -14,7 +14,9 @@ export const SMILE_SHADES = [
   'B1', 'B2', 'B3', 'B4', 'C1', 'C2', 'C3', 'C4', 'D2', 'D3', 'D4',
 ] as const;
 export const SMILE_MAX_BYTES = 20 * 1024 * 1024;
-export const SMILE_TIMEOUT_MS = 60_000;
+// Nov 8 logs showed an unacknowledged submission timing out at 60s. Allow a
+// longer bounded response window, below the shortest wall-clock limit.
+export const SMILE_TIMEOUT_MS = 120_000;
 // Provider generation lives outside an Edge invocation; polling can resume later.
 export const SMILE_STALE_MS = 12 * 60_000;
 export const SMILE_PREPARED_TTL_MS = 24 * 60 * 60 * 1000;
